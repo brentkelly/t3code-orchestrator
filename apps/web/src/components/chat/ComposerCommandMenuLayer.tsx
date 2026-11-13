@@ -76,8 +76,9 @@ export function ComposerCommandMenuLayer(props: {
   }, [props.anchor]);
 
   if (!props.anchor || !position) return null;
-  // T3o: inside a modal (the card sheet) a body portal sits under its backdrop, aria-hidden; join
-  // the dialog's untransformed viewport, flagged as a nested portal so the modal keeps it exposed.
+  // T3o: inside any modal dialog or sheet (card sheet, right-panel sheet) a body portal sits under
+  // its backdrop, aria-hidden; join the dialog's untransformed viewport. `data-base-ui-portal` is a
+  // Base UI internal: FloatingFocusManager exempts nested portals so marked from aria-hidden.
   const container = props.anchor.closest('[role="dialog"]')?.parentElement ?? null;
 
   return createPortal(
