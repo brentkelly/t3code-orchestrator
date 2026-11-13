@@ -221,8 +221,6 @@ export const BoardCardGrant = Schema.Struct({
   grantedAt: IsoDateTime,
   /** The card's first heavy step ended, or two hours passed: its disk is no longer pending. */
   settled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
-  /** When the card last stopped being active, for the ten-minute tail; null while active. */
-  idleSince: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
 });
 export type BoardCardGrant = typeof BoardCardGrant.Type;
 

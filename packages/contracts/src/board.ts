@@ -56,6 +56,8 @@ import {
   BoardCardSize,
   BoardCardSizeEditor,
   BoardProjectResources,
+  BoardResourceDimension,
+  BoardResourceProfile,
   isEmptyBoardProjectResources,
 } from "./boardCapacity.ts";
 import {
@@ -2384,13 +2386,41 @@ export function boardStepParkedReason(
     `worker-offline` is no limit at all: the card's worker is out of
     reach, and the card shows Worker offline until it is back. */
 export const BoardStepQueuedBy = Schema.Literals([
+  // Legacy: the board's own concurrency ceilings, gone with T3O-86. Never written; old rows
+  // and events still decode, and read as plain "Queued".
   "board",
   "worker",
   "provider",
   "setup",
   "worker-offline",
+  // T3o: the worker's own reasons (T3O-86). `capacity` names its dimension and worker in
+  // `queuedDetail`; `quota` is a provider near its limit; `agent-cap` is the worker's agent
+  // cap; `needs-update` is a worker below the protocol floor.
+  "capacity",
+  "quota",
+  "agent-cap",
+  "needs-update",
 ]);
 export type BoardStepQueuedBy = typeof BoardStepQueuedBy.Type;
+
+/** Legacy queue reasons: shown as plain "Queued". */
+export const LEGACY_BOARD_STEP_QUEUED_BY: ReadonlySet<BoardStepQueuedBy> = new Set([
+  "board",
+  "worker",
+  "provider",
+]);
+
+/**
+ * What a queue reason waits on, beside the literal `queuedBy` (T3O-86): the worker, the
+ * dimension, and the card ahead in this board's queue. Never an amount, so a waiting card
+ * appends no event on every snapshot.
+ */
+export const BoardStepQueuedDetail = Schema.Struct({
+  workerId: Schema.optionalKey(BoardWorkerId),
+  dimension: Schema.optionalKey(BoardResourceDimension),
+  behindCardId: Schema.optionalKey(BoardCardId),
+});
+export type BoardStepQueuedDetail = typeof BoardStepQueuedDetail.Type;
 
 export const BoardCardStepState = Schema.Struct({
   cardId: BoardCardId,
@@ -2519,6 +2549,10 @@ export const BoardCardStepState = Schema.Struct({
       cloning the project (`setup`). Null when not queued, and on every row
       written before the distributed board — read as plain "Queued". */
   queuedBy: Schema.NullOr(BoardStepQueuedBy).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  /** T3o: what the queue reason waits on (T3O-86); null on older rows and events. */
+  queuedDetail: Schema.NullOr(BoardStepQueuedDetail).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   /** When the step began running; null while pending/queued. */
   startedAt: Schema.NullOr(IsoDateTime),
   updatedAt: IsoDateTime,
@@ -5645,6 +5679,11 @@ export const BoardCardProvisionWorktreeCommand = Schema.Struct({
   /** Base ref the branch was cut from (default branch, or parent integration
       branch for a sub-board plan card). */
   baseRefName: TrimmedNonEmptyString,
+  /** T3o: what the worker granted, on record before it is called (T3O-86). Absent on an
+      older command, which granted nothing. */
+  grantedProfile: Schema.optionalKey(BoardResourceProfile),
+  heavyGranted: Schema.optionalKey(Schema.Boolean),
+  claimId: Schema.optionalKey(TrimmedNonEmptyString),
   createdAt: IsoDateTime,
 });
 export type BoardCardProvisionWorktreeCommand = typeof BoardCardProvisionWorktreeCommand.Type;
@@ -5963,6 +6002,35 @@ export const BoardCardSetReviewCarryCommand = Schema.Struct({
 });
 export type BoardCardSetReviewCarryCommand = typeof BoardCardSetReviewCarryCommand.Type;
 
+/**
+ * T3o: a card's grant changed (T3O-86): grown heavy (a granted grow, or a turn the board
+ * didn't start), released light, settled, or backfilled at the upgrade. Only the keys
+ * present change; `grant: null` drops it.
+ */
+export const BoardCardRecordGrantCommand = Schema.Struct({
+  type: Schema.Literal("board.card.record-grant"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  profile: Schema.optionalKey(BoardResourceProfile),
+  heavy: Schema.optionalKey(Schema.Boolean),
+  settled: Schema.optionalKey(Schema.Boolean),
+  clear: Schema.optionalKey(Schema.Boolean),
+  createdAt: IsoDateTime,
+});
+export type BoardCardRecordGrantCommand = typeof BoardCardRecordGrantCommand.Type;
+
+/** T3o: the worker no longer held a provision's claim and it doesn't fit now
+    (`claim-expired`, T3O-86). The provisioning record goes back to the one it replaced;
+    no attempt is counted. */
+export const BoardCardUndoProvisionCommand = Schema.Struct({
+  type: Schema.Literal("board.card.undo-provision"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  restore: Schema.NullOr(BoardCardWorktree),
+  createdAt: IsoDateTime,
+});
+export type BoardCardUndoProvisionCommand = typeof BoardCardUndoProvisionCommand.Type;
+
 export const BoardCardRecordAutoMergeHoldCommand = Schema.Struct({
   type: Schema.Literal("board.card.record-auto-merge-hold"),
   commandId: CommandId,
@@ -6086,6 +6154,8 @@ export const BoardCardAdmitStepCommand = Schema.Struct({
   /** Why a refused step is queued. Re-sent on a step already queued
       only when the binding limit changed. */
   queuedBy: Schema.optional(BoardStepQueuedBy),
+  /** T3o: what it waits on (T3O-86). */
+  queuedDetail: Schema.optional(BoardStepQueuedDetail),
   createdAt: IsoDateTime,
 });
 export type BoardCardAdmitStepCommand = typeof BoardCardAdmitStepCommand.Type;
@@ -7288,6 +7358,8 @@ export const BoardCardShell = Schema.Struct({
       `queued`; rides the snapshot and the `card-queued` delta like `queued`
       itself, and card deltas preserve the last known value. */
   queuedBy: Schema.optionalKey(BoardStepQueuedBy),
+  /** T3o: what a queued card waits on (T3O-86), beside `queuedBy`. */
+  queuedDetail: Schema.optionalKey(BoardStepQueuedDetail),
   // Review summary — counts, never bodies; absent until the post-MVP
   // review pipeline lands, then populated only in the review stage.
   roundCurrent: Schema.optionalKey(NonNegativeInt),
@@ -7635,6 +7707,7 @@ export function makeBoardCardShell(input: {
   /** Which limit holds a queued card. Real on the snapshot, absent
       on card deltas (the client keeps the last known value). */
   readonly queuedBy?: BoardStepQueuedBy | null | undefined;
+  readonly queuedDetail?: BoardStepQueuedDetail | null | undefined;
   /** The card's review-loop summary, or null when it has no
       review history. Absent-means-preserve, like the body/plan slices: a
       producer that cannot see the step-completion ledger omits the key rather
@@ -7734,6 +7807,9 @@ export function makeBoardCardShell(input: {
     ...(input.ci == null ? {} : { ci: { ...input.ci, steps: boardCardCiSteps(input.ci.steps) } }),
     ...(input.ciLastOutcome == null ? {} : { ciLastOutcome: input.ciLastOutcome }),
     ...(input.queued === true && input.queuedBy != null ? { queuedBy: input.queuedBy } : {}),
+    ...(input.queued === true && input.queuedDetail != null
+      ? { queuedDetail: input.queuedDetail }
+      : {}),
     // The review slice. Spread whole or not at all: the counts and
     // the outcome describe one loop, so a producer must never publish half of
     // them and let the client blend them with a previous card's other half.
@@ -7876,6 +7952,7 @@ export const BoardCardQueuedShellEvent = Schema.Struct({
   stepRunning: Schema.Boolean,
   /** Which limit holds the card, present only when `queued`. */
   queuedBy: Schema.optionalKey(BoardStepQueuedBy),
+  queuedDetail: Schema.optionalKey(BoardStepQueuedDetail),
 });
 export type BoardCardQueuedShellEvent = typeof BoardCardQueuedShellEvent.Type;
 
@@ -8092,6 +8169,9 @@ const BOARD_INTERNAL_COMMANDS = [
   BoardCardRetireThreadCommand,
   // The auto-merge hold and its retry ladder.
   BoardCardRecordAutoMergeHoldCommand,
+  // T3o: a card's grant on its worker, and a provision whose claim expired (T3O-86).
+  BoardCardRecordGrantCommand,
+  BoardCardUndoProvisionCommand,
   // The review loop's server-only carry fields.
   BoardCardSetReviewCarryCommand,
   // The decision log and auto-planning.

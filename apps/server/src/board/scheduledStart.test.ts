@@ -65,6 +65,7 @@ const forcedQueuedStep = (id: string): BoardCardStepState => ({
   slotHeld: false,
   forceStart: true,
   queuedBy: null,
+  queuedDetail: null,
   threadId: null,
   startedAt: null,
   updatedAt: "1970-01-01T00:00:00.000Z",

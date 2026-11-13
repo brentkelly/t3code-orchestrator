@@ -124,6 +124,7 @@ function makeStep(status: BoardCardStepState["status"]): BoardCardStepState {
     slotHeld: false,
     forceStart: false,
     queuedBy: null,
+    queuedDetail: null,
     startedAt: null,
     updatedAt: NOW,
   };

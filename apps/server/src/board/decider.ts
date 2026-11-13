@@ -6,6 +6,8 @@
  */
 import {
   BOARD_SEED_STAGE_IDS,
+  EMPTY_BOARD_CARD_RESOURCES,
+  type BoardCardResources,
   canonicalJson,
   withBoardCardPlannerSize,
   withBoardCardSizeEdit,
@@ -530,6 +532,11 @@ const makeBoardEventBase = Effect.fn("makeBoardEventBase")(function* (input: {
     metadata: {},
   };
 });
+
+const withoutEmptyResources = (resources: BoardCardResources): BoardCardResources | null =>
+  resources.sizing === null && resources.grant === null && resources.setup === null
+    ? null
+    : resources;
 
 /** T3o: a card's resources changed (T3O-86), carrying the whole card. */
 export const cardResourcesRecordedEvent = Effect.fn("cardResourcesRecordedEvent")(
@@ -4611,6 +4618,21 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         // The worktree binds the card to the worker it is cut on, so placement is recorded in
         // the same event: the card's pin, or the default. From here only a move changes it.
         placedWorkerId: boardCardEffectiveWorkerId(card, board.defaultWorkerId),
+        // T3o: the grant is on record before the worker is called (T3O-86).
+        ...(command.grantedProfile === undefined
+          ? {}
+          : {
+              resources: {
+                ...(card.resources ?? EMPTY_BOARD_CARD_RESOURCES),
+                grant: {
+                  profile: command.grantedProfile,
+                  heavy: command.heavyGranted ?? true,
+                  claimId: command.claimId ?? null,
+                  grantedAt: command.createdAt,
+                  settled: false,
+                },
+              },
+            }),
         updatedAt: command.createdAt,
       };
       return {
@@ -5021,6 +5043,51 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       };
     }
 
+    case "board.card.record-grant": {
+      const card = yield* requireBoardCard({ board, command });
+      const current = card.resources?.grant ?? null;
+      if (command.clear === true) {
+        if (current === null) return [];
+        return yield* cardResourcesRecordedEvent({
+          card,
+          resources: { ...(card.resources ?? EMPTY_BOARD_CARD_RESOURCES), grant: null },
+          command,
+        });
+      }
+      // A grant needs a profile: one already granted, or the one the command brings.
+      const profile = command.profile ?? current?.profile;
+      if (profile === undefined) {
+        return yield* invariant(command, `Card '${command.cardId}' has no grant to change.`);
+      }
+      const next = {
+        profile,
+        heavy: command.heavy ?? current?.heavy ?? false,
+        claimId: current?.claimId ?? null,
+        grantedAt: current?.grantedAt ?? command.createdAt,
+        settled: command.settled ?? current?.settled ?? false,
+      };
+      if (current !== null && canonicalJson(current) === canonicalJson(next)) return [];
+      return yield* cardResourcesRecordedEvent({
+        card,
+        resources: { ...(card.resources ?? EMPTY_BOARD_CARD_RESOURCES), grant: next },
+        command,
+      });
+    }
+
+    case "board.card.undo-provision": {
+      const card = yield* requireBoardCard({ board, command });
+      // Only a provision still in flight is undone; one that landed or failed stands.
+      if (card.worktree?.status !== "provisioning") return [];
+      return yield* cardResourcesRecordedEvent({
+        card: { ...card, worktree: command.restore, updatedAt: command.createdAt },
+        resources:
+          card.resources === null
+            ? null
+            : withoutEmptyResources({ ...card.resources, grant: null }),
+        command,
+      });
+    }
+
     case "board.card.record-auto-merge-hold": {
       const card = yield* requireActiveBoardCard({ board, command });
       // No-op guard here, not just at the caller: the sweep re-probes a held card every
@@ -5388,6 +5455,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         stalledReason: "gave-up",
         retryAt: null,
         queuedBy: null,
+        queuedDetail: null,
         lastNudgeAt: null,
         // No human has typed into a fresh step, so no free turn-ending is owed.
         humanTurnAt: null,
@@ -5540,6 +5608,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
             stalledReason: "gave-up",
             retryAt: null,
             queuedBy: null,
+            queuedDetail: null,
             startedAt: command.createdAt,
             updatedAt: command.createdAt,
           }
@@ -5547,7 +5616,12 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           ? // Re-recording which limit holds an already-queued step
             // touches only that: a resumed step waits queued on its own
             // thread, and dropping it would spawn a fresh one on admission.
-            { ...current, queuedBy: command.queuedBy ?? null, updatedAt: command.createdAt }
+            {
+              ...current,
+              queuedBy: command.queuedBy ?? null,
+              queuedDetail: command.queuedDetail ?? null,
+              updatedAt: command.createdAt,
+            }
           : {
               ...current,
               status: "queued",
@@ -5555,6 +5629,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
               slotHeld: false,
               // Which limit holds it; absent keeps plain "Queued".
               queuedBy: command.queuedBy ?? null,
+              queuedDetail: command.queuedDetail ?? null,
               startedAt: null,
               updatedAt: command.createdAt,
             };

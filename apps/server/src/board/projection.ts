@@ -12,6 +12,7 @@ import {
   BoardCardCiLastOutcome,
   BoardCardResources,
   BoardCardSize,
+  BoardStepQueuedDetail,
   BoardCiPass,
   BoardCiStepList,
   BoardCiPassSettle,
@@ -523,6 +524,8 @@ const BoardCardStepStateDbRow = Schema.Struct({
   // NULL for rows written before migration 048 and for any step not queued —
   // both read as plain "Queued".
   queuedBy: BoardCardStepState.fields.queuedBy,
+  /** T3o: migration 071, NULL on older rows (T3O-86). */
+  queuedDetail: Schema.NullOr(Schema.fromJsonString(BoardStepQueuedDetail)),
   startedAt: BoardCardStepState.fields.startedAt,
   updatedAt: BoardCardStepState.fields.updatedAt,
 });
@@ -2201,7 +2204,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         last_error, awaiting_reason, human_turn_at, stalled_reason, retry_at,
         plan_review_started_at, plan_review_rounds, reopened_at, reopened_prompt_at,
         human_in_loop, max_attempts, timeout_ms, thread_id, status, slot_held, force_start,
-        queued_by, started_at, updated_at
+        queued_by, queued_detail, started_at, updated_at
       )
       VALUES (
         ${row.cardId}, ${row.stepId}, ${row.stepLabel}, ${row.stageLabel}, ${row.attempt}, ${row.stallCount},
@@ -2212,7 +2215,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ${row.planReviewStartedAt}, ${row.planReviewRounds}, ${row.reopenedAt}, ${row.reopenedPromptAt},
         ${row.humanInLoop}, ${row.maxAttempts},
         ${row.timeoutMs}, ${row.threadId}, ${row.status}, ${row.slotHeld}, ${row.forceStart},
-        ${row.queuedBy}, ${row.startedAt}, ${row.updatedAt}
+        ${row.queuedBy}, ${row.queuedDetail}, ${row.startedAt}, ${row.updatedAt}
       )
       ON CONFLICT (card_id)
       DO UPDATE SET
@@ -2247,6 +2250,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         slot_held = excluded.slot_held,
         force_start = excluded.force_start,
         queued_by = excluded.queued_by,
+        queued_detail = excluded.queued_detail,
         started_at = excluded.started_at,
         updated_at = excluded.updated_at
     `,
@@ -2289,6 +2293,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         slot_held AS "slotHeld",
         force_start AS "forceStart",
         queued_by AS "queuedBy",
+        queued_detail AS "queuedDetail",
         started_at AS "startedAt",
         updated_at AS "updatedAt"
       FROM board_card_step_state
@@ -3000,6 +3005,7 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
         slotHeld: state.slotHeld ? 1 : 0,
         forceStart: state.forceStart ? 1 : 0,
         queuedBy: state.queuedBy,
+        queuedDetail: state.queuedDetail,
         startedAt: state.startedAt,
         updatedAt: state.updatedAt,
       })
@@ -3945,6 +3951,7 @@ function loadBoardState(
             slotHeld: row.slotHeld !== 0,
             forceStart: row.forceStart !== 0,
             queuedBy: row.queuedBy,
+            queuedDetail: row.queuedDetail,
             startedAt: row.startedAt,
             updatedAt: row.updatedAt,
           }))
@@ -4052,6 +4059,7 @@ function boardShellCards(
       const labelsByCard = groupCardLabels(cardLabelRows);
       const queuedByCard = new Set<BoardCardId>();
       const queueReasonByCard = new Map<BoardCardId, BoardStepQueuedBy>();
+      const queueDetailByCard = new Map<BoardCardId, BoardStepQueuedDetail>();
       const stalledByCard = new Set<BoardCardId>();
       const runningByCard = new Set<BoardCardId>();
       const heldByCard = new Set<BoardCardId>();
@@ -4070,6 +4078,9 @@ function boardShellCards(
         // Which limit holds it, the same field `card-queued` carries.
         if (row.status === "queued" && row.queuedBy !== null) {
           queueReasonByCard.set(row.cardId, row.queuedBy);
+        }
+        if (row.status === "queued" && row.queuedDetail !== null) {
+          queueDetailByCard.set(row.cardId, row.queuedDetail);
         }
         // The second step-state field on the bounded shell: a card
         // is `stalled` when recovery gave up on its live step.
@@ -4146,6 +4157,7 @@ function boardShellCards(
           ciLastOutcome: row.ciLastOutcome,
           group: boardCardGroupFromRow(row),
           queuedBy: queueReasonByCard.get(row.cardId) ?? null,
+          queuedDetail: queueDetailByCard.get(row.cardId) ?? null,
           // Carried UNRESOLVED. The renderer settles the outcome
           // against `stepRunning`, which every shell already holds — resolving
           // it here as well would give the snapshot and the `card-review`

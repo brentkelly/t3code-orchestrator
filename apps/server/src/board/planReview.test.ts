@@ -100,6 +100,7 @@ const state = (overrides: Partial<BoardCardStepState> = {}): BoardCardStepState 
   slotHeld: false,
   forceStart: false,
   queuedBy: null,
+  queuedDetail: null,
   startedAt: NOW,
   updatedAt: NOW,
   planReviewStartedAt: NOW,

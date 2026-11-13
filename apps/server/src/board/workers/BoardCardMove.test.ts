@@ -151,6 +151,7 @@ const runningStep = (status: BoardCardStepState["status"]): BoardCardStepState =
   slotHeld: status === "running",
   forceStart: false,
   queuedBy: null,
+  queuedDetail: null,
   startedAt: NOW,
   updatedAt: NOW,
 });

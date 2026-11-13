@@ -1094,6 +1094,7 @@ const runningBuildStep = (cardId: BoardCardId): BoardCardStepState => ({
   slotHeld: true,
   forceStart: false,
   queuedBy: null,
+  queuedDetail: null,
   startedAt: "2026-01-01T00:00:00.000Z",
   updatedAt: "2026-01-01T00:00:00.000Z",
 });
@@ -1424,6 +1425,7 @@ it.effect("a child's conflict fix succeeding merges even when the arm was LOST",
       slotHeld: true,
       forceStart: false,
       queuedBy: null,
+      queuedDetail: null,
       startedAt: NOW,
       updatedAt: NOW,
     };

@@ -652,6 +652,7 @@ it.effect("a re-planned review round cuts no worktree on a card whose move faile
       slotHeld: false,
       forceStart: false,
       queuedBy: null,
+      queuedDetail: null,
       startedAt: null,
       updatedAt: "2026-01-01T00:00:00.000Z",
     };
@@ -851,6 +852,7 @@ it.effect("a step restored at boot holds its slot on its own worker", () =>
       slotHeld: true,
       forceStart: false,
       queuedBy: null,
+      queuedDetail: null,
       startedAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z",
     };
@@ -930,6 +932,7 @@ it.effect("after a move, a paused step's next turn starts afresh on the new work
       slotHeld: false,
       forceStart: false,
       queuedBy: null,
+      queuedDetail: null,
       startedAt: null,
       updatedAt: "2026-01-01T00:00:00.000Z",
     };

@@ -184,6 +184,7 @@ const runningStep = (overrides?: Partial<BoardCardStepState>): BoardCardStepStat
   slotHeld: true,
   forceStart: false,
   queuedBy: null,
+  queuedDetail: null,
   startedAt: STARTED,
   updatedAt: STARTED,
   ...overrides,
