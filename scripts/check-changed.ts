@@ -41,6 +41,8 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { decide, readWorkspace } from "../.github/scripts/ci-changes.cjs";
 import { vitePlusCommand } from "./check-changed-command.ts";
+// T3o: fork comparison candidates (T3O-88).
+import { remoteCandidates } from "./t3o-check-changed-base.ts";
 
 const GiB = 1024 ** 3;
 
@@ -151,49 +153,14 @@ export const git = Effect.fn("checkChanged.git")(function* (
 export const gitLines = (cwd: string, args: ReadonlyArray<string>) =>
   git(cwd, args).pipe(Effect.map((stdout) => stdout.toString().split("\n").filter(Boolean)));
 
-// T3o: a fork's trunk is its remote's default branch (origin/HEAD -> origin/t3o), not
-// main, so each remote also offers its HEAD target and that branch's local copy.
-const remoteCandidates = Effect.fn("checkChanged.remoteCandidates")(function* (root: string) {
-  const output = (args: ReadonlyArray<string>) =>
-    git(root, args).pipe(
-      Effect.map((stdout) => stdout.toString().trim()),
-      Effect.orElseSucceed(() => ""),
-    );
-  const current = yield* output(["symbolic-ref", "--quiet", "--short", "HEAD"]);
-  const wanted: Array<{ ref: string; rev: string }> = [];
-  for (const name of yield* gitLines(root, ["remote"])) {
-    wanted.push({ ref: name + "/main", rev: "refs/remotes/" + name + "/main" });
-    const prefix = "refs/remotes/" + name + "/";
-    const head = yield* output(["symbolic-ref", "--quiet", prefix + "HEAD"]);
-    if (!head.startsWith(prefix)) continue;
-    const branch = head.slice(prefix.length);
-    wanted.push({ ref: name + "/" + branch, rev: head });
-    // On the trunk itself its local copy is HEAD, which would hide every unpushed commit.
-    if (branch !== current) wanted.push({ ref: branch, rev: "refs/heads/" + branch });
-  }
-  const candidates: Array<{ ref: string; rev: string }> = [];
-  const seen = new Set<string>();
-  for (const candidate of wanted) {
-    const resolved = yield* output([
-      "rev-parse",
-      "--verify",
-      "--quiet",
-      candidate.rev + "^{commit}",
-    ]);
-    if (!resolved || seen.has(resolved)) continue;
-    seen.add(resolved);
-    candidates.push(candidate);
-  }
-  return candidates;
-});
-
 export const comparisonBase = Effect.fn("checkChanged.comparisonBase")(function* (
   root: string,
   explicitRef: Option.Option<string>,
 ) {
   const candidates = Option.isSome(explicitRef)
     ? [{ ref: explicitRef.value, rev: explicitRef.value }]
-    : yield* remoteCandidates(root);
+    : // T3o: a fork compares against its remote's default branch too (T3O-88).
+      yield* remoteCandidates(root, git);
   let closest: { ref: string; base: string; ahead: number } | undefined;
   for (const { ref, rev } of candidates) {
     const base = yield* git(root, ["merge-base", "HEAD", rev]).pipe(

@@ -364,6 +364,8 @@ function launcherFixture() {
   for (const file of [
     "scripts/check-changed.ts",
     "scripts/check-changed-command.ts",
+    // T3o: check-changed.ts imports the fork's comparison candidates (T3O-88).
+    "scripts/t3o-check-changed-base.ts",
     ".github/scripts/ci-changes.cjs",
   ]) {
     write(file, NodeFS.readFileSync(NodePath.join(import.meta.dirname, "..", file), "utf8"));

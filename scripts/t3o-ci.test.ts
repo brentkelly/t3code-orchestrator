@@ -108,8 +108,11 @@ describe("install failures", () => {
     ["getaddrinfo ENOTFOUND registry.npmjs.org", false, true],
     ["ENOSPC: no space left on device", false, true],
     ["ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY", false, true],
-    // The card's own dependency change is the fix agent's to repair, whatever pnpm says.
-    ["getaddrinfo ENOTFOUND registry.npmjs.org", true, false],
+    // A dead network or full disk is the machine's even when the card changes dependencies.
+    ["getaddrinfo ENOTFOUND registry.npmjs.org", true, true],
+    ["ENOSPC: no space left on device", true, true],
+    // Otherwise the card's own dependency change is the fix agent's to repair.
+    ["something else", true, false],
     ["ERR_PNPM_OUTDATED_LOCKFILE Cannot install with frozen-lockfile", false, false],
     ["ERR_PNPM_UNUSED_PATCH", false, false],
     ["something else", false, false],
@@ -154,8 +157,10 @@ describe("failure parsing", () => {
       "check:changed summary",
       "  pass  format  2.1s",
       "  FAIL  lint  4.0s",
-      "  TIMEOUT  typecheck (3 packages)  900.0s",
+      "  TIMEOUT  typecheck (3 packages)  killed after 900s",
       "  FAIL  test (4 files)  30.2s",
+      "  FAIL  react compiler (2 files)  3.0s",
+      "  TIMEOUT: ran past 900s and was killed; this is not a check failure.",
     ].join("\n");
     assert.deepStrictEqual(checkChangedFailures(output), [
       { title: "[lint] lint" },

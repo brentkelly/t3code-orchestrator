@@ -67,11 +67,11 @@ export function classifyInstallFailure(input: {
 }): { readonly machine: boolean; readonly reason: string } {
   const lockfile = LOCKFILE_ERROR.exec(input.output);
   if (lockfile) return { machine: false, reason: `${lockfile[0]}: fix the lockfile or manifests` };
+  const machine = MACHINE_INSTALL_ERROR.exec(input.output);
+  if (machine) return { machine: true, reason: `install failed: ${machine[0]}` };
   if (input.manifestsChanged) {
     return { machine: false, reason: "install failed on a branch that changes dependencies" };
   }
-  const machine = MACHINE_INSTALL_ERROR.exec(input.output);
-  if (machine) return { machine: true, reason: `install failed: ${machine[0]}` };
   return { machine: false, reason: "pnpm install failed" };
 }
 
@@ -127,20 +127,26 @@ export const stepKind = (name: string) =>
 export function checkChangedFailures(output: string): Array<Failure> {
   const summary = output.slice(output.lastIndexOf("check:changed summary"));
   const failures: Array<Failure> = [];
-  for (const match of summary.matchAll(/^\s+(FAIL|TIMEOUT)\s+(.+?)\s{2,}\S+\s*$/gm)) {
-    const [, outcome, name] = match;
+  let testFiles: ReturnType<typeof failedTestFiles> | undefined;
+  // A step line is `  <outcome>  <name>  <time>`; a timeout's time is `killed after 900s`.
+  const step = /^ {2}(FAIL|TIMEOUT) {2}(.+?) {2}(?:\S+|killed after \S+)\s*$/gm;
+  for (const [, outcome, name] of summary.matchAll(step)) {
     const kind = stepKind(name!);
-    const detail = outcome === "TIMEOUT" ? "timed out" : undefined;
-    if (kind === "test") {
-      const files = failedTestFiles(output);
-      if (files.length > 0) {
-        for (const { name, file } of files) {
+    // vitest's FAIL lines cannot say which step printed them, so the first failed test step
+    // reports every file and the rest add nothing unless they timed out.
+    if (kind === "test" && outcome === "FAIL") {
+      if (testFiles === undefined) {
+        testFiles = failedTestFiles(output);
+        for (const { name, file } of testFiles) {
           failures.push({ title: `[test] ${name}`, ...(file ? { file } : {}) });
         }
-        continue;
       }
+      if (testFiles.length > 0) continue;
     }
-    failures.push({ title: `[${kind}] ${name}`, ...(detail ? { detail } : {}) });
+    failures.push({
+      title: `[${kind}] ${name}`,
+      ...(outcome === "TIMEOUT" ? { detail: "timed out" } : {}),
+    });
   }
   return failures;
 }
