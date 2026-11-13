@@ -9794,6 +9794,9 @@ export const BoardReviewAdjudication = Schema.Struct({
   findingId: TrimmedNonEmptyString,
   verdict: BoardReviewVerdict,
   note: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  /** The adjudicator ruled this improvement below the round's raised bar: convergence reads
+      it as a nitpick, while the reviewer's rating stays recorded. */
+  belowBar: Schema.optional(Schema.Boolean),
 });
 export type BoardReviewAdjudication = typeof BoardReviewAdjudication.Type;
 
@@ -9905,14 +9908,17 @@ export type BoardReviewFindingResolution = "open" | "fixed" | "rejected" | "disp
 
 /** Pass the LATEST disposition and verdict (re-triage and re-adjudicate over
     the first pass). An escalation — the adjudicator's verdict, or a
-    legacy re-triage action — reads `escalated`. */
+    legacy re-triage action — reads `escalated`. A finding ruled below the bar is never
+    disputed: it reads as triage left it. */
 export function boardReviewFindingResolution(
   disposition: { readonly action: BoardReviewRetriageAction } | undefined,
-  verdict: { readonly verdict: BoardReviewVerdict } | undefined,
+  verdict:
+    | { readonly verdict: BoardReviewVerdict; readonly belowBar?: boolean | undefined }
+    | undefined,
 ): BoardReviewFindingResolution {
   if (disposition === undefined) return "open";
   if (disposition.action === "escalated") return "escalated";
-  if (verdict !== undefined) {
+  if (verdict !== undefined && verdict.belowBar !== true) {
     if (verdict.verdict === "escalated") return "escalated";
     if (verdict.verdict === "fix-upheld") return "fixed";
     if (verdict.verdict === "rejection-justified") return "rejected";
@@ -10319,7 +10325,13 @@ export type BoardReviewRoundResolution =
   | { readonly kind: "converge"; readonly by: "clean" | "adjudicator" }
   /** A settling round's carried and critical findings all stand settled. `unreviewedFixes`
       counts the fixes it landed past the reviewed SHA, which only the adjudicator verified. */
-  | { readonly kind: "converge"; readonly by: "settled"; readonly unreviewedFixes: number }
+  | {
+      readonly kind: "converge";
+      /** `below-bar`: a full round whose surviving blocking findings were all ruled below the
+          raised bar; its fixes past the reviewed SHA no review has read. */
+      readonly by: "settled" | "below-bar";
+      readonly unreviewedFixes: number;
+    }
   | {
       readonly kind: "stuck";
       readonly findings: ReadonlyArray<BoardReviewStuckFinding>;
@@ -10419,6 +10431,11 @@ interface BoardReviewRoundVerdicts {
   readonly findings: ReadonlyArray<BoardReviewRoundFinding>;
   /** Carried, critical and improvement findings: the set triage and adjudication rule on. */
   readonly blocking: ReadonlyArray<BoardReviewRoundFinding>;
+  /** `blocking` less the findings whose latest verdict ruled them below the bar: the set that
+      can stick the round or force another one. */
+  readonly effectiveBlocking: ReadonlyArray<BoardReviewRoundFinding>;
+  /** The findings whose latest verdict ruled them below the bar. */
+  readonly belowBar: ReadonlyArray<BoardReviewRoundFinding>;
   readonly overruled: ReadonlyArray<BoardReviewRoundFinding>;
   readonly triage: BoardTriagePayload;
   readonly retriage: BoardRetriagePayload | null;
@@ -10509,9 +10526,14 @@ function boardReviewRoundVerdicts(input: {
   }
   const verdicts = new Map(adjudication.verdicts.map((v) => [v.findingId, v]));
 
+  // A finding ruled below the bar never goes back to triage: it no longer blocks.
   const overruled = blocking.filter((finding) => {
     const verdict = verdicts.get(finding.id);
-    return verdict !== undefined && BOARD_REVIEW_OVERRULING_VERDICTS.has(verdict.verdict);
+    return (
+      verdict !== undefined &&
+      verdict.belowBar !== true &&
+      BOARD_REVIEW_OVERRULING_VERDICTS.has(verdict.verdict)
+    );
   });
   let retriage: BoardRetriagePayload | null = null;
   let readjudication: BoardAdjudicatePayload | null = null;
@@ -10569,11 +10591,15 @@ function boardReviewRoundVerdicts(input: {
   }
 
   const retriagePayload = retriage;
+  const latestVerdict = (id: string) => reverdicts.get(id) ?? verdicts.get(id);
+  const belowBar = blocking.filter((finding) => latestVerdict(finding.id)?.belowBar === true);
   return {
     kind: "folded",
     reviewedSha: reviewPayload.value.reviewedSha,
     findings,
     blocking,
+    effectiveBlocking: blocking.filter((finding) => !belowBar.includes(finding)),
+    belowBar,
     overruled,
     triage,
     retriage,
@@ -10583,7 +10609,7 @@ function boardReviewRoundVerdicts(input: {
     finalAdjudication: readjudication ?? adjudication,
     // Each finding's latest word from each side.
     latestAction: (id) => redispositions.get(id)?.action ?? dispositions.get(id)?.action ?? null,
-    latestVerdict: (id) => reverdicts.get(id) ?? verdicts.get(id),
+    latestVerdict,
     latestFixedSha: (id) =>
       redispositions.has(id) && retriagePayload !== null
         ? retriagePayload.fixedSha
@@ -10592,14 +10618,17 @@ function boardReviewRoundVerdicts(input: {
 }
 
 /** The findings whose survival forces another round, in the round's mode: every blocking
-    finding in a full round, only carried and critical ones in a settling round. */
+    finding not ruled below the bar in a full round, only carried and critical ones in a
+    settling round. */
 function boardReviewForcingFindings(
   fold: BoardReviewRoundVerdicts,
   mode: BoardReviewRoundMode,
 ): ReadonlyArray<BoardReviewRoundFinding> {
   return mode.kind === "full"
-    ? fold.blocking
-    : fold.blocking.filter((finding) => finding.carried || finding.severity === "critical");
+    ? fold.effectiveBlocking
+    : fold.effectiveBlocking.filter(
+        (finding) => finding.carried || finding.severity === "critical",
+      );
 }
 
 /** Whether a finding stands settled: a justified rejection, or an upheld fix that committed
@@ -10677,6 +10706,22 @@ export function boardReviewNextRoundMode(input: {
     : BOARD_REVIEW_FULL_ROUND;
 }
 
+/** How far a full round raises the bar for an `improvement`: 0 (unchanged) through 3
+    (critical-only). Rises past `convergeAfterRound` every two rounds; a settling round is
+    always 0, because its bar is already critical-only. */
+export type BoardReviewBarTier = 0 | 1 | 2 | 3;
+
+export function boardReviewBarTier(input: {
+  readonly round: number;
+  readonly convergeAfterRound: number | null;
+  readonly mode: BoardReviewRoundMode;
+}): BoardReviewBarTier {
+  const { round, convergeAfterRound } = input;
+  if (input.mode.kind === "settling" || convergeAfterRound === null) return 0;
+  if (round <= convergeAfterRound) return 0;
+  return Math.min(3, Math.floor((round - convergeAfterRound - 1) / 2) + 1) as BoardReviewBarTier;
+}
+
 function succeededBoardReviewSteps(
   completions: ReadonlyArray<BoardStepCompletion>,
 ): Map<string, BoardStepCompletion> {
@@ -10743,7 +10788,8 @@ export function boardReviewRoundResolution(input: {
   const { round } = input;
   const fold = boardReviewRoundVerdicts(input);
   if (fold.kind !== "folded") return fold;
-  const { blocking, findings, latestAction, latestVerdict, reverdicts, redispositions } = fold;
+  const { findings, latestAction, latestVerdict, reverdicts, redispositions } = fold;
+  const blocking = fold.effectiveBlocking;
 
   const stuck: BoardReviewStuckFinding[] = [];
   for (const finding of blocking) {
@@ -10800,8 +10846,25 @@ export function boardReviewRoundResolution(input: {
     };
   }
 
+  const unreviewedBelowBarFixes = fold.belowBar.filter(
+    (finding) =>
+      latestAction(finding.id) === "fixed" &&
+      !boardReviewShaMatches(fold.latestFixedSha(finding.id), fold.reviewedSha),
+  ).length;
+  // Every blocking finding was ruled below the bar: nothing left forces a round.
+  if (fold.blocking.length > 0 && blocking.length === 0) {
+    return {
+      kind: "converge",
+      by: "below-bar",
+      unreviewedFixes: fixedFindings.filter(
+        (finding) => !boardReviewShaMatches(fold.latestFixedSha(finding.id), fold.reviewedSha),
+      ).length,
+    };
+  }
+
   // The adjudicator's early exit: honoured only when the round changed no
-  // blocking code and every blocking finding stands settled.
+  // blocking code and every blocking finding stands settled. Fixes to findings
+  // ruled below the bar don't count, but they are reported as unreviewed.
   const anotherRound = fold.finalAdjudication.anotherRound ?? true;
   if (!anotherRound) {
     const settled = blocking.every((finding) => boardReviewFindingSettled(fold, finding));
@@ -10812,7 +10875,11 @@ export function boardReviewRoundResolution(input: {
       (boardReviewShaMatches(fold.triage.fixedSha, fold.reviewedSha) &&
         (fold.retriage === null ||
           boardReviewShaMatches(fold.retriage.fixedSha, fold.reviewedSha)));
-    if (settled && shaCheckPasses) return { kind: "converge", by: "adjudicator" };
+    if (settled && shaCheckPasses) {
+      return unreviewedBelowBarFixes > 0
+        ? { kind: "converge", by: "below-bar", unreviewedFixes: unreviewedBelowBarFixes }
+        : { kind: "converge", by: "adjudicator" };
+    }
   }
   return { kind: "continue" };
 }
@@ -10937,6 +11004,13 @@ export function boardReviewCompletionDefect(input: {
   if (rejectionRuled.length > 0) {
     return `A human ordered ${listIds(rejectionRuled.map((v) => v.findingId))} fixed, so only fix-upheld, fix-incomplete or fix-absent apply to them. Complete the step again.`;
   }
+  const belowBarDefect = boardReviewBelowBarDefect({
+    verdicts: adjudication.verdicts,
+    review: done.get(reviewStepId("review", round)),
+    carriedIds,
+    listIds,
+  });
+  if (belowBarDefect !== null) return belowBarDefect;
   const escalations = adjudication.verdicts.filter((v) => v.verdict === "escalated");
   const unexplained = escalations.filter((v) => v.note.trim() === "");
   if (unexplained.length > 0) {
@@ -10970,6 +11044,45 @@ export function boardReviewCompletionDefect(input: {
     if (notBlocking.length > 0) {
       return `Only a rejected blocking finding can be escalated, and never one a human already ordered fixed; ${listIds(notBlocking.map((v) => v.findingId))} cannot be. Rule on them yourself and complete the step again.`;
     }
+  }
+  return null;
+}
+
+/** Why a verdict's `belowBar` is refused: only a non-carried finding the reviewer rated
+    `improvement` can be ruled below the bar, and never with `escalated`. Reads only the
+    round's records, never settings, so a past round is never re-judged. */
+function boardReviewBelowBarDefect(input: {
+  readonly verdicts: ReadonlyArray<BoardReviewAdjudication>;
+  readonly review: BoardStepCompletion | undefined;
+  readonly carriedIds: ReadonlySet<string>;
+  readonly listIds: (ids: ReadonlyArray<string>) => string;
+}): string | null {
+  const ruled = input.verdicts.filter((v) => v.belowBar === true);
+  if (ruled.length === 0) return null;
+  const escalated = ruled.filter((v) => v.verdict === "escalated");
+  if (escalated.length > 0) {
+    return `\`belowBar\` cannot go with an escalated verdict (${input.listIds(escalated.map((v) => v.findingId))}): a finding below the bar is never escalated. Rule it below the bar with a normal verdict, or drop \`belowBar\` and escalate, and complete the step again.`;
+  }
+  const carried = ruled.filter((v) => input.carriedIds.has(v.findingId));
+  if (carried.length > 0) {
+    return `A human ordered ${input.listIds(carried.map((v) => v.findingId))} fixed, so it cannot be ruled below the bar. Drop \`belowBar\` from those verdicts and complete the step again.`;
+  }
+  const decoded =
+    input.review === undefined
+      ? null
+      : Option.getOrNull(
+          decodeBoardReviewPayloadOption(parseBoardStepPayloadJson(input.review.payload)),
+        );
+  const severities = new Map(
+    (decoded?.findings ?? []).map((finding) => [finding.id, finding.severity]),
+  );
+  const unknown = ruled.filter((v) => !severities.has(v.findingId));
+  if (unknown.length > 0) {
+    return `${input.listIds(unknown.map((v) => v.findingId))} is not a finding of this round's review, so it cannot be ruled below the bar. Drop \`belowBar\` from those verdicts and complete the step again.`;
+  }
+  const notImprovement = ruled.filter((v) => severities.get(v.findingId) !== "improvement");
+  if (notImprovement.length > 0) {
+    return `Only an \`improvement\` finding can be ruled below the bar; ${input.listIds(notImprovement.map((v) => v.findingId))} is not one. A critical always blocks and a nitpick never does. Drop \`belowBar\` from those verdicts and complete the step again.`;
   }
   return null;
 }
@@ -11066,8 +11179,9 @@ export interface BoardReviewLoopWalk {
       round's fixes no review has read. On a walk converged `settled`, the fixes only the
       adjudicator verified. */
   readonly unreviewedFixes?: number;
-  /** Present only on a `converged` walk the adjudicator ended, or a settling round settled. */
-  readonly convergedBy?: "adjudicator" | "settled";
+  /** Present only on a `converged` walk the adjudicator ended, a settling round settled, or
+      a full round whose remaining blocking findings were ruled below the bar. */
+  readonly convergedBy?: "adjudicator" | "settled" | "below-bar";
 }
 
 /** Whether a stuck round has been passed by a human. */
@@ -11189,8 +11303,8 @@ export function boardReviewLoopWalk(input: {
           currentRound: round,
           unreadableStepId: null,
           ...(resolution.by === "adjudicator" ? { convergedBy: "adjudicator" as const } : {}),
-          ...(resolution.by === "settled"
-            ? { convergedBy: "settled" as const, unreviewedFixes: resolution.unreviewedFixes }
+          ...(resolution.by === "settled" || resolution.by === "below-bar"
+            ? { convergedBy: resolution.by, unreviewedFixes: resolution.unreviewedFixes }
             : {}),
         };
       }
