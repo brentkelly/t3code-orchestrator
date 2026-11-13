@@ -1379,6 +1379,19 @@ describe("boardBuildQueue", () => {
       NOW_MS,
     );
     expect(lows.get("low-b")?.afterHigherPriority).toBeUndefined();
+    // A later-stage card goes first on stage, not priority, so it does not count.
+    const behindStage = boardBuildQueue(
+      [
+        queuedCard("review-normal", BOARD_SEED_STAGE_IDS.review, "a"),
+        {
+          ...queuedCard("build-low", BOARD_SEED_STAGE_IDS.building, "b"),
+          priority: "low" as const,
+        },
+      ],
+      BOARD_SEED_STAGES,
+      NOW_MS,
+    );
+    expect(behindStage.get("build-low")?.afterHigherPriority).toBeUndefined();
   });
 
   it("leaves out a card held for its offline worker: it waits on no slot (T3O-66)", () => {

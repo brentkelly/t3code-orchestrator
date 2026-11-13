@@ -7,11 +7,22 @@ import {
   boardCardPriorityStartedNote,
 } from "./boardCardPriority";
 
-const key = (code: string, modifiers: { alt?: boolean; ctrl?: boolean; meta?: boolean } = {}) => ({
+const key = (
+  code: string,
+  modifiers: {
+    alt?: boolean;
+    ctrl?: boolean;
+    meta?: boolean;
+    key?: string;
+    editable?: boolean;
+  } = {},
+) => ({
   altKey: modifiers.alt ?? true,
   ctrlKey: modifiers.ctrl ?? false,
   metaKey: modifiers.meta ?? false,
   code,
+  key: modifiers.key ?? "¡",
+  editable: modifiers.editable ?? false,
 });
 
 describe("boardCardPriorityFromShortcut", () => {
@@ -28,6 +39,14 @@ describe("boardCardPriorityFromShortcut", () => {
     expect(boardCardPriorityFromShortcut(key("Digit1", { alt: false }))).toBeNull();
     expect(boardCardPriorityFromShortcut(key("Digit1", { ctrl: true }))).toBeNull();
     expect(boardCardPriorityFromShortcut(key("Digit1", { meta: true }))).toBeNull();
+  });
+
+  it("leaves a character Alt+digit types in a text field to the field", () => {
+    // Option+2 on a Swedish Mac types @, the brief's mention trigger.
+    expect(boardCardPriorityFromShortcut(key("Digit2", { key: "@", editable: true }))).toBeNull();
+    expect(boardCardPriorityFromShortcut(key("Digit4", { key: "4", editable: true }))).toBe(
+      "urgent",
+    );
   });
 });
 

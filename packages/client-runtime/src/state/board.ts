@@ -603,9 +603,15 @@ export function boardBuildQueue(
       (left.cardId < right.cardId ? -1 : left.cardId > right.cardId ? 1 : 0),
   );
   const queue = new Map<string, BoardQueueSlot>();
+  // Per stage: a later-stage card is ahead on stage, not priority.
   let highestAhead = -1;
+  let stageAhead: number | null = null;
   ordered.forEach((card, index) => {
     const rank = boardCardPriorityRank(boardCardEffectivePriority(card));
+    if (rankOf(card) !== stageAhead) {
+      stageAhead = rankOf(card);
+      highestAhead = -1;
+    }
     queue.set(card.cardId, {
       position: index + 1,
       total: ordered.length,

@@ -40,16 +40,21 @@ export function boardCardPriorityDialogRule(priority: BoardCardPriority): string
 }
 
 /** Alt+1–4 in the new card dialog, matched on `event.code`: on macOS Alt+digit types a
-    character, so `event.key` is not the digit. */
+    character, so `event.key` is not the digit. In a text field that character is real
+    typing (Option+2 is `@` on Nordic layouts), so there only an Alt that yields the digit counts. */
 export function boardCardPriorityFromShortcut(event: {
   readonly altKey: boolean;
   readonly ctrlKey: boolean;
   readonly metaKey: boolean;
   readonly code: string;
+  readonly key: string;
+  readonly editable: boolean;
 }): BoardCardPriority | null {
   if (!event.altKey || event.ctrlKey || event.metaKey) return null;
   const match = /^Digit([1-4])$/.exec(event.code);
-  return match === null ? null : BOARD_CARD_PRIORITIES[Number(match[1]) - 1]!;
+  if (match === null) return null;
+  if (event.editable && event.key !== match[1]) return null;
+  return BOARD_CARD_PRIORITIES[Number(match[1]) - 1]!;
 }
 
 /**

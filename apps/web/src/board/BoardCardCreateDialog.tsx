@@ -88,6 +88,7 @@ import { BoardInput } from "./ui/BoardInput";
 import { BoardBriefEditor } from "./mentions/BoardBriefEditor";
 import { BoardCardPrioritySegmented } from "./BoardCardPriority";
 import { boardCardPriorityDialogRule, boardCardPriorityFromShortcut } from "./boardCardPriority";
+import { isEditableFocused } from "../lib/editableFocus";
 import { BoardButton } from "./ui/BoardButton";
 import { BoardDialogFooter, BoardDialogTitle } from "./ui/BoardDialog";
 import { BoardKbd } from "./ui/BoardKbd";
@@ -537,7 +538,14 @@ export function BoardCardCreateDialog({
       <DialogPopup
         className="max-h-[86vh] w-[min(600px,100%)] max-w-[600px] overflow-hidden"
         onKeyDown={(event) => {
-          const pickedPriority = boardCardPriorityFromShortcut(event);
+          const pickedPriority = boardCardPriorityFromShortcut({
+            altKey: event.altKey,
+            ctrlKey: event.ctrlKey,
+            metaKey: event.metaKey,
+            code: event.code,
+            key: event.key,
+            editable: isEditableFocused(event.target),
+          });
           if (pickedPriority !== null) {
             event.preventDefault();
             setPriority(pickedPriority);
