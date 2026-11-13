@@ -176,6 +176,7 @@ describe("deriveBoardSummaryOverview", () => {
       [["pass", "fail_preexisting"], "1 / 2 passed", "1 flagged, not from this card", "warning"],
       [["pass", "fail", "fail_preexisting"], "1 / 3 passed", "2 flagged", "warning"],
       [["pass", "not_run"], "1 / 2 passed", "1 skipped", "success"],
+      [["not_run", "not_run"], "0 / 2 passed", "2 skipped", "none"],
       [
         ["fail_preexisting", "not_run"],
         "0 / 2 passed",

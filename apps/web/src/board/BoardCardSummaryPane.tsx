@@ -314,6 +314,8 @@ export function BoardCardSummaryPane({
   pastBuild = false,
   integrates = true,
   initialOpen = [],
+  savedOpen = null,
+  onOpenChange,
 }: {
   readonly summary: BoardCardWorkSummary;
   /** The card's usage, when anything about it is known (T3O-77). */
@@ -330,6 +332,9 @@ export function BoardCardSummaryPane({
   readonly integrates?: boolean;
   /** Sections the opener asked for, such as Usage from a spend popover. */
   readonly initialOpen?: ReadonlyArray<BoardSummarySectionId>;
+  /** Sections open when the pane last unmounted; null on the card's first visit. */
+  readonly savedOpen?: ReadonlySet<BoardSummarySectionId> | null;
+  readonly onOpenChange?: ((open: ReadonlySet<BoardSummarySectionId>) => void) | undefined;
   readonly onBackToThread: () => void;
   readonly onOpenPullRequest: (url: string) => void;
   readonly onSelectReview: () => void;
@@ -343,9 +348,13 @@ export function BoardCardSummaryPane({
     pastBuild,
     integrates,
   });
-  const [open, setOpen] = useState<ReadonlySet<BoardSummarySectionId>>(
-    () => new Set([...overview.initiallyOpen, ...initialOpen]),
+  const [open, setOpenState] = useState<ReadonlySet<BoardSummarySectionId>>(
+    () => savedOpen ?? new Set([...overview.initiallyOpen, ...initialOpen]),
   );
+  const setOpen = (next: ReadonlySet<BoardSummarySectionId>) => {
+    setOpenState(next);
+    onOpenChange?.(next);
+  };
   const columnRef = useRef<HTMLDivElement>(null);
   const rowRefs = useRef(new Map<BoardSummarySectionId, HTMLButtonElement>());
   const idPrefix = useId();
@@ -360,23 +369,24 @@ export function BoardCardSummaryPane({
     column.scrollTo({ top: column.scrollTop + offset });
   };
   const openSection = (section: BoardSummarySectionId) => {
-    flushSync(() => setOpen((current) => new Set(current).add(section)));
+    flushSync(() => setOpen(new Set(open).add(section)));
     reveal(section);
   };
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the DOM to a section the opener asked for, once at mount
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the DOM to a section the opener asked for, once on the card's first visit
   useEffect(() => {
+    if (savedOpen !== null) return;
+    onOpenChange?.(open);
     const first = initialOpen[0];
     if (first !== undefined) reveal(first);
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- mount only: a later prop change must not yank the scroll.
   }, []);
 
-  const toggle = (section: BoardSummarySectionId) =>
-    setOpen((current) => {
-      const next = new Set(current);
-      if (next.has(section)) next.delete(section);
-      else next.add(section);
-      return next;
-    });
+  const toggle = (section: BoardSummarySectionId) => {
+    const next = new Set(open);
+    if (next.has(section)) next.delete(section);
+    else next.add(section);
+    setOpen(next);
+  };
   const present = overview.sections.map((section) => section.id);
   const anyOpen = present.some((id) => open.has(id));
 
@@ -693,7 +703,7 @@ export function BoardCardSummaryPane({
               key={section.id}
             >
               <button
-                aria-controls={bodyId}
+                aria-controls={isOpen ? bodyId : undefined}
                 aria-expanded={isOpen}
                 className={cn(
                   "flex min-h-11.5 w-full items-center gap-2.25 px-5.5 py-2 text-left hover:bg-accent",
@@ -720,8 +730,8 @@ export function BoardCardSummaryPane({
                 </span>
                 <span className="flex-1" />
                 <span className="flex flex-wrap justify-end gap-1.25">
-                  {section.chips.map((chip) => (
-                    <Chip chip={chip} key={chip.label} />
+                  {section.chips.map((chip, chipIndex) => (
+                    <Chip chip={chip} key={`${chipIndex}:${chip.label}`} />
                   ))}
                 </span>
               </button>

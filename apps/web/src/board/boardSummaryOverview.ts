@@ -193,7 +193,7 @@ function checksTile(checks: ReadonlyArray<BoardBuildSummaryCheck>): BoardSummary
       { weight: flagged, fill: "warning", tip: `${flagged} flagged` },
       { weight: skipped, fill: "neutral", tip: `${skipped} skipped` },
     ].filter((segment) => segment.weight > 0) as ReadonlyArray<BoardSummaryBarSegment>,
-    tone: flagged > 0 ? "warning" : "success",
+    tone: flagged > 0 ? "warning" : passed > 0 ? "success" : "none",
     tooltip: null,
     available: true,
   });

@@ -185,6 +185,7 @@ import {
   type BoardStepRecovery,
 } from "./boardStepRecovery";
 import { deriveBoardUsageBreakdown } from "./usage/boardUsageBreakdown";
+import type { BoardSummarySectionId } from "./boardSummaryOverview";
 import { BoardPopoverPopup } from "./ui/BoardPopoverPopup";
 import { BoardSheetPopup } from "./ui/BoardDialog";
 
@@ -2669,6 +2670,8 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
   // stage makes current", so the pane follows the card until the user picks a
   // thread, and a since-unlinked selection falls back to that same default.
   const [selectedThreadId, setSelectedThreadId] = useState<ThreadId | null>(null);
+  // Held here, not in the Summary pane, so its open sections survive a switch to another pane.
+  const [summaryOpen, setSummaryOpen] = useState<ReadonlySet<BoardSummarySectionId> | null>(null);
   // Read once on open, so a subagent asking mid-read never moves the pane;
   // the newest such thread, as the stage default prefers the newest.
   const [awaitingThreadAtOpen] = useState(() => {
@@ -3159,6 +3162,8 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 integrates={integrates}
                 usage={usageBreakdown}
                 initialOpen={props.usageRequested === true ? ["usage"] : []}
+                savedOpen={summaryOpen}
+                onOpenChange={setSummaryOpen}
                 decisionLog={decisionLog}
                 onSendBack={
                   buildStage === null
