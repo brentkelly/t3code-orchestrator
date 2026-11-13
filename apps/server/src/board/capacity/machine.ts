@@ -60,7 +60,10 @@ const duBytes = (path: string): Effect.Effect<number | null> =>
       { timeout: DU_TIMEOUT_MS, killSignal: "SIGKILL" },
       (error, stdout) => {
         const kb = Number(/^(\d+)/.exec(stdout)?.[1]);
-        resume(Effect.succeed(error === null && Number.isFinite(kb) ? kb * 1024 : null));
+        // du exits 1 on any unreadable subfolder yet still prints the total; a killed or
+        // timed-out one printed nothing usable.
+        const usable = error === null || (typeof error.code === "number" && !error.killed);
+        resume(Effect.succeed(usable && Number.isFinite(kb) ? kb * 1024 : null));
       },
     );
     return Effect.sync(() => child.kill("SIGKILL"));
