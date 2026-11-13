@@ -159,6 +159,7 @@ const remoteCandidates = Effect.fn("checkChanged.remoteCandidates")(function* (r
       Effect.map((stdout) => stdout.toString().trim()),
       Effect.orElseSucceed(() => ""),
     );
+  const current = yield* output(["symbolic-ref", "--quiet", "--short", "HEAD"]);
   const wanted: Array<{ ref: string; rev: string }> = [];
   for (const name of yield* gitLines(root, ["remote"])) {
     wanted.push({ ref: name + "/main", rev: "refs/remotes/" + name + "/main" });
@@ -167,7 +168,8 @@ const remoteCandidates = Effect.fn("checkChanged.remoteCandidates")(function* (r
     if (!head.startsWith(prefix)) continue;
     const branch = head.slice(prefix.length);
     wanted.push({ ref: name + "/" + branch, rev: head });
-    wanted.push({ ref: branch, rev: "refs/heads/" + branch });
+    // On the trunk itself its local copy is HEAD, which would hide every unpushed commit.
+    if (branch !== current) wanted.push({ ref: branch, rev: "refs/heads/" + branch });
   }
   const candidates: Array<{ ref: string; rev: string }> = [];
   const seen = new Set<string>();

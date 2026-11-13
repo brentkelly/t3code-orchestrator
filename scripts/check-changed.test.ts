@@ -334,6 +334,17 @@ it("compares against the remote's default branch when it sits closer than upstre
   assert.strictEqual(result.ref, "origin/t3o");
 });
 
+it("on the trunk branch itself, compares against its remote copy so unpushed commits are checked", async () => {
+  using project = fixture({ origin: "A" }, { origin: { branch: "t3o", at: "B" } });
+  NodeChildProcess.execFileSync("git", ["checkout", "-q", "-b", "t3o"], {
+    cwd: project.root,
+    env,
+  });
+  const result = await compare(project.root, Option.none());
+  assert.strictEqual(result.base, project.commits.B);
+  assert.strictEqual(result.ref, "origin/t3o");
+});
+
 it("compares against an explicit ref instead of the closest remote main", async () => {
   using project = fixture({ origin: "A", upstream: "B" });
   const result = await compare(project.root, Option.some("origin/main"));
