@@ -800,6 +800,71 @@ describe("ReviewLoopExecutor.planNext (D1/D3)", () => {
     ).toEqual(fable);
   });
 
+  it("the later-rounds access level runs past afterRound, inherits when unset, below overrides", () => {
+    const opus: BoardModelSelection = {
+      instanceId: ProviderInstanceId.make("anthropic"),
+      model: "claude-opus-5-5",
+    };
+    const execWith = (runtimeMode: "full-access" | undefined) =>
+      reviewExec({
+        rounds: 5,
+        laterReviewModel: {
+          afterRound: 2,
+          model: opus,
+          ...(runtimeMode === undefined ? {} : { runtimeMode }),
+        },
+        phases: {
+          ...DEFAULT_BOARD_REVIEW_STAGE_EXECUTION.phases,
+          review: {
+            ...DEFAULT_BOARD_REVIEW_STAGE_EXECUTION.phases.review,
+            runtimeMode: "approval-required",
+          },
+        },
+      });
+    const reviewLevel = (
+      exec: BoardStageExecutionReview,
+      completions: ReadonlyArray<BoardStepCompletion>,
+      stepId: string,
+      roundOverrides: BoardCardReviewOverrides | null = null,
+      cardOverride: BoardCardStageModelOverride | null = null,
+    ) => {
+      const next = plan(completions, exec, roundOverrides, null, false, cardOverride);
+      if (next.kind !== "run") throw new Error("expected a run");
+      expect(next.stepId).toBe(stepId);
+      return next.runtimeMode;
+    };
+    const twoRounds = [...cappedRound(1), ...cappedRound(2)];
+
+    expect(reviewLevel(execWith("full-access"), cappedRound(1), "review@2")).toBe(
+      "approval-required",
+    );
+    expect(reviewLevel(execWith("full-access"), twoRounds, "review@3")).toBe("full-access");
+    expect(reviewLevel(execWith(undefined), twoRounds, "review@3")).toBe("approval-required");
+    // Triage keeps its own level whatever tier the round is on.
+    const triage3 = plan(
+      [...twoRounds, completion("review@3", reviewPayload([finding("critical", "f3")]))],
+      execWith("full-access"),
+    );
+    if (triage3.kind !== "run") throw new Error("expected a run");
+    expect(triage3.stepId).toBe("triage@3");
+    expect(triage3.runtimeMode).toBe("auto");
+    // A card's Review level and a round the user escalated by hand both beat the tier.
+    expect(
+      reviewLevel(execWith("full-access"), twoRounds, "review@3", null, {
+        ...opus,
+        runtimeMode: "auto-accept-edits",
+      }),
+    ).toBe("auto-accept-edits");
+    expect(
+      reviewLevel(
+        execWith("full-access"),
+        twoRounds,
+        "review@3",
+        overrides({ roundModels: { "3": { ...opus, runtimeMode: "approval-required" } } }),
+      ),
+    ).toBe("approval-required");
+  });
+
   it("t3o-29: the card override's access level applies, and its absence inherits", () => {
     const base: BoardCardStageModelOverride = {
       instanceId: ProviderInstanceId.make("anthropic"),

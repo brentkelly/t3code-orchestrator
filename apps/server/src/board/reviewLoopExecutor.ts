@@ -25,10 +25,10 @@ import {
   parseReviewStepId,
   reviewStepId,
   resolveBoardReviewTierModel,
+  resolveBoardReviewTierRuntimeMode,
   reviewStepLabel,
   type BoardCardReviewOverrides,
   type BoardModelSelection,
-  type BoardReviewPhaseExecution,
   type BoardReviewRoundOverride,
   type BoardCardStageModelOverride,
   boardModelSelectionOfOverride,
@@ -107,7 +107,7 @@ function resolvePhaseModel(input: {
  */
 function resolvePhaseRuntimeMode(input: {
   readonly phase: BoardReviewPhaseId;
-  readonly phaseConfig: BoardReviewPhaseExecution;
+  readonly configuredRuntimeMode: RuntimeMode | undefined;
   readonly roundOverride: BoardReviewRoundOverride | undefined;
   readonly cardOverride: BoardCardStageModelOverride | null;
 }): RuntimeMode {
@@ -118,7 +118,7 @@ function resolvePhaseRuntimeMode(input: {
     input.phase === "review"
       ? (input.roundOverride?.runtimeMode ?? input.cardOverride?.runtimeMode)
       : undefined;
-  return effectiveBoardRuntimeMode(override ?? input.phaseConfig.runtimeMode, "build");
+  return effectiveBoardRuntimeMode(override ?? input.configuredRuntimeMode, "build");
 }
 
 /**
@@ -227,7 +227,10 @@ function reviewLoopDecision(input: {
       }),
       runtimeMode: resolvePhaseRuntimeMode({
         phase,
-        phaseConfig,
+        configuredRuntimeMode:
+          phase === "review"
+            ? resolveBoardReviewTierRuntimeMode(review, round)
+            : phaseConfig.runtimeMode,
         roundOverride: overrides?.roundModels[String(round)],
         cardOverride: config.cardOverride,
       }),
@@ -282,7 +285,7 @@ function reviewLoopDecision(input: {
       }),
       runtimeMode: resolvePhaseRuntimeMode({
         phase: basePhase,
-        phaseConfig,
+        configuredRuntimeMode: phaseConfig.runtimeMode,
         roundOverride: undefined,
         cardOverride: config.cardOverride,
       }),

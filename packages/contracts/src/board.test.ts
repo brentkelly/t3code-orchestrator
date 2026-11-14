@@ -9,6 +9,7 @@ import {
   boardCardEffectivePriority,
   BoardStageExecution,
   resolveBoardReviewTierModel,
+  resolveBoardReviewTierRuntimeMode,
   boardPullRequestPredatesCard,
   BoardCardStepState,
   BOARD_CARD_LABELS_MAX,
@@ -1514,6 +1515,52 @@ describe("resolveBoardReviewTierModel (T3O-94)", () => {
         1,
       ),
     ).toBeNull();
+  });
+});
+
+describe("resolveBoardReviewTierRuntimeMode (T3O-98)", () => {
+  const opus = { instanceId: ProviderInstanceId.make("anthropic"), model: "claude-opus-5-5" };
+  const decode = (laterReviewModel: unknown) => {
+    const decoded = decodeStageExecution({
+      kind: "review",
+      laterReviewModel,
+      phases: { review: { runtimeMode: "approval-required" } },
+    });
+    if (decoded.kind !== "review") throw new Error("expected the review member");
+    return decoded;
+  };
+
+  it("decodes a later model stored before it had a level, and round-trips one with it", () => {
+    expect(decode({ afterRound: 2, model: opus }).laterReviewModel).toEqual({
+      afterRound: 2,
+      model: opus,
+    });
+    const withLevel = decode({ afterRound: 2, model: opus, runtimeMode: "full-access" });
+    expect(withLevel.laterReviewModel?.runtimeMode).toBe("full-access");
+    expect(
+      Schema.decodeUnknownSync(BoardStageExecution)(
+        Schema.encodeSync(BoardStageExecution)(withLevel),
+      ),
+    ).toEqual(withLevel);
+  });
+
+  it.each([
+    ["off", null, 9, "approval-required"],
+    [
+      "on, at the boundary",
+      { afterRound: 2, model: opus, runtimeMode: "full-access" },
+      2,
+      "approval-required",
+    ],
+    [
+      "on, past the boundary",
+      { afterRound: 2, model: opus, runtimeMode: "full-access" },
+      3,
+      "full-access",
+    ],
+    ["on, no level of its own inherits", { afterRound: 2, model: opus }, 3, "approval-required"],
+  ] as const)("%s", (_name, later, round, expected) => {
+    expect(resolveBoardReviewTierRuntimeMode(decode(later), round)).toBe(expected);
   });
 });
 
