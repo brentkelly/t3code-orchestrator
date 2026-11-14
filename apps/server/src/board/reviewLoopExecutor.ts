@@ -227,8 +227,9 @@ function reviewLoopDecision(input: {
       }),
       runtimeMode: resolvePhaseRuntimeMode({
         phase,
+        // A card (or parent) Review override replaces both tiers, as it does for the model.
         configuredRuntimeMode:
-          phase === "review"
+          phase === "review" && config.cardOverride === null
             ? resolveBoardReviewTierRuntimeMode(review, round)
             : phaseConfig.runtimeMode,
         roundOverride: overrides?.roundModels[String(round)],

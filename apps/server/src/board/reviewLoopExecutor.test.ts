@@ -800,7 +800,7 @@ describe("ReviewLoopExecutor.planNext (D1/D3)", () => {
     ).toEqual(fable);
   });
 
-  it("the later-rounds access level runs past afterRound, inherits when unset, below overrides", () => {
+  it("the later-rounds access level runs past afterRound, inherits when unset, and a card override replaces it", () => {
     const opus: BoardModelSelection = {
       instanceId: ProviderInstanceId.make("anthropic"),
       model: "claude-opus-5-5",
@@ -848,7 +848,11 @@ describe("ReviewLoopExecutor.planNext (D1/D3)", () => {
     if (triage3.kind !== "run") throw new Error("expected a run");
     expect(triage3.stepId).toBe("triage@3");
     expect(triage3.runtimeMode).toBe("auto");
-    // A card's Review level and a round the user escalated by hand both beat the tier.
+    // A card's Review override replaces both tiers: with no level of its own it runs at the
+    // Review phase's, not the later one's. Its level and a hand-escalated round beat the tier.
+    expect(reviewLevel(execWith("full-access"), twoRounds, "review@3", null, opus)).toBe(
+      "approval-required",
+    );
     expect(
       reviewLevel(execWith("full-access"), twoRounds, "review@3", null, {
         ...opus,
