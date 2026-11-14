@@ -4,6 +4,7 @@
  * it, and Set up on worker.
  */
 import { useAtomValue } from "@effect/atom-react";
+import { AsyncResult } from "effect/reactivity";
 import {
   boardRepositoryGroupingKey,
   type BoardWorkerId,
@@ -16,13 +17,7 @@ import * as Option from "effect/Option";
 import { boardEnvironment } from "../../state/board";
 import { environmentShell } from "../../state/shell";
 import { useAtomCommand } from "../../state/use-atom-command";
-import {
-  boardShowsWorkers,
-  boardWorkerChoices,
-  boardWorkerRunningCounts,
-  type BoardWorkerChoice,
-} from "./cardWorker";
-import { useBoardSettings } from "../useBoardEnvironmentId";
+import { boardShowsWorkers, boardWorkerChoices, type BoardWorkerChoice } from "./cardWorker";
 
 export interface BoardWorkerChoices {
   readonly workers: BoardWorkersState;
@@ -39,9 +34,8 @@ export function useBoardWorkerChoices(
   projectId: ProjectId | null,
 ): BoardWorkerChoices {
   const workers = useAtomValue(boardEnvironment.workersAtom(environmentId));
-  const cardsByProject = useAtomValue(boardEnvironment.cardsByProjectAtom(environmentId));
   const shellState = useAtomValue(environmentShell.stateValueAtom(environmentId));
-  const concurrency = useBoardSettings((settings) => settings.board.concurrency);
+  const capacityResult = useAtomValue(boardEnvironment.capacityAtom({ environmentId, input: {} }));
   const setupProject = useAtomCommand(boardEnvironment.setupWorkerProject);
   const shown = boardShowsWorkers(workers);
 
@@ -60,14 +54,12 @@ export function useBoardWorkerChoices(
 
   const choices = (() => {
     if (!shown || projectId === null) return [];
-    const cards = [...cardsByProject.values()].flatMap((byStage) => Object.values(byStage).flat());
     return boardWorkerChoices({
       state: workers,
       projectId,
       projectRepositoryKey,
       projectName,
-      running: boardWorkerRunningCounts(cards, workers),
-      concurrency,
+      capacity: AsyncResult.isSuccess(capacityResult) ? capacityResult.value : new Map(),
     });
   })();
 

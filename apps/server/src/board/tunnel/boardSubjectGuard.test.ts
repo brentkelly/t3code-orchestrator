@@ -48,8 +48,19 @@ it.effect(
       const handlers = guardBoardHandlers(USER, {
         [BOARD_WORKER_WS_METHODS.hello]: () => Effect.succeed("hello"),
         [BOARD_WORKER_GATEWAY_WS_METHODS.subscribeSignals]: () => Stream.make(1),
+        // T3O-86's capacity stream is refused as a stream too.
+        [BOARD_WORKER_GATEWAY_WS_METHODS.subscribeCapacity]: () => Stream.make(1),
         "orchestration.getSnapshot": () => Effect.succeed("ok"),
       });
+      const capacity = yield* Stream.runCollect(
+        (
+          handlers[BOARD_WORKER_GATEWAY_WS_METHODS.subscribeCapacity] as () => Stream.Stream<
+            number,
+            { _tag: string }
+          >
+        )(),
+      ).pipe(Effect.flip);
+      assert.strictEqual(capacity._tag, "EnvironmentAuthorizationError");
       const hello = yield* Effect.flip(
         (
           handlers[BOARD_WORKER_WS_METHODS.hello] as () => Effect.Effect<string, { _tag: string }>

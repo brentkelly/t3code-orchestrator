@@ -6,7 +6,6 @@
  */
 import {
   BOARD_WORKER_GATEWAY_RPC_SCOPES,
-  type AuthSessionId,
   BOARD_WORKER_GATEWAY_WS_METHODS as M,
   BoardWorkerGatewayError,
   EnvironmentAuthorizationError,
@@ -15,6 +14,7 @@ import {
   type BoardStageAttachmentsInput,
   type BoardWorkerRunCiInput,
   type BoardWorkerReadCiLogInput,
+  type BoardWorkerRunSetupInput,
   type EnvironmentId,
   boardIdOfBoardSubject,
 } from "@t3tools/contracts";
@@ -23,7 +23,11 @@ import * as Stream from "effect/Stream";
 
 import type { AuthenticatedSession } from "../../auth/EnvironmentAuth.ts";
 import { encodeGatewayCallResult } from "./gatewayWire.ts";
-import { WorkerGatewayHost, type WorkerGatewayHostShape } from "./WorkerGatewayHost.ts";
+import {
+  WorkerGatewayHost,
+  type GatewayCaller,
+  type WorkerGatewayHostShape,
+} from "./WorkerGatewayHost.ts";
 
 type Method = keyof typeof BOARD_WORKER_GATEWAY_RPC_SCOPES;
 
@@ -31,30 +35,30 @@ type Method = keyof typeof BOARD_WORKER_GATEWAY_RPC_SCOPES;
 const runGatewayCall = (
   host: WorkerGatewayHostShape,
   call: BoardGatewayCall,
-  caller: AuthSessionId,
+  caller: GatewayCaller,
 ): Effect.Effect<unknown, BoardWorkerGatewayError> => {
   const answer = (): Effect.Effect<unknown, BoardWorkerGatewayError> => {
     switch (call._tag) {
       case "spawn":
         return host.spawn(call.input, caller).pipe(Effect.as(null));
       case "send":
-        return host.send(call.input).pipe(Effect.as(null));
+        return host.send(call.input, caller).pipe(Effect.as(null));
       case "interrupt":
-        return host.interrupt(call.input).pipe(Effect.as(null));
+        return host.interrupt(call.input, caller).pipe(Effect.as(null));
       case "stopSession":
-        return host.stopSession(call.input).pipe(Effect.as(null));
+        return host.stopSession(call.input, caller).pipe(Effect.as(null));
       case "settle":
-        return host.settle(call.input).pipe(Effect.as(null));
+        return host.settle(call.input, caller).pipe(Effect.as(null));
       case "delete":
-        return host.delete(call.input).pipe(Effect.as(null));
+        return host.delete(call.input, caller).pipe(Effect.as(null));
       case "armLimitRecovery":
-        return host.armLimitRecovery(call.input);
+        return host.armLimitRecovery(call.input, caller);
       case "answerPendingInput":
-        return host.answerPendingInput(call.input);
+        return host.answerPendingInput(call.input, caller);
       case "linkPullRequest":
-        return host.linkPullRequest(call.input).pipe(Effect.as(null));
+        return host.linkPullRequest(call.input, caller).pipe(Effect.as(null));
       case "unlinkPullRequest":
-        return host.unlinkPullRequest(call.input).pipe(Effect.as(null));
+        return host.unlinkPullRequest(call.input, caller).pipe(Effect.as(null));
       case "threadState":
         return host.threadState(call.threadId);
       case "threadRecords":
@@ -77,6 +81,26 @@ const runGatewayCall = (
         return host.project(call.projectId);
       case "todoLogHead":
         return host.todoLogHead;
+      case "claimCapacity":
+        return host.claimCapacity(call.input, caller);
+      case "hold":
+        return host.hold(call.input, caller);
+      case "releaseHold":
+        return host.releaseHold(call.cardId, caller).pipe(Effect.as(null));
+      case "syncCards":
+        return host.syncCards(call.input, caller);
+      case "setupState":
+        return host.setupState(call.worktreePath, caller);
+      case "cancelSetup":
+        return host.cancelSetup(call.worktreePath, caller).pipe(Effect.as(null));
+      case "readSetupLog":
+        return host.readSetupLog(call.worktreePath, caller);
+      case "checkReadiness":
+        return host.checkReadiness(call.input, caller);
+      case "readinessOutput":
+        return host.readinessOutput(call.repositoryKey, call.path, caller);
+      case "actuals":
+        return host.actuals(call.input, caller);
     }
   };
   return answer().pipe(
@@ -96,6 +120,11 @@ const runGatewayCall = (
 };
 
 export const workerGatewayRpcHandlers = (currentSession: AuthenticatedSession) => {
+  // T3o (T3O-86): the board is the session's subject, never anything a request says.
+  const caller: GatewayCaller = {
+    sessionId: currentSession.sessionId,
+    boardId: boardIdOfBoardSubject(currentSession.subject),
+  };
   const denied = (method: Method) => {
     const requiredScope = BOARD_WORKER_GATEWAY_RPC_SCOPES[method];
     return currentSession.scopes.includes(requiredScope)
@@ -131,9 +160,7 @@ export const workerGatewayRpcHandlers = (currentSession: AuthenticatedSession) =
   return {
     // The caller is the authenticated session, never anything the request
     // says about itself: it is what binds a board's relay (`McpRelayHost`).
-    [M.call]: call(M.call, (host, input: BoardGatewayCall) =>
-      runGatewayCall(host, input, currentSession.sessionId),
-    ),
+    [M.call]: call(M.call, (host, input: BoardGatewayCall) => runGatewayCall(host, input, caller)),
     [M.subscribeSignals]: stream(
       M.subscribeSignals,
       (host, input: { readonly afterSequence: number | null; readonly withUsage?: boolean }) =>
@@ -164,9 +191,15 @@ export const workerGatewayRpcHandlers = (currentSession: AuthenticatedSession) =
     [M.stageAttachments]: call(M.stageAttachments, (host, input: BoardStageAttachmentsInput) =>
       host.stageAttachments(input),
     ),
-    [M.runCi]: stream(M.runCi, (host, input: BoardWorkerRunCiInput) => host.runCi(input)),
+    [M.runCi]: stream(M.runCi, (host, input: BoardWorkerRunCiInput) => host.runCi(input, caller)),
     [M.readCiLog]: stream(M.readCiLog, (host, input: BoardWorkerReadCiLogInput) =>
-      host.readCiLog(input),
+      host.readCiLog(input, caller),
+    ),
+    [M.subscribeCapacity]: stream(M.subscribeCapacity, (host, _input: Record<string, never>) =>
+      host.subscribeCapacity(caller),
+    ),
+    [M.runSetup]: stream(M.runSetup, (host, input: BoardWorkerRunSetupInput) =>
+      host.runSetup(input, caller),
     ),
   };
 };

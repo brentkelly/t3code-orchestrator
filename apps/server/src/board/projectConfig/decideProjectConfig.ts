@@ -7,6 +7,7 @@ import {
   BOARD_CONFIG_VERSION_MISMATCH,
   BOARD_SEED_STAGE_IDS,
   BOARD_SYSTEM_ACTOR,
+  EMPTY_BOARD_PROJECT_RESOURCES,
   EMPTY_BOARD_PROJECT_STAGE_CONFIG,
   EventId,
   boardCiStepsRefusal,
@@ -16,8 +17,11 @@ import {
   boardStageOrderViolation,
   boardStages,
   isBoardStageSwitchable,
+  isEmptyBoardProjectResources,
+  normalizeBoardReadinessPath,
   withBoardProjectConfigVersion,
   type BoardActivityActor,
+  type BoardProjectResources,
   type BoardProjectStageConfig,
   type BoardStageDefinition,
   type BoardState,
@@ -68,9 +72,15 @@ const projectConfigEvent = Effect.fn("projectConfigEvent")(function* (input: {
 
 function nextConfig(
   current: BoardProjectStageConfig,
-  change: Partial<Pick<BoardProjectStageConfig, "stageSwitches" | "overrides" | "ci" | "warnings">>,
+  change: Partial<
+    Pick<BoardProjectStageConfig, "stageSwitches" | "overrides" | "ci" | "warnings" | "resources">
+  >,
   changedBy: { readonly actor: BoardActivityActor; readonly at: string } | null,
 ): BoardProjectStageConfig {
+  const resources =
+    change.resources === undefined
+      ? current.resources
+      : withBoardOwnedResources(change.resources, current.resources);
   return withBoardProjectConfigVersion({
     stageSwitches: change.stageSwitches ?? current.stageSwitches,
     overrides: change.overrides ?? current.overrides,
@@ -79,7 +89,23 @@ function nextConfig(
     // An import's warnings describe the file as imported; any edit moves on from it.
     warnings: change.warnings ?? [],
     lastChangedBy: changedBy ?? current.lastChangedBy,
+    ...(isEmptyBoardProjectResources(resources) ? {} : { resources }),
   });
+}
+
+/** T3o (T3O-87): an edit or an import never overwrites what the board learned, and an import
+    (which carries no Pin declared) keeps the project's pins. */
+function withBoardOwnedResources(
+  next: BoardProjectResources,
+  current: BoardProjectResources | undefined,
+): BoardProjectResources {
+  const { learned: _sent, ...edited } = next;
+  const pinDeclared = edited.pinDeclared ?? current?.pinDeclared;
+  return {
+    ...edited,
+    ...(pinDeclared === undefined || pinDeclared.length === 0 ? {} : { pinDeclared }),
+    ...(current?.learned === undefined ? {} : { learned: current.learned }),
+  };
 }
 
 function withoutKey<V>(record: Readonly<Record<string, V>>, key: string): Record<string, V> {
@@ -113,7 +139,10 @@ export const decideProjectConfigCommand = Effect.fn("decideProjectConfigCommand"
   if (expected !== undefined && expected !== current.version) {
     return yield* refuse(command, BOARD_CONFIG_VERSION_MISMATCH);
   }
-  const changedBy = { actor: command.actor ?? BOARD_SYSTEM_ACTOR, at: command.createdAt };
+  const changedBy = {
+    actor: ("actor" in command ? command.actor : undefined) ?? BOARD_SYSTEM_ACTOR,
+    at: command.createdAt,
+  };
   const emit = (config: BoardProjectStageConfig, cause: ConfigCause) =>
     projectConfigEvent({ command, projectId: command.projectId, config, cause }).pipe(
       Effect.map((event) => [event]),
@@ -169,6 +198,42 @@ export const decideProjectConfigCommand = Effect.fn("decideProjectConfigCommand"
         ),
         "ci-stop-on-failure",
       );
+    }
+    case "board.project.set-resources": {
+      const { resources } = command;
+      if (
+        resources.readinessPath !== null &&
+        normalizeBoardReadinessPath(resources.readinessPath) === null
+      ) {
+        return yield* refuse(
+          command,
+          "The readiness script's path must be relative and inside the repository.",
+        );
+      }
+      return yield* emit(
+        nextConfig(
+          current,
+          {
+            resources: {
+              ...resources,
+              readinessPath:
+                resources.readinessPath === null
+                  ? null
+                  : normalizeBoardReadinessPath(resources.readinessPath),
+            },
+          },
+          changedBy,
+        ),
+        "resources",
+      );
+    }
+    case "board.project.record-learned": {
+      // The board's own write: no actor, warnings kept, and the version unmoved.
+      const resources = {
+        ...(current.resources ?? EMPTY_BOARD_PROJECT_RESOURCES),
+        learned: command.learned,
+      };
+      return yield* emit(withBoardProjectConfigVersion({ ...current, resources }), "resources");
     }
     case "board.project.set-ci-enabled": {
       const ci = boardStageById(board, BOARD_SEED_STAGE_IDS.ci);
@@ -252,6 +317,9 @@ export const decideProjectConfigCommand = Effect.fn("decideProjectConfigCommand"
               overrides: command.delta.overrides,
               ci: command.delta.ci,
               warnings: command.delta.warnings,
+              ...(command.delta.resources === undefined
+                ? {}
+                : { resources: command.delta.resources }),
             },
             changedBy,
           ),

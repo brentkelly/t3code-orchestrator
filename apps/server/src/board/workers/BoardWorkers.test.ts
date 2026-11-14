@@ -1,4 +1,5 @@
 import {
+  boardCardStepState,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthFilesystemReadScope,
@@ -10,6 +11,7 @@ import {
   ProviderInstanceId,
   T3O_TUNNEL_PROTOCOL_VERSION,
   ThreadId,
+  type BoardGatewayThreadState,
   type BoardWorkerConnectionState,
   type BoardWorkerSetup,
   type ExecutionEnvironmentDescriptor,
@@ -17,6 +19,7 @@ import {
 import { assert, describe, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -56,6 +59,11 @@ import {
   type WorkerConnectionsShape,
 } from "./WorkerConnections.ts";
 import { WorkerRpcError } from "./WorkerTransport.ts";
+import {
+  BoardWorkspaces,
+  type BoardCardWorkspace,
+  type BoardWorkspacesShape,
+} from "../workspace/BoardWorkspace.ts";
 import { makeFakeWorkerLayer, unsupportedGateway, type FakeWorker } from "./workers.testkit.ts";
 
 const BOARD_ENVIRONMENT_ID = EnvironmentId.make("env-board");
@@ -73,9 +81,17 @@ const descriptor = (environmentId: string, label: string): ExecutionEnvironmentD
   capabilities: { repositoryIdentity: true },
 });
 
+/** Every `git` the service ran, as `cwd args…`. */
+const gitRuns: Array<string> = [];
+
 const gitStub = Layer.succeed(GitVcsDriver, {
   readConfigValue: (_cwd: string, key: string) =>
     Effect.succeed(key === "remote.origin.url" ? ORIGIN_URL : null),
+  execute: (input: { readonly cwd: string; readonly args: ReadonlyArray<string> }) =>
+    Effect.sync(() => {
+      gitRuns.push([input.cwd, ...input.args].join(" "));
+      return { stdout: "", stderr: "", exitCode: 0 };
+    }),
 } as unknown as GitVcsDriver["Service"]);
 
 const environmentStub = Layer.succeed(ServerEnvironment, {
@@ -96,6 +112,7 @@ let projectCommands = 0;
 const setupWith = (
   options: {
     readonly dispatch?: (real: BoardEngineShape["dispatch"]) => BoardEngineShape["dispatch"];
+    readonly workspaces?: BoardWorkspacesShape;
   } = {},
 ) =>
   Effect.gen(function* () {
@@ -133,13 +150,16 @@ const setupWith = (
       Effect.provideService(BoardWorkerJoinStore, joinStore),
       Effect.provide(relay.layer.pipe(Layer.provideMerge(kit.layer))),
     );
-    const workers = yield* makeBoardWorkers.pipe(
+    const made = makeBoardWorkers.pipe(
       Effect.provideService(WorkerConnections, connections),
       Effect.provideService(BoardEngine, engineForTest),
       Effect.provideService(BoardWorkerJoin, join),
       Effect.provideService(BoardWorkerJoinStore, joinStore),
       Effect.provide(relay.layer.pipe(Layer.provideMerge(kit.layer))),
     );
+    const workers = yield* options.workspaces === undefined
+      ? made
+      : made.pipe(Effect.provideService(BoardWorkspaces, options.workspaces));
     return { kit, worker, connections, workers, relay, join, joinStore };
   });
 
@@ -195,6 +215,138 @@ const acceptedBody = (outcome: JoinOutcome) => {
 
 const refusalOf = (outcome: JoinOutcome) =>
   outcome._tag === "refused" ? outcome.body.refused : "accepted";
+
+/** A card pinned and placed on the worker, its worktree cut there and its Build step running. */
+const runningOnWorker = (
+  engine: Effect.Success<typeof boardStackEngine>,
+  busy: BoardCardId,
+  threadId: ThreadId,
+) =>
+  Effect.gen(function* () {
+    // Its worktree is cut on the worker it is pinned to.
+    yield* engine.dispatch({
+      type: "board.card.place",
+      commandId: CommandId.make("cmd-place"),
+      cardId: busy,
+      workerId: WORKER_ID,
+      createdAt: t0,
+    });
+    yield* engine.dispatch({
+      type: "board.card.provision-worktree",
+      commandId: CommandId.make("cmd-provision"),
+      cardId: busy,
+      branch: "board/card-busy",
+      baseRefName: "main",
+      createdAt: t0,
+    });
+    yield* engine.dispatch({
+      type: "board.card.record-worktree",
+      commandId: CommandId.make("cmd-record"),
+      cardId: busy,
+      path: "/home/linux-box/worktrees/card-busy",
+      createdAt: t0,
+    });
+    yield* engine.dispatch({
+      type: "board.card.select-step",
+      commandId: CommandId.make("cmd-select"),
+      cardId: busy,
+      stepId: "build",
+      stepLabel: "Build",
+      stageLabel: "Building",
+      prompt: "build it",
+      providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+      model: "claude",
+      mode: "build",
+      runtimeMode: "auto",
+      humanInLoop: false,
+      maxAttempts: 3,
+      timeoutMs: 60_000,
+      baseTipAtRoundStart: null,
+      createdAt: t0,
+    });
+    yield* engine.dispatch({
+      type: "board.card.admit-step",
+      commandId: CommandId.make("cmd-admit"),
+      cardId: busy,
+      stepId: "build",
+      admitted: true,
+      threadId,
+      createdAt: t0,
+    });
+  });
+
+/** Remove the worker while its running card's stopped turn ends, or never does (T3O-87). */
+const removeWhileTurn = (turn: "ends" | "never ends", outcome: "reclaimed" | "orphaned") =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const probes: Array<string> = [];
+      const workspace = {
+        probeWorktreeDurability: (input: { readonly worktreePath: string }) =>
+          Effect.sync(() => {
+            probes.push(input.worktreePath);
+            return {
+              hasWorkingTreeChanges: false,
+              changedPaths: [],
+              openPullRequestNumber: null,
+              durable: true,
+              unmergedCount: 0,
+              unpushedCount: 0,
+              hasUpstream: true,
+              unpushedCommits: [],
+              baseFetched: true,
+            };
+          }),
+        remoteBranchTip: () =>
+          Effect.succeed({ sha: "abc", subject: "Work", committedAt: t0, author: "a" }),
+      } as unknown as BoardCardWorkspace;
+      const context = yield* setupWith({
+        workspaces: {
+          forWorker: () => Effect.succeed(workspace),
+        } as unknown as BoardWorkspacesShape,
+      });
+      const { worker, connections, workers } = context;
+      const engine = yield* boardStackEngine;
+      worker.gateway = {
+        ...unsupportedGateway,
+        stopSession: () => Effect.void,
+        threadState: (threadId) =>
+          Effect.succeed({
+            threadId,
+            alive: true,
+            sessionStatus: turn === "ends" ? "stopped" : "running",
+            activeTurnRef: turn === "ends" ? null : "turn-1",
+          } as unknown as BoardGatewayThreadState),
+      };
+      yield* joinWorker(context);
+      yield* waitFor(connections, "online");
+      const busy = BoardCardId.make("card-busy");
+      yield* engine.dispatch({
+        type: "board.card.create",
+        commandId: CommandId.make("cmd-create-busy"),
+        cardId: busy,
+        projectId: PROJECT_ID,
+        title: "Typed IPC boundaries",
+        orderKey: "m-busy",
+        pinnedWorkerId: WORKER_ID,
+        createdAt: t0,
+      });
+      yield* runningOnWorker(engine, busy, ThreadId.make("thread-busy"));
+
+      const removing = yield* workers.remove(WORKER_ID).pipe(Effect.forkChild);
+      yield* TestClock.adjust("1 minute");
+      yield* Fiber.join(removing);
+      const board = (yield* (yield* boardStackSnapshotQuery).getCommandReadModel()).board!;
+      const card = board.cards.find((candidate) => candidate.id === busy)!;
+      if (outcome === "reclaimed") {
+        assert.strictEqual(card.worktree?.status, "reclaimed");
+        assert.isNull(card.placementOrphaned);
+      } else {
+        // A turn still going could commit after the probe: never probed, a human decides.
+        assert.deepStrictEqual(probes, []);
+        assert.strictEqual(card.placementOrphaned?.workerId, WORKER_ID);
+      }
+    }),
+  );
 
 /** Each test on its own board: the stack's database is fresh per build. */
 const test = <A, E>(
@@ -528,50 +680,7 @@ describe("BoardWorkers", () => {
         // A step running there.
         yield* create("card-busy", "Typed IPC boundaries");
         const busy = BoardCardId.make("card-busy");
-        const threadId = ThreadId.make("thread-busy");
-        // Its worktree is cut on the worker it is pinned to.
-        yield* engine.dispatch({
-          type: "board.card.provision-worktree",
-          commandId: CommandId.make("cmd-provision"),
-          cardId: busy,
-          branch: "board/card-busy",
-          baseRefName: "main",
-          createdAt: t0,
-        });
-        yield* engine.dispatch({
-          type: "board.card.record-worktree",
-          commandId: CommandId.make("cmd-record"),
-          cardId: busy,
-          path: "/home/linux-box/worktrees/card-busy",
-          createdAt: t0,
-        });
-        yield* engine.dispatch({
-          type: "board.card.select-step",
-          commandId: CommandId.make("cmd-select"),
-          cardId: busy,
-          stepId: "build",
-          stepLabel: "Build",
-          stageLabel: "Building",
-          prompt: "build it",
-          providerInstanceId: ProviderInstanceId.make("claudeAgent"),
-          model: "claude",
-          mode: "build",
-          runtimeMode: "auto",
-          humanInLoop: false,
-          maxAttempts: 3,
-          timeoutMs: 60_000,
-          baseTipAtRoundStart: null,
-          createdAt: t0,
-        });
-        yield* engine.dispatch({
-          type: "board.card.admit-step",
-          commandId: CommandId.make("cmd-admit"),
-          cardId: busy,
-          stepId: "build",
-          admitted: true,
-          threadId,
-          createdAt: t0,
-        });
+        yield* runningOnWorker(engine, busy, ThreadId.make("thread-busy"));
 
         const preview = yield* workers.removePreview(WORKER_ID);
         assert.strictEqual(preview.workerLabel, "linux-box");
@@ -598,10 +707,19 @@ describe("BoardWorkers", () => {
         const held = board.cards.find((card) => card.id === busy)!;
         assert.strictEqual(held.placementOrphaned?.workerId, WORKER_ID);
         assert.strictEqual(held.placementOrphaned?.workerLabel, "linux-box");
+        // T3o: parked before its session stopped, the way a human Stop does, so nothing
+        // recovers it mid-sequence (T3O-87).
+        assert.strictEqual(boardCardStepState(board, busy)?.status, "paused");
       }),
     ));
 
-  test("a removal preview with nothing there, and none for the default worker", () =>
+  test("removal probes a stopped step's worktree once its turn has ended (T3O-87)", () =>
+    removeWhileTurn("ends", "reclaimed"));
+
+  test("removal never probes a worktree whose turn didn't end (T3O-87)", () =>
+    removeWhileTurn("never ends", "orphaned"));
+
+  test("a removal preview with nothing there; a worker once made the default can go (T3O-87)", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const context = yield* setup;
@@ -610,31 +728,47 @@ describe("BoardWorkers", () => {
         yield* waitFor(connections, "online");
         const preview = yield* workers.removePreview(WORKER_ID);
         assert.deepStrictEqual([preview.toDefault, preview.byHand], [[], []]);
+        // The default worker is retired: one recorded as the default is removable like any.
         yield* workers.setDefault(WORKER_ID);
-        const refusal = yield* Effect.flip(workers.removePreview(WORKER_ID));
-        assert.strictEqual(refusal.code, "is-default");
+        yield* workers.removePreview(WORKER_ID);
+        yield* workers.remove(WORKER_ID);
+        assert.deepStrictEqual((yield* workers.state).workers, []);
       }),
     ));
 
-  test("refuses removing the default worker, and making an offline one the default", () =>
+  test("Clone here clones only into a missing or empty folder on the board server (T3O-87)", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const context = yield* setup;
-        const { worker, kit, connections, workers } = context;
-        yield* joinWorker(context);
-        yield* waitFor(connections, "online");
-        yield* workers.setDefault(WORKER_ID);
-        assert.strictEqual((yield* workers.state).defaultWorkerId, WORKER_ID);
-        const refusal = yield* Effect.flip(workers.remove(WORKER_ID));
-        assert.strictEqual(refusal.code, "is-default");
-        assert.strictEqual(refusal.message, "Make another worker the default first.");
-
-        yield* workers.setDefault(BOARD_LOCAL_WORKER_ID);
-        worker.mode = "unreachable";
-        yield* kit.fake.drop(worker);
-        yield* waitFor(connections, "offline");
-        const offline = yield* Effect.flip(workers.setDefault(WORKER_ID));
-        assert.strictEqual(offline.code, "not-online");
+        const { workers } = yield* setup;
+        const engine = yield* boardStackEngine;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const base = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3o-clone-here-" });
+        const projectAt = Effect.fn("projectAt")(function* (name: string) {
+          const projectId = ProjectId.make(`project-${name}`);
+          yield* engine.dispatch({
+            type: "project.create",
+            commandId: CommandId.make(`cmd-project-${name}-${++projectCommands}`),
+            projectId,
+            title: name,
+            workspaceRoot: `${base}/${name}`,
+            createdAt: t0,
+          });
+          return projectId;
+        });
+        gitRuns.length = 0;
+        // Missing: cloned into it.
+        yield* workers.cloneHere(yield* projectAt("missing"));
+        assert.deepStrictEqual(gitRuns, [`${base}/missing clone -- ${ORIGIN_URL} .`]);
+        // Empty: cloned into it.
+        yield* fileSystem.makeDirectory(`${base}/empty`);
+        yield* workers.cloneHere(yield* projectAt("empty"));
+        assert.strictEqual(gitRuns.length, 2);
+        // Not empty: nothing is cloned over it.
+        yield* fileSystem.makeDirectory(`${base}/full`);
+        yield* fileSystem.writeFileString(`${base}/full/notes.txt`, "mine");
+        const refused = yield* Effect.flip(workers.cloneHere(yield* projectAt("full")));
+        assert.strictEqual(refused.code, "folder-exists");
+        assert.strictEqual(gitRuns.length, 2);
       }),
     ));
 

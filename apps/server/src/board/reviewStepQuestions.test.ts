@@ -63,6 +63,7 @@ const runningStep = (stepId: string): BoardCardStepState => ({
   slotHeld: true,
   forceStart: false,
   queuedBy: null,
+  queuedDetail: null,
   startedAt: NOW,
   updatedAt: NOW,
 });

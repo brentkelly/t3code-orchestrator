@@ -13,6 +13,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Schedule from "effect/Schedule";
 import * as Semaphore from "effect/Semaphore";
 
 import packageJson from "../../../package.json" with { type: "json" };
@@ -22,6 +23,7 @@ import * as ServerConfig from "../../config.ts";
 import { ServerEnvironment } from "../../environment/ServerEnvironment.ts";
 import * as ManagedLimits from "../../policy/managedLimits.ts";
 import * as ManagedPolicy from "../../policy/ManagedPolicy.ts";
+import { BoardWorkerCapacity, SNAPSHOT_INTERVAL_MS } from "../capacity/BoardWorkerCapacity.ts";
 import { boardSessionLabel } from "../workers/workerCredential.ts";
 import {
   issueBoardSession,
@@ -30,6 +32,7 @@ import {
 } from "../workers/workerRpc.ts";
 import { TunnelWorker, type WorkerTunnelStatus } from "./tunnelWorker.ts";
 import {
+  departedCapacityBoards,
   localTunnelTarget,
   readWorkerFile,
   tunnelCredentialSecretName,
@@ -39,6 +42,7 @@ import {
   writeWorkerStatus,
   type WorkerBoardEntry,
   type WorkerBoardStatus,
+  type WorkerCapacityStatus,
 } from "./workerFile.ts";
 
 export interface WorkerTunnelsShape {
@@ -75,6 +79,7 @@ const makeWorkerTunnels = Effect.gen(function* () {
   const auth = yield* EnvironmentAuth;
   const environment = yield* ServerEnvironment;
   const context = yield* Effect.context<never>();
+  const capacity = yield* Effect.serviceOption(BoardWorkerCapacity);
   const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromiseWith(context)(effect);
 
   const home = config.baseDir;
@@ -92,6 +97,7 @@ const makeWorkerTunnels = Effect.gen(function* () {
   const statuses = new Map<string, WorkerBoardStatus>();
   let statusTimer: ReturnType<typeof setTimeout> | null = null;
 
+  let capacityStatus: WorkerCapacityStatus | undefined;
   const flushStatus = () => {
     statusTimer = null;
     try {
@@ -99,6 +105,7 @@ const makeWorkerTunnels = Effect.gen(function* () {
         updatedAt: new Date().toISOString(),
         pid: process.pid,
         boards: [...statuses.values()],
+        ...(capacityStatus === undefined ? {} : { capacity: capacityStatus }),
       });
     } catch {
       // Status is advisory; `t3o-worker status` says so when it's missing.
@@ -240,6 +247,14 @@ const makeWorkerTunnels = Effect.gen(function* () {
         scheduleStatus();
       }
     }
+    // T3o: a board left or removed, even while this server was down, drops its card records
+    // and claims here (T3O-86).
+    if (Option.isSome(capacity)) {
+      const recorded = yield* capacity.value.boardIds;
+      for (const boardId of departedCapacityBoards(recorded, file, environmentId)) {
+        yield* capacity.value.forgetBoard(boardId);
+      }
+    }
     for (const [boardId, entry] of wanted) {
       const credential = yield* readCredential(boardId);
       const current = held.get(boardId);
@@ -263,6 +278,25 @@ const makeWorkerTunnels = Effect.gen(function* () {
   }).pipe(reconcileLock.withPermits(1), Effect.withSpan("WorkerTunnels.reconcile"));
 
   yield* reconcile;
+
+  // T3o: the capacity section `t3o-worker status` prints, on the snapshot's cadence (T3O-86).
+  if (Option.isSome(capacity)) {
+    yield* Effect.gen(function* () {
+      let served = new Set<string>();
+      try {
+        served = new Set(readWorkerFile(home).boards.map((board) => board.boardEnvironmentId));
+      } catch {
+        // Unreadable: every record's board reads as served.
+        served = new Set(yield* capacity.value.boardIds);
+      }
+      capacityStatus = yield* capacity.value.status(served);
+      scheduleStatus();
+    }).pipe(
+      Effect.ignoreCause,
+      Effect.repeat(Schedule.spaced(SNAPSHOT_INTERVAL_MS)),
+      Effect.forkScoped,
+    );
+  }
 
   // Watch the directory, not the file: the CLI replaces it atomically by rename.
   let debounce: ReturnType<typeof setTimeout> | null = null;

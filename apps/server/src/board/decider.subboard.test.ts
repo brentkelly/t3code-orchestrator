@@ -72,6 +72,7 @@ function makeCard(
     ci: null,
     ciLastOutcome: null,
     ciRoundTrips: 0,
+    resources: null,
     worktree: null,
     pullRequest: null,
     pullRequestHistory: [],
@@ -209,6 +210,7 @@ const liveStep = (
   slotHeld: true,
   forceStart: false,
   queuedBy: null,
+  queuedDetail: null,
   startedAt: NOW,
   updatedAt: NOW,
   ...overrides,
@@ -1009,6 +1011,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
             makeBoard({
               parent: {
                 stage: "review",
+                placedWorkerId: "local",
                 worktree: {
                   branch: "board/t3-190",
                   baseRefName: "main",

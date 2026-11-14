@@ -41,6 +41,7 @@ import {
   BoardCiFailureFacts,
 } from "./ciFailureHeadline.ts";
 import { BoardDiskSpace, boardCiLowDiskReason } from "./diskSpace.ts";
+import { BoardActualsTap } from "../actuals/BoardActualsMeter.ts";
 
 export interface BoardCiRunRequest {
   readonly runId: string;
@@ -310,7 +311,12 @@ const DEFAULT_STEP_TIMING: BoardCiStepTiming = {
     step past its time limit settles `timed-out` a grace after its kill even if
     the child never exits, and a log that won't flush is not waited on. */
 export const runBoardCiStep = (input: BoardCiStepInput): Effect.Effect<StepExit> =>
-  Effect.flatMap(HostProcess.Environment, (hostEnv) => runStepWithEnv(input, hostEnv));
+  Effect.flatMap(HostProcess.Environment, (hostEnv) =>
+    // A measured pass or setup wraps the step in its own scope (T3O-87).
+    Effect.flatMap(BoardActualsTap, (tap) => tap.wrap(input.command)).pipe(
+      Effect.flatMap((launch) => runStepWithEnv(input, hostEnv, launch)),
+    ),
+  );
 
 interface BoardCiStepInput {
   readonly command: string;
@@ -322,11 +328,16 @@ interface BoardCiStepInput {
   /** Every chunk of output, as it arrives. Must not block. */
   readonly onOutput?: (text: string) => void;
   readonly timing?: BoardCiStepTiming;
+  /** False for a script that isn't a CI step (card setup, readiness): no `CI` or result file. */
+  readonly ciEnvironment?: boolean;
+  /** Added to the step's environment, so every command in a compound script sees them. */
+  readonly env?: Readonly<Record<string, string>>;
 }
 
 const runStepWithEnv = (
   input: BoardCiStepInput,
   hostEnv: NodeJS.ProcessEnv,
+  launch: { readonly command: string; readonly args: ReadonlyArray<string> } | null,
 ): Effect.Effect<StepExit> =>
   Effect.callback<StepExit>((resume) => {
     const timing = input.timing ?? DEFAULT_STEP_TIMING;
@@ -344,12 +355,15 @@ const runStepWithEnv = (
     let killTimer: ReturnType<typeof setTimeout> | null = null;
     let hardTimer: ReturnType<typeof setTimeout> | null = null;
     let drainTimer: ReturnType<typeof setTimeout> | null = null;
-    const child = NodeChildProcess.spawn(input.command, {
+    const child = NodeChildProcess.spawn(launch?.command ?? input.command, launch?.args ?? [], {
       cwd: input.cwd,
-      shell: true,
+      shell: launch === null,
       detached: true,
       stdio: ["ignore", "pipe", "pipe"],
-      env: { ...hostEnv, CI: hostEnv.CI ?? "1", T3O_CI_RESULT: input.resultPath },
+      env:
+        input.ciEnvironment === false
+          ? { ...hostEnv, ...input.env }
+          : { ...hostEnv, CI: hostEnv.CI ?? "1", T3O_CI_RESULT: input.resultPath, ...input.env },
     });
     // Per-stream decoders keep a multi-byte character split across chunks whole.
     child.stdout?.setEncoding("utf8");

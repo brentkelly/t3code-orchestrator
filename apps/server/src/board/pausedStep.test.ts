@@ -179,6 +179,7 @@ const atTheCeiling = (
   slotHeld: false,
   forceStart: false,
   queuedBy: null,
+  queuedDetail: null,
   startedAt: NOW,
   updatedAt: NOW,
 });
@@ -353,6 +354,8 @@ it.effect("Resume while the board is full waits queued on its EXISTING thread (T
         nextCardNumberByProject: {},
       },
       settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 1 }),
+      // T3o: room for one card on `local` (T3O-86).
+      capacityFor: 1,
     },
     ({ pumpDomain, board, shells, commands }) =>
       Effect.gen(function* () {
@@ -492,6 +495,8 @@ it.effect("a card parked on a question frees capacity for the next card", () =>
         nextCardNumberByProject: {},
       },
       settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 1 }),
+      // T3o: room for one card on `local` (T3O-86).
+      capacityFor: 1,
     },
     ({ pumpDomain, pumpRuntime, board, slots }) =>
       Effect.gen(function* () {
@@ -514,6 +519,10 @@ it.effect("a card parked on a question frees capacity for the next card", () =>
         // boundary — that is what the release is for.
         assert.strictEqual(stepStatus(parked, BoardCardId.make("card-b")), "running");
         assert.strictEqual(yield* slots.heldTotal, 1);
+        // Its room went with it: card-a is light now.
+        assert.isFalse(
+          parked.cards.find((card) => card.id === "card-a")?.resources?.grant?.heavy ?? true,
+        );
       }),
   ),
 );

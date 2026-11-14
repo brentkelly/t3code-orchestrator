@@ -36,7 +36,7 @@ import {
   type SupervisorReactorShape,
 } from "../../../board/supervisorReactor.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
-import { boardHandlers } from "./handlers.ts";
+import { boardPlanSizeWarnings, boardHandlers } from "./handlers.ts";
 import { BoardToolkit } from "./tools.ts";
 import { projectBoardEvent, type BoardReadModel } from "../../../board/projector.ts";
 import {
@@ -3764,5 +3764,48 @@ it.layer(makeLayer("t3o-board-mcp-labels-test-"))("board mcp toolkit — labels 
       assert.strictEqual(capped.code, "rejected");
       assert.include(capped.message, "at most");
     }),
+  );
+});
+
+it("board_propose_plans names a too-big size's dimension, worker and the largest that fits (T3O-86)", () => {
+  const baseline = { cpuCores: 12, ramGiB: 16, diskGB: 45 };
+  const warnings = boardPlanSizeWarnings({
+    baseline,
+    workers: [{ label: "build-02", declared: { cpuCores: 16, ramGiB: 64, diskGB: 500 } }],
+    plans: [
+      { key: "big", size: { cpu: "XL", ram: "M", disk: "M" } },
+      { key: "fine", size: { cpu: "M", ram: "M", disk: "M" } },
+      { key: "unsized" },
+    ],
+  });
+  assert.deepStrictEqual(warnings, [
+    "Plan 'big': CPU XL needs 18 cores; build-02 has 16. The largest size that fits is L.",
+  ]);
+  // An unbound card is measured against the largest worker ready for its project (T3O-87): a
+  // board server with no build capacity raises nothing when build-03 fits.
+  assert.deepStrictEqual(
+    boardPlanSizeWarnings({
+      baseline,
+      workers: [
+        { label: "this server", declared: { cpuCores: 0, ramGiB: 0, diskGB: 50 } },
+        { label: "build-03", declared: { cpuCores: 32, ramGiB: 128, diskGB: 500 } },
+      ],
+      plans: [{ key: "big", size: { cpu: "XL", ram: "M", disk: "M" } }],
+    }),
+    [],
+  );
+  // The cores on one worker and the RAM on another place nothing: the plan is still warned.
+  assert.deepStrictEqual(
+    boardPlanSizeWarnings({
+      baseline,
+      workers: [
+        { label: "cores", declared: { cpuCores: 32, ramGiB: 8, diskGB: 500 } },
+        { label: "memory", declared: { cpuCores: 4, ramGiB: 128, diskGB: 500 } },
+      ],
+      plans: [{ key: "split", size: { cpu: "XL", ram: "M", disk: "M" } }],
+    }),
+    [
+      "Plan 'split': no single worker has 18 cores, 16 GiB RAM and 45 GB disk together. Size it to fit one worker.",
+    ],
   );
 });

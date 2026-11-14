@@ -84,21 +84,25 @@ export function RemoveWorkerDialog(props: {
         <div className="flex flex-col gap-3 px-6 pb-4 text-board-13">
           {result !== null && result.toDefault.length > 0 ? (
             <RemovePreviewGroup
-              title="Move to the default worker"
-              subtitle={`${result.defaultWorkerLabel} · no work on ${name} yet`}
+              title="Placed again when they build"
+              subtitle={`no work on ${name} yet`}
               cards={result.toDefault}
             />
           ) : null}
           {waiting.length > 0 ? (
             <RemovePreviewGroup
-              title="Wait for you to move them"
-              subtitle={`work is on ${name}, nothing running`}
+              title={offline ? "Wait for you to move them" : "Pushed, then carried on elsewhere"}
+              subtitle={
+                offline
+                  ? `work is on ${name}, which can't be reached`
+                  : `work is on ${name} · a card with uncommitted or unpushable work waits for you`
+              }
               cards={waiting}
             />
           ) : null}
           {running.length > 0 ? (
             <RemovePreviewGroup
-              title="Stop, then wait for you to move them"
+              title={offline ? "Stop, then wait for you to move them" : "Stop, push, then carry on"}
               subtitle={
                 offline
                   ? `a step is running · unpushed work on ${name} may be lost`
@@ -110,8 +114,9 @@ export function RemoveWorkerDialog(props: {
           ) : null}
           {waiting.length + running.length > 0 ? (
             <span className="text-muted-foreground">
-              These cards show “Worker removed: move this card” until you pick a new worker. They
-              continue from their pushed branch.
+              A clean worktree is pushed and its card carries on from its branch on whichever worker
+              it is placed on next. A card with uncommitted or unpushable work, or on a worker that
+              can't be reached, shows “Worker removed: move this card” until you move it.
             </span>
           ) : null}
           <div className="flex gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2.5 text-board-12-5 text-muted-foreground">

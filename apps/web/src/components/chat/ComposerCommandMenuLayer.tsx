@@ -76,11 +76,16 @@ export function ComposerCommandMenuLayer(props: {
   }, [props.anchor]);
 
   if (!props.anchor || !position) return null;
+  // T3o: inside any modal dialog or sheet (card sheet, right-panel sheet) a body portal sits under
+  // its backdrop, aria-hidden; join the dialog's untransformed viewport. `data-base-ui-portal` is a
+  // Base UI internal: FloatingFocusManager exempts nested portals so marked from aria-hidden.
+  const container = props.anchor.closest('[role="dialog"]')?.parentElement ?? null;
 
   return createPortal(
     <div
       className="pointer-events-auto fixed z-40 flex flex-col"
       data-composer-drawer-layer="true"
+      {...(container ? { "data-base-ui-portal": "" } : {})}
       style={{
         bottom: position.bottom,
         left: position.left,
@@ -90,6 +95,6 @@ export function ComposerCommandMenuLayer(props: {
     >
       {props.children}
     </div>,
-    document.body,
+    container ?? document.body,
   );
 }

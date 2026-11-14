@@ -317,6 +317,48 @@ describe("export", () => {
     expect(boardProjectDeltasEqual(back.delta, config)).toBe(true);
   });
 
+  it("round-trips the project's resources, and drops a bad entry with a warning (T3O-86)", () => {
+    const back = resolve({
+      resources: {
+        baseline: { cpuCores: 6, ramGiB: 16, diskGB: 45 },
+        setupTimeoutMinutes: 20,
+        readiness: { path: "../escape.sh", timeoutSeconds: 60 },
+      },
+    });
+    expect(back.delta.resources).toEqual({
+      baseline: { cpuCores: 6, ramGiB: 16, diskGB: 45, setAtUpgrade: false },
+      setupTimeoutMinutes: 20,
+      readinessPath: null,
+      readinessTimeoutSeconds: 60,
+    });
+    expect(back.delta.warnings.join("\n")).toContain("resources.readiness.path");
+    const file = buildT3oProjectFile({
+      board: EMPTY_BOARD_STATE,
+      config: back.delta,
+    });
+    expect(file.resources).toEqual({
+      baseline: { cpuCores: 6, ramGiB: 16, diskGB: 45 },
+      setupTimeoutMinutes: 20,
+      readiness: { timeoutSeconds: 60 },
+    });
+    // A file without resources leaves the project's own, so it still matches.
+    expect(boardProjectDeltasEqual(resolve({}).delta, back.delta)).toBe(true);
+    // A baseline the capacity upgrade set still matches the file exported from it.
+    const upgraded = {
+      ...back.delta,
+      resources: {
+        ...back.delta.resources!,
+        baseline: { ...back.delta.resources!.baseline!, setAtUpgrade: true },
+      },
+    };
+    const exported = resolve(
+      JSON.parse(
+        JSON.stringify(buildT3oProjectFile({ board: EMPTY_BOARD_STATE, config: upgraded })),
+      ),
+    );
+    expect(boardProjectDeltasEqual(exported.delta, upgraded)).toBe(true);
+  });
+
   it("round-trips Stop on failure: absent is Yes, and only No is written (T3O-57)", () => {
     const steps = [{ id: "lint", name: "Lint", command: "vp lint" }];
     const yes = withFile({ ci: { steps } });

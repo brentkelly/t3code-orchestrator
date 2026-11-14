@@ -21,30 +21,31 @@ import {
   ProjectId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
+import { BoardResourceProfile, BoardWorkerCapacitySnapshot } from "./boardCapacity.ts";
 import { RepositoryIdentity, repositoryGroupingKeyOf } from "./environment.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 
 // ── Protocol ───────────────────────────────────────────────────────────
 
 /**
- * Bump when the central server starts relying on a `boardWorker.*` call an older worker
- * lacks. 2 added `boardWorker.git.closePullRequest`, best-effort, so the floor stays at 1.
- * 3 sends `usage-recorded` signals when asked (`BOARD_WORKER_USAGE_PROTOCOL`).
+ * Bump when the central server relies on a `boardWorker.*` call an older worker lacks. 2:
+ * `closePullRequest`. 3: `usage-recorded` signals. 4: worker-owned capacity (T3O-86). 5: holds
+ * and `pushCardBranch` (T3O-87).
  */
-export const BOARD_WORKER_PROTOCOL_VERSION = 3;
+export const BOARD_WORKER_PROTOCOL_VERSION = 5;
 
 /** The first protocol whose workers report usage; an older one leaves its cards partial. */
 export const BOARD_WORKER_USAGE_PROTOCOL = 3;
 
-/** The oldest protocol a worker may speak and still be used. */
-export const BOARD_WORKER_PROTOCOL_FLOOR = 1;
+/** The oldest protocol a worker may speak and still be used: holds need 5 on both ends. */
+export const BOARD_WORKER_PROTOCOL_FLOOR = 5;
 
 /**
  * The T3o release that first spoke `BOARD_WORKER_PROTOCOL_FLOOR`, so the UI can
- * say "Needs T3o 0.0.45 or newer" rather than a protocol number nobody knows.
+ * say "Needs T3o 0.1.8.3 or newer" rather than a protocol number nobody knows.
  * Raise it together with the floor.
  */
-export const BOARD_WORKER_PROTOCOL_FLOOR_T3O_VERSION = "0.0.45";
+export const BOARD_WORKER_PROTOCOL_FLOOR_T3O_VERSION = "0.1.8.3";
 
 // ── Registry ───────────────────────────────────────────────────────────
 
@@ -379,11 +380,6 @@ export function boardWorkerIds(state: BoardWorkersState | undefined): ReadonlyAr
   return [BOARD_LOCAL_WORKER_ID, ...(state?.workers ?? []).map((worker) => worker.id)];
 }
 
-/** Only an online, compatible, paired worker can become the default. */
-export function canBeDefaultBoardWorker(worker: BoardWorkerView): boolean {
-  return worker.status.state === "online";
-}
-
 // ── Commands and events (the registry) ─────────────────────────────
 
 /**
@@ -401,10 +397,25 @@ export const BoardWorkerRegisterCommand = Schema.Struct({
 });
 
 /** Remove a worker from the registry. Refused for `local` and for the default. */
+/**
+ * T3o: what the removal sequence found for one card on the worker (T3O-87), so the decider
+ * stays pure. `unplaced`: no worktree there. `reclaimed`: a clean worktree whose commits are all
+ * on its remote branch; the branch is kept. `fresh`: clean, nothing beyond its base and no
+ * remote branch; the worktree record goes. `orphaned`: dirty, unpushable, or out of reach.
+ */
+export const BoardWorkerRemovalClassification = Schema.Struct({
+  cardId: TrimmedNonEmptyString,
+  outcome: Schema.Literals(["unplaced", "reclaimed", "fresh", "orphaned"]),
+});
+export type BoardWorkerRemovalClassification = typeof BoardWorkerRemovalClassification.Type;
+
 export const BoardWorkerRemoveCommand = Schema.Struct({
   type: Schema.Literal("board.worker.remove"),
   commandId: CommandId,
   workerId: EnvironmentId,
+  /** T3o: each card's classification (T3O-87). Absent on an older command: every card holding
+      work there waits for a human, as before. */
+  classifications: Schema.optionalKey(Schema.Array(BoardWorkerRemovalClassification)),
   createdAt: IsoDateTime,
 });
 
@@ -619,9 +630,40 @@ export const BOARD_WORKERS_WS_METHODS = {
   setupProject: "board.workers.setupProject",
   /** Forget a finished or failed setup (dismiss). */
   dismissSetup: "board.workers.dismissSetup",
+  /** T3o: clone a project into its missing or empty folder on the board server (T3O-87). */
+  cloneHere: "board.workers.cloneHere",
   /** A session for the caller on a worker, to open its threads through the board. */
   threadAccess: "board.workers.threadAccess",
+  /** T3o: what each worker offers this board, then each change, at most every 5 s per worker
+      (T3O-86). Kept out of `BoardWorkersState`, which every card reads. */
+  subscribeCapacity: "board.workers.subscribeCapacity",
+  /** T3o: Re-check a project's readiness, or read a readiness or setup log (T3O-86). */
+  capacityAction: "board.workers.capacityAction",
 } as const;
+
+export const BoardWorkerCapacityItem = Schema.Struct({
+  workerId: BoardWorkerId,
+  snapshot: BoardWorkerCapacitySnapshot,
+  /** What this board's own placed cards hold there, from the board's grants, not the worker. */
+  held: Schema.optionalKey(BoardResourceProfile),
+});
+export type BoardWorkerCapacityItem = typeof BoardWorkerCapacityItem.Type;
+
+export const BoardWorkersCapacityActionInput = Schema.Union([
+  /** A project's readiness checked again now; no project is every project on the worker. */
+  Schema.Struct({
+    action: Schema.Literal("recheck"),
+    workerId: BoardWorkerId,
+    projectId: Schema.NullOr(ProjectId),
+  }),
+  Schema.Struct({
+    action: Schema.Literal("readinessOutput"),
+    workerId: BoardWorkerId,
+    projectId: ProjectId,
+  }),
+  Schema.Struct({ action: Schema.Literal("setupLog"), cardId: TrimmedNonEmptyString }),
+]);
+export type BoardWorkersCapacityActionInput = typeof BoardWorkersCapacityActionInput.Type;
 
 export const BoardWorkerJoinCodeCreated = Schema.Struct({
   codeId: TrimmedNonEmptyString,
@@ -671,6 +713,9 @@ export const BoardWorkersSetupProjectInput = Schema.Struct({
   folder: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type BoardWorkersSetupProjectInput = typeof BoardWorkersSetupProjectInput.Type;
+
+export const BoardWorkersCloneHereInput = Schema.Struct({ projectId: ProjectId });
+export type BoardWorkersCloneHereInput = typeof BoardWorkersCloneHereInput.Type;
 
 export const BoardWorkersDismissSetupInput = Schema.Struct({
   projectId: ProjectId,
@@ -751,6 +796,8 @@ export class BoardWorkerActionError extends Schema.TaggedError<BoardWorkerAction
       "is-default",
       "not-online",
       "no-remote",
+      // T3o: Clone here found the folder there and not empty (T3O-87).
+      "folder-exists",
       "internal",
       "invalid",
       "forbidden",
@@ -800,10 +847,26 @@ export const BOARD_WORKERS_RPCS = [
     success: BoardWorkerSetup,
     error: Schema.Union([BoardWorkerActionError, EnvironmentAuthorizationError]),
   }),
+  Rpc.make(BOARD_WORKERS_WS_METHODS.cloneHere, {
+    payload: BoardWorkersCloneHereInput,
+    success: Schema.Void,
+    error: Schema.Union([BoardWorkerActionError, EnvironmentAuthorizationError]),
+  }),
   Rpc.make(BOARD_WORKERS_WS_METHODS.dismissSetup, {
     payload: BoardWorkersDismissSetupInput,
     success: Schema.Void,
     error: EnvironmentAuthorizationError,
+  }),
+  Rpc.make(BOARD_WORKERS_WS_METHODS.subscribeCapacity, {
+    payload: Schema.Struct({}),
+    success: BoardWorkerCapacityItem,
+    error: EnvironmentAuthorizationError,
+    stream: true,
+  }),
+  Rpc.make(BOARD_WORKERS_WS_METHODS.capacityAction, {
+    payload: BoardWorkersCapacityActionInput,
+    success: Schema.NullOr(Schema.String),
+    error: Schema.Union([BoardWorkerActionError, EnvironmentAuthorizationError]),
   }),
 ] as const;
 
@@ -834,5 +897,9 @@ export const BOARD_WORKER_RPC_SCOPES = {
   [BOARD_WORKERS_WS_METHODS.removePreview]: AuthOrchestrationReadScope,
   [BOARD_WORKERS_WS_METHODS.setDefault]: AuthOrchestrationOperateScope,
   [BOARD_WORKERS_WS_METHODS.setupProject]: AuthSourceControlWriteScope,
+  [BOARD_WORKERS_WS_METHODS.cloneHere]: AuthSourceControlWriteScope,
   [BOARD_WORKERS_WS_METHODS.dismissSetup]: AuthOrchestrationOperateScope,
+  // Capacity is a read of the workers; a re-check runs a project's own script on one.
+  [BOARD_WORKERS_WS_METHODS.subscribeCapacity]: AuthOrchestrationReadScope,
+  [BOARD_WORKERS_WS_METHODS.capacityAction]: AuthOrchestrationOperateScope,
 } as const;

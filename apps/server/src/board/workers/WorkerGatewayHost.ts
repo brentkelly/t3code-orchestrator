@@ -15,10 +15,29 @@ import {
   type BoardWorkerCiProgress,
   type BoardStageAttachmentsResult,
   type BoardCardId,
+  type BoardCapacityClaimInput,
+  type BoardCapacityClaimResult,
+  type BoardGatewaySendInput,
+  type BoardSyncCardsInput,
+  type BoardSyncCardsResult,
+  type BoardWorkerCapacitySnapshot,
+  type BoardCardSetupProgress,
+  type BoardWorkerCheckReadinessInput,
+  type BoardWorkerReadiness,
+  type BoardWorkerRunSetupInput,
+  type BoardWorkerSetupState,
+  type BoardStepReading,
+  type BoardWorkerActualsInput,
+  type BoardCapacityHoldInput,
+  type BoardCapacityHoldResult,
+  type BoardWorkerReadCiLogInput,
+  type BoardWorkerRunCiInput,
+  type ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -31,6 +50,7 @@ import * as ServerConfig from "../../config.ts";
 import { boardCardAttachmentsDir, resolveBoardCardAttachmentPath } from "../attachments.ts";
 import { LocalThreadGateway, type TodoLogEntry } from "../ThreadGateway.ts";
 import { BoardRelayStore } from "./BoardRelayStore.ts";
+import { BoardActualsMeter } from "../actuals/BoardActualsMeter.ts";
 import {
   toWireReadError,
   toWireSignal,
@@ -39,12 +59,57 @@ import {
   type WireTodoLogEntry,
   type WorkerGatewayRpcOf,
 } from "./gatewayWire.ts";
+import {
+  BoardWorkerCapacity,
+  type BoardWorkerCapacityShape,
+} from "../capacity/BoardWorkerCapacity.ts";
 import { McpRelayHost, type McpRelayRefused } from "./McpRelayHost.ts";
 import { BoardCiRunner, boardCiLogDir } from "../ci/BoardCiRunner.ts";
 import { toWireCiDone } from "../ci/remoteCiRunner.ts";
 import { isSafeBoardCiLogTarget, readBoardCiLogFile } from "../ci/ciLog.ts";
 
-type CallerBound = "spawn" | "subscribeMcpRelay" | "mcpRelayRespond";
+type CallerBound =
+  | "spawn"
+  | "send"
+  | "subscribeMcpRelay"
+  | "mcpRelayRespond"
+  | "claimCapacity"
+  | "hold"
+  | "releaseHold"
+  | "syncCards"
+  | "subscribeCapacity"
+  | "runSetup"
+  | "setupState"
+  | "cancelSetup"
+  | "readSetupLog"
+  | "checkReadiness"
+  | "readinessOutput"
+  | "actuals"
+  | ThreadMutation
+  | "runCi"
+  | "readCiLog";
+
+/** The calls that change a thread: only the board that placed it may make them. */
+type ThreadMutation =
+  | "interrupt"
+  | "stopSession"
+  | "settle"
+  | "delete"
+  | "armLimitRecovery"
+  | "answerPendingInput"
+  | "linkPullRequest"
+  | "unlinkPullRequest";
+
+type Rpc = WorkerGatewayRpcOf<BoardWorkerGatewayError>;
+type WithCaller<K extends keyof Rpc> = Rpc[K] extends (input: infer I) => infer R
+  ? (input: I, caller: GatewayCaller) => R
+  : never;
+
+/** Who is calling: the session, and the board its `t3o-board:<id>` subject names (T3O-86). */
+export interface GatewayCaller {
+  readonly sessionId: AuthSessionId;
+  readonly boardId: string | null;
+}
 
 const withoutUsage = (entry: TodoLogEntry): WireTodoLogEntry =>
   entry.signal?.type === "usage-recorded"
@@ -60,8 +125,62 @@ export type WorkerGatewayHostShape = Omit<
 > & {
   readonly spawn: (
     input: BoardGatewaySpawnInput,
-    caller: AuthSessionId,
+    caller: GatewayCaller,
   ) => Effect.Effect<void, BoardWorkerGatewayError>;
+  readonly send: (
+    input: BoardGatewaySendInput,
+    caller: GatewayCaller,
+  ) => Effect.Effect<void, BoardWorkerGatewayError>;
+  readonly claimCapacity: (
+    input: BoardCapacityClaimInput,
+    caller: GatewayCaller,
+  ) => Effect.Effect<BoardCapacityClaimResult, BoardWorkerGatewayError>;
+  readonly syncCards: (
+    input: BoardSyncCardsInput,
+    caller: GatewayCaller,
+  ) => Effect.Effect<BoardSyncCardsResult, BoardWorkerGatewayError>;
+  /** T3o: a hold for one of the calling board's cards (T3O-87). */
+  readonly hold: (
+    input: BoardCapacityHoldInput,
+    caller: GatewayCaller,
+  ) => Effect.Effect<BoardCapacityHoldResult, BoardWorkerGatewayError>;
+  readonly releaseHold: (
+    cardId: string,
+    caller: GatewayCaller,
+  ) => Effect.Effect<void, BoardWorkerGatewayError>;
+  readonly subscribeCapacity: (
+    caller: GatewayCaller,
+  ) => Stream.Stream<BoardWorkerCapacitySnapshot, BoardWorkerGatewayError>;
+  readonly runSetup: (
+    input: BoardWorkerRunSetupInput,
+    caller: GatewayCaller,
+  ) => Stream.Stream<BoardCardSetupProgress, BoardWorkerGatewayError>;
+  readonly setupState: (
+    worktreePath: string,
+    caller: GatewayCaller,
+  ) => Effect.Effect<BoardWorkerSetupState, BoardWorkerGatewayError>;
+  readonly cancelSetup: (
+    worktreePath: string,
+    caller: GatewayCaller,
+  ) => Effect.Effect<void, BoardWorkerGatewayError>;
+  readonly readSetupLog: (
+    worktreePath: string,
+    caller: GatewayCaller,
+  ) => Effect.Effect<string, BoardWorkerGatewayError>;
+  readonly checkReadiness: (
+    input: BoardWorkerCheckReadinessInput,
+    caller: GatewayCaller,
+  ) => Effect.Effect<BoardWorkerReadiness, BoardWorkerGatewayError>;
+  readonly readinessOutput: (
+    repositoryKey: string | null,
+    path: string,
+    caller: GatewayCaller,
+  ) => Effect.Effect<string | null, BoardWorkerGatewayError>;
+  /** T3o: a step's measured actuals, for a board's own session (T3O-87). */
+  readonly actuals: (
+    input: BoardWorkerActualsInput,
+    caller: GatewayCaller,
+  ) => Effect.Effect<BoardStepReading | null, BoardWorkerGatewayError>;
   readonly subscribeMcpRelay: (
     centralEnvironmentId: EnvironmentId,
     caller: AuthSessionId,
@@ -70,17 +189,42 @@ export type WorkerGatewayHostShape = Omit<
     response: BoardMcpRelayResponse,
     caller: AuthSessionId,
   ) => Effect.Effect<void, BoardWorkerGatewayError>;
-};
+  readonly runCi: WithCaller<"runCi">;
+  readonly readCiLog: WithCaller<"readCiLog">;
+} & { readonly [K in ThreadMutation]: WithCaller<K> };
 
 /** The host as one session sees it: the in-process test transport's view. */
 export const hostForSession = (
   host: WorkerGatewayHostShape,
-  caller: AuthSessionId,
+  caller: GatewayCaller,
 ): WorkerGatewayRpcOf<BoardWorkerGatewayError> => ({
   ...host,
   spawn: (input) => host.spawn(input, caller),
-  subscribeMcpRelay: (central) => host.subscribeMcpRelay(central, caller),
-  mcpRelayRespond: (response) => host.mcpRelayRespond(response, caller),
+  send: (input) => host.send(input, caller),
+  subscribeMcpRelay: (central) => host.subscribeMcpRelay(central, caller.sessionId),
+  mcpRelayRespond: (response) => host.mcpRelayRespond(response, caller.sessionId),
+  claimCapacity: (input) => host.claimCapacity(input, caller),
+  hold: (input) => host.hold(input, caller),
+  releaseHold: (cardId) => host.releaseHold(cardId, caller),
+  syncCards: (input) => host.syncCards(input, caller),
+  subscribeCapacity: host.subscribeCapacity(caller),
+  runSetup: (input) => host.runSetup(input, caller),
+  setupState: (path) => host.setupState(path, caller),
+  cancelSetup: (path) => host.cancelSetup(path, caller),
+  readSetupLog: (path) => host.readSetupLog(path, caller),
+  checkReadiness: (input) => host.checkReadiness(input, caller),
+  readinessOutput: (key, path) => host.readinessOutput(key, path, caller),
+  actuals: (input) => host.actuals(input, caller),
+  interrupt: (input) => host.interrupt(input, caller),
+  stopSession: (input) => host.stopSession(input, caller),
+  settle: (input) => host.settle(input, caller),
+  delete: (input) => host.delete(input, caller),
+  armLimitRecovery: (input) => host.armLimitRecovery(input, caller),
+  answerPendingInput: (input) => host.answerPendingInput(input, caller),
+  linkPullRequest: (input) => host.linkPullRequest(input, caller),
+  unlinkPullRequest: (input) => host.unlinkPullRequest(input, caller),
+  runCi: (input) => host.runCi(input, caller),
+  readCiLog: (input) => host.readCiLog(input, caller),
 });
 
 export class WorkerGatewayHost extends Context.Service<WorkerGatewayHost, WorkerGatewayHostShape>()(
@@ -109,6 +253,158 @@ export const makeWorkerGatewayHost = Effect.gen(function* () {
   const path = yield* Path.Path;
   const digest = yield* Digest.Digest;
   const ciRunner = yield* BoardCiRunner;
+  // T3o: optional so a harness without capacity still serves threads (T3O-86).
+  const capacity = yield* Effect.serviceOption(BoardWorkerCapacity);
+  // T3o: optional so a harness without the meter answers "nothing measured" (T3O-87).
+  const actualsMeter = yield* Effect.serviceOption(BoardActualsMeter);
+
+  const noBoard = (operation: string) =>
+    new BoardWorkerGatewayError({
+      kind: "refused",
+      operation,
+      threadId: null,
+      detail: "Only a board's own session may call this on a worker.",
+    });
+  const capacityOf = (
+    operation: string,
+    caller: GatewayCaller,
+  ): Effect.Effect<
+    { readonly service: BoardWorkerCapacityShape; readonly boardId: string },
+    BoardWorkerGatewayError
+  > => {
+    if (caller.boardId === null) return Effect.fail(noBoard(operation));
+    if (Option.isNone(capacity)) {
+      return Effect.fail(
+        new BoardWorkerGatewayError({
+          kind: "failed",
+          operation,
+          threadId: null,
+          detail: "This worker has no capacity service.",
+        }),
+      );
+    }
+    return Effect.succeed({ service: capacity.value, boardId: caller.boardId });
+  };
+  const ownWorktree = (operation: string, caller: GatewayCaller, worktreePath: string) =>
+    capacityOf(operation, caller).pipe(
+      Effect.flatMap(({ service, boardId }) =>
+        service.boardHoldsWorktree(boardId, worktreePath).pipe(
+          Effect.flatMap((holds) =>
+            holds
+              ? Effect.succeed(service)
+              : Effect.fail(
+                  new BoardWorkerGatewayError({
+                    kind: "refused",
+                    operation,
+                    threadId: null,
+                    detail: `${worktreePath} is not one of this board's worktrees here.`,
+                  }),
+                ),
+          ),
+        ),
+      ),
+    );
+  /** Whether the caller's board placed this thread, by the record its spawn wrote. A thread no
+      board placed is the worker's own, unless it is gone (a retried delete). */
+  const placedByCaller = Effect.fn("WorkerGatewayHost.placedByCaller")(function* (
+    caller: GatewayCaller,
+    threadId: ThreadId,
+  ) {
+    if (caller.boardId === null) return false;
+    const central = yield* store
+      .relayedThreadCentral(threadId)
+      .pipe(Effect.orElseSucceed(() => undefined));
+    if (central === undefined) return false;
+    if (central !== null) return central === caller.boardId;
+    const state = yield* local.threadState(threadId).pipe(Effect.orElseSucceed(() => null));
+    return state === null || state.deleted;
+  });
+  const ownThread = (operation: string, caller: GatewayCaller, threadId: ThreadId) =>
+    caller.boardId === null
+      ? Effect.fail(noBoard(operation))
+      : placedByCaller(caller, threadId).pipe(
+          Effect.flatMap((placed) =>
+            placed
+              ? Effect.void
+              : Effect.fail(
+                  new BoardWorkerGatewayError({
+                    kind: "refused",
+                    operation,
+                    threadId,
+                    detail: "That thread isn't one this board placed here.",
+                  }),
+                ),
+          ),
+        );
+  const holdsWorktree = (caller: GatewayCaller, worktreePath: string) =>
+    caller.boardId === null || Option.isNone(capacity)
+      ? Effect.succeed(false)
+      : capacity.value.boardHoldsWorktree(caller.boardId, worktreePath);
+  /** The CI runs each board started here, so only that board reads or ends their actuals. */
+  const ciRunBoards = new Map<string, string>();
+  const MAX_CI_RUNS = 500;
+  /** Null when a meter key isn't provably the caller's: the meter has nothing for it to say. */
+  const ownedActuals = Effect.fn("WorkerGatewayHost.ownedActuals")(function* (
+    input: BoardWorkerActualsInput,
+    caller: GatewayCaller,
+  ) {
+    const separator = input.key.indexOf(":");
+    const kind = input.key.slice(0, separator);
+    const rest = input.key.slice(separator + 1);
+    let owned = false;
+    if (kind === "thread") {
+      owned =
+        (input.threadId === undefined || input.threadId === rest) &&
+        (yield* placedByCaller(caller, rest as ThreadId));
+    } else if (kind === "ci") {
+      owned = input.threadId === undefined && ciRunBoards.get(rest) === caller.boardId;
+    } else if (kind === "setup") {
+      const at = rest.lastIndexOf("@");
+      owned =
+        input.threadId === undefined && at > 0 && (yield* holdsWorktree(caller, rest.slice(0, at)));
+    }
+    if (!owned) return null;
+    // Disk is measured only in this board's own worktree.
+    if (input.worktreePath !== undefined && !(yield* holdsWorktree(caller, input.worktreePath))) {
+      const { worktreePath: _dropped, ...kept } = input;
+      return kept;
+    }
+    return input;
+  });
+  /**
+   * A board's new turn waits while the worker is at its agent cap (`agent-cap`). Admitted, it
+   * counts as running at once, so several boards' spawns can't all pass the same check.
+   */
+  const refuseOverAgentCap = (
+    operation: string,
+    threadId: string,
+    providerInstanceId: string | null,
+  ) =>
+    Option.match(capacity, {
+      onNone: () => Effect.void,
+      onSome: (service) =>
+        service.reserveAgent(threadId, providerInstanceId).pipe(
+          Effect.flatMap((refusal) =>
+            refusal === null
+              ? Effect.void
+              : Effect.fail(
+                  new BoardWorkerGatewayError({
+                    kind: "refused",
+                    operation,
+                    threadId,
+                    detail: refusal,
+                    reason: "agent-cap",
+                  }),
+                ),
+          ),
+        ),
+    });
+
+  const releaseAgentStart = (threadId: string) =>
+    Option.match(capacity, {
+      onNone: () => Effect.void,
+      onSome: (service) => service.releaseAgent(threadId),
+    });
 
   // A deleted thread makes no more board calls; its relay record goes too,
   // however it was deleted.
@@ -170,48 +466,198 @@ export const makeWorkerGatewayHost = Effect.gen(function* () {
     Effect.catchTags({ PlatformError: (error) => Effect.fail(stagingError(error.message)) }),
   );
 
+  const runCiHere = (input: BoardWorkerRunCiInput) =>
+    Stream.callback<BoardWorkerCiProgress>((queue) =>
+      ciRunner
+        .run(
+          {
+            runId: input.runId,
+            cwd: input.worktreePath,
+            steps: input.steps,
+            logDir: boardCiLogDir(input.worktreePath, input.runId),
+            ...(input.indexOffset === undefined ? {} : { indexOffset: input.indexOffset }),
+            ...(input.stopOnFailure === false ? { stopOnFailure: false } : {}),
+          },
+          (progress) =>
+            Queue.offer(queue, { _tag: "step", ...progress } as const).pipe(Effect.asVoid),
+        )
+        .pipe(
+          Effect.flatMap((outcome) => Queue.offer(queue, toWireCiDone(outcome))),
+          Effect.andThen(Queue.end(queue)),
+        ),
+    );
+  // A step's log, followed until the central server closes it.
+  const readCiLogHere = (input: BoardWorkerReadCiLogInput) =>
+    isSafeBoardCiLogTarget(input.runId, input.index)
+      ? readBoardCiLogFile(
+          path.join(boardCiLogDir(input.worktreePath, input.runId), `${input.index}.log`),
+          input,
+        )
+      : Stream.fail(
+          new BoardWorkerGatewayError({
+            kind: "refused",
+            operation: "readCiLog",
+            threadId: null,
+            detail: "That isn't a CI log this worker keeps.",
+          }),
+        );
+
   return {
     spawn: Effect.fn("WorkerGatewayHost.spawn")(function* (
       { centralEnvironmentId, ...input },
       caller,
     ) {
-      yield* relay
-        .claim(centralEnvironmentId, caller)
-        .pipe(Effect.mapError(refused("spawn", input.threadId)));
-      // Recorded first: the agent's first tool call can arrive before the
-      // spawn returns. A thread another board placed stays that board's.
-      const recordFailed = (cause: { readonly cause?: unknown }) =>
-        new BoardWorkerGatewayError({
-          kind: "failed",
-          operation: "spawn",
-          threadId: input.threadId,
-          detail: `Couldn't record the thread for the board: ${String(cause.cause)}`,
-        });
-      const current = yield* store
-        .relayedThreadCentral(input.threadId)
-        .pipe(Effect.mapError(recordFailed));
-      if (current !== null && current !== centralEnvironmentId) {
+      if (caller.boardId === null) return yield* noBoard("spawn");
+      if (caller.boardId !== centralEnvironmentId) {
         return yield* new BoardWorkerGatewayError({
           kind: "refused",
           operation: "spawn",
           threadId: input.threadId,
-          detail: "That thread belongs to another board.",
+          detail: "A board may spawn only for itself.",
         });
       }
-      yield* store
-        .recordRelayedThread(input.threadId, centralEnvironmentId)
-        .pipe(Effect.mapError(recordFailed));
-      yield* wireCommand(local.spawn(input));
+      yield* relay
+        .claim(centralEnvironmentId, caller.sessionId)
+        .pipe(Effect.mapError(refused("spawn", input.threadId)));
+      yield* refuseOverAgentCap("spawn", input.threadId, input.modelSelection.instanceId);
+      // Anything that stops the spawn hands its agent slot back.
+      yield* Effect.gen(function* () {
+        // Recorded first: the agent's first tool call can arrive before the
+        // spawn returns. A thread another board placed stays that board's.
+        const recordFailed = (cause: { readonly cause?: unknown }) =>
+          new BoardWorkerGatewayError({
+            kind: "failed",
+            operation: "spawn",
+            threadId: input.threadId,
+            detail: `Couldn't record the thread for the board: ${String(cause.cause)}`,
+          });
+        const current = yield* store
+          .relayedThreadCentral(input.threadId)
+          .pipe(Effect.mapError(recordFailed));
+        if (current !== null && current !== centralEnvironmentId) {
+          return yield* new BoardWorkerGatewayError({
+            kind: "refused",
+            operation: "spawn",
+            threadId: input.threadId,
+            detail: "That thread belongs to another board.",
+          });
+        }
+        yield* store
+          .recordRelayedThread(input.threadId, centralEnvironmentId)
+          .pipe(Effect.mapError(recordFailed));
+        yield* wireCommand(local.spawn(input));
+      }).pipe(Effect.tapError(() => releaseAgentStart(input.threadId)));
     }),
-    send: (input) => wireCommand(local.send(input)),
-    interrupt: (input) => wireCommand(local.interrupt(input)),
-    stopSession: (input) => wireCommand(local.stopSession(input)),
-    settle: (input) => wireCommand(local.settle(input)),
-    delete: (input) => wireCommand(local.delete(input)),
-    armLimitRecovery: (input) => wireCommand(local.armLimitRecovery(input)),
-    answerPendingInput: (input) => wireCommand(local.answerPendingInput(input)),
-    linkPullRequest: (input) => wireCommand(local.linkPullRequest(input)),
-    unlinkPullRequest: (input) => wireCommand(local.unlinkPullRequest(input)),
+    send: Effect.fn("WorkerGatewayHost.send")(function* (input, caller) {
+      yield* ownThread("send", caller, input.threadId);
+      // A turn the board sends on an existing thread waits at the cap too, unless the thread
+      // is already running (a steer joins its turn).
+      const state = yield* local.threadState(input.threadId).pipe(Effect.orElseSucceed(() => null));
+      if (state === null || state.activeTurnRef === null) {
+        yield* refuseOverAgentCap(
+          "send",
+          input.threadId,
+          state?.modelSelection?.instanceId ?? null,
+        );
+      }
+      yield* wireCommand(local.send(input)).pipe(
+        Effect.tapError(() => releaseAgentStart(input.threadId)),
+      );
+    }),
+    claimCapacity: (input, caller) =>
+      capacityOf("claimCapacity", caller).pipe(
+        Effect.flatMap(({ service, boardId }) => service.claim(boardId, input)),
+      ),
+    hold: (input, caller) =>
+      capacityOf("hold", caller).pipe(
+        Effect.flatMap(({ service, boardId }) => service.hold(boardId, input)),
+      ),
+    releaseHold: (cardId, caller) =>
+      capacityOf("releaseHold", caller).pipe(
+        Effect.flatMap(({ service, boardId }) => service.releaseHold(boardId, cardId)),
+      ),
+    syncCards: (input, caller) =>
+      capacityOf("syncCards", caller).pipe(
+        Effect.flatMap(({ service, boardId }) => service.syncCards(boardId, input)),
+      ),
+    subscribeCapacity: (caller) =>
+      Stream.unwrap(
+        capacityOf("subscribeCapacity", caller).pipe(
+          Effect.map(({ service, boardId }) => service.subscribe(boardId)),
+        ),
+      ),
+    // A card's setup is its board's alone: the worktree must be one of that board's cards.
+    runSetup: (input, caller) =>
+      Stream.unwrap(
+        ownWorktree("runSetup", caller, input.worktreePath).pipe(
+          Effect.map((service) => service.runSetup(input)),
+        ),
+      ),
+    setupState: (worktreePath, caller) =>
+      ownWorktree("setupState", caller, worktreePath).pipe(
+        Effect.flatMap((service) => service.setupState(worktreePath)),
+      ),
+    cancelSetup: (worktreePath, caller) =>
+      ownWorktree("cancelSetup", caller, worktreePath).pipe(
+        Effect.flatMap((service) => service.cancelSetup(worktreePath)),
+      ),
+    readSetupLog: (worktreePath, caller) =>
+      ownWorktree("readSetupLog", caller, worktreePath).pipe(
+        Effect.flatMap((service) => service.readSetupLog(worktreePath)),
+      ),
+    checkReadiness: (input, caller) =>
+      capacityOf("checkReadiness", caller).pipe(
+        Effect.flatMap(({ service, boardId }) => service.checkReadiness(boardId, input)),
+      ),
+    readinessOutput: (repositoryKey, path, caller) =>
+      capacityOf("readinessOutput", caller).pipe(
+        Effect.flatMap(({ service, boardId }) =>
+          service.readinessOutput(boardId, repositoryKey, path),
+        ),
+      ),
+    actuals: Effect.fn("WorkerGatewayHost.actuals")(function* (input, caller) {
+      if (caller.boardId === null) return yield* noBoard("actuals");
+      if (Option.isNone(actualsMeter)) return null;
+      const owned = yield* ownedActuals(input, caller);
+      if (owned === null) return null;
+      const reading = yield* actualsMeter.value.relay(owned);
+      if (owned.op === "end" && owned.key.startsWith("ci:")) {
+        ciRunBoards.delete(owned.key.slice("ci:".length));
+      }
+      return reading;
+    }),
+    interrupt: (input, caller) =>
+      ownThread("interrupt", caller, input.threadId).pipe(
+        Effect.andThen(wireCommand(local.interrupt(input))),
+      ),
+    stopSession: (input, caller) =>
+      ownThread("stopSession", caller, input.threadId).pipe(
+        Effect.andThen(wireCommand(local.stopSession(input))),
+      ),
+    settle: (input, caller) =>
+      ownThread("settle", caller, input.threadId).pipe(
+        Effect.andThen(wireCommand(local.settle(input))),
+      ),
+    delete: (input, caller) =>
+      ownThread("delete", caller, input.threadId).pipe(
+        Effect.andThen(wireCommand(local.delete(input))),
+      ),
+    armLimitRecovery: (input, caller) =>
+      ownThread("armLimitRecovery", caller, input.threadId).pipe(
+        Effect.andThen(wireCommand(local.armLimitRecovery(input))),
+      ),
+    answerPendingInput: (input, caller) =>
+      ownThread("answerPendingInput", caller, input.threadId).pipe(
+        Effect.andThen(wireCommand(local.answerPendingInput(input))),
+      ),
+    linkPullRequest: (input, caller) =>
+      ownThread("linkPullRequest", caller, input.threadId).pipe(
+        Effect.andThen(wireCommand(local.linkPullRequest(input))),
+      ),
+    unlinkPullRequest: (input, caller) =>
+      ownThread("unlinkPullRequest", caller, input.threadId).pipe(
+        Effect.andThen(wireCommand(local.unlinkPullRequest(input))),
+      ),
     threadState: (threadId) => wireRead(local.threadState(threadId)),
     threadRecords: (threadIds) =>
       wireRead(local.threadRecords(threadIds)).pipe(Effect.map((records) => [...records.values()])),
@@ -243,42 +689,28 @@ export const makeWorkerGatewayHost = Effect.gen(function* () {
     mcpRelayRespond: (response, caller) =>
       relay.respond(response, caller).pipe(Effect.mapError(refused("mcpRelayRespond"))),
     stageAttachments,
-    // The card's CI steps, run here where its worktree is.
-    runCi: (input) =>
-      Stream.callback<BoardWorkerCiProgress>((queue) =>
-        ciRunner
-          .run(
-            {
-              runId: input.runId,
-              cwd: input.worktreePath,
-              steps: input.steps,
-              logDir: boardCiLogDir(input.worktreePath, input.runId),
-              ...(input.indexOffset === undefined ? {} : { indexOffset: input.indexOffset }),
-              ...(input.stopOnFailure === false ? { stopOnFailure: false } : {}),
-            },
-            (progress) =>
-              Queue.offer(queue, { _tag: "step", ...progress } as const).pipe(Effect.asVoid),
-          )
-          .pipe(
-            Effect.flatMap((outcome) => Queue.offer(queue, toWireCiDone(outcome))),
-            Effect.andThen(Queue.end(queue)),
-          ),
+    // The card's CI steps, run here where its worktree is: one of the calling board's own.
+    runCi: (input, caller) =>
+      Stream.unwrap(
+        ownWorktree("runCi", caller, input.worktreePath).pipe(
+          Effect.andThen(capacityOf("runCi", caller)),
+          Effect.map(({ boardId }) => {
+            ciRunBoards.delete(input.runId);
+            ciRunBoards.set(input.runId, boardId);
+            for (const runId of ciRunBoards.keys()) {
+              if (ciRunBoards.size <= MAX_CI_RUNS) break;
+              ciRunBoards.delete(runId);
+            }
+            return runCiHere(input);
+          }),
+        ),
       ),
-    // A step's log, followed until the central server closes it.
-    readCiLog: (input) =>
-      isSafeBoardCiLogTarget(input.runId, input.index)
-        ? readBoardCiLogFile(
-            path.join(boardCiLogDir(input.worktreePath, input.runId), `${input.index}.log`),
-            input,
-          )
-        : Stream.fail(
-            new BoardWorkerGatewayError({
-              kind: "refused",
-              operation: "readCiLog",
-              threadId: null,
-              detail: "That isn't a CI log this worker keeps.",
-            }),
-          ),
+    readCiLog: (input, caller) =>
+      Stream.unwrap(
+        ownWorktree("readCiLog", caller, input.worktreePath).pipe(
+          Effect.map(() => readCiLogHere(input)),
+        ),
+      ),
   } satisfies WorkerGatewayHostShape;
 });
 

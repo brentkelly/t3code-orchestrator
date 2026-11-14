@@ -27,6 +27,7 @@ import {
   BoardCardWorktreeReclaimedPayload,
   BoardCardAutoMergeHoldRecordedPayload,
   BoardCardCiRecordedPayload,
+  BoardCardResourcesRecordedPayload,
   BoardCardPullRequestRecordedPayload,
   BoardCardStepSelectedPayload,
   BoardCardStepAdmittedPayload,
@@ -172,6 +173,9 @@ const decodeBoardCardPullRequestRecordedPayload = Schema.decodeUnknownEffect(
   BoardCardPullRequestRecordedPayload,
 );
 const decodeBoardCardCiRecordedPayload = Schema.decodeUnknownEffect(BoardCardCiRecordedPayload);
+const decodeBoardCardResourcesRecordedPayload = Schema.decodeUnknownEffect(
+  BoardCardResourcesRecordedPayload,
+);
 const decodeBoardCardAutoMergeHoldRecordedPayload = Schema.decodeUnknownEffect(
   BoardCardAutoMergeHoldRecordedPayload,
 );
@@ -275,6 +279,7 @@ export function boardCardFromCreatedPayload(payload: BoardCardCreatedPayload): B
     ci: null,
     ciLastOutcome: null,
     ciRoundTrips: 0,
+    resources: payload.resources ?? null,
     // A card is never born armed: the arm is a human delegating
     // the build gate on a card they can already see waiting, and there is
     // no create-command field to set it with. Nor born auto-merging, for the same reason — and
@@ -515,8 +520,14 @@ function upsertWorker<M extends BoardReadModel>(model: M, worker: BoardWorker): 
 function removeWorker<M extends BoardReadModel>(model: M, workerId: EnvironmentId): M {
   const board = model.board ?? EMPTY_BOARD_STATE;
   const remaining = (board.workers ?? []).filter((existing) => existing.id !== workerId);
-  const { workers: _dropped, ...rest } = board;
-  return { ...model, board: remaining.length === 0 ? rest : { ...board, workers: remaining } };
+  // A removed default reads as `local` again, its absent value.
+  const { workers: _dropped, defaultWorkerId, ...rest } = board;
+  const kept =
+    defaultWorkerId === undefined || defaultWorkerId === workerId ? {} : { defaultWorkerId };
+  return {
+    ...model,
+    board: { ...rest, ...kept, ...(remaining.length === 0 ? {} : { workers: remaining }) },
+  };
 }
 
 /** Record the default worker. `local` is the absent default, so choosing it
@@ -843,6 +854,13 @@ export function projectBoardEvent<M extends BoardReadModel>(
         Effect.map((payload) => upsertCard(model, payload.card)),
       );
 
+    // T3o: a card's size, grant or setup (T3O-86), carrying the whole card.
+    case "board.card-resources-recorded":
+      return decodeBoardCardResourcesRecordedPayload(event.payload).pipe(
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => upsertCard(model, payload.card)),
+      );
+
     // CI: the card's compact CI state is on the aggregate; pass rows
     // with their tails are table-only.
     case "board.card-ci-recorded":
@@ -1094,6 +1112,8 @@ export function boardShellStreamEvent(event: BoardEvent): Option.Option<BoardShe
     case "board.card-auto-merge-hold-recorded":
     // CI progress is a shell field on the card aggregate.
     case "board.card-ci-recorded":
+    // T3o: the card's size and setup show on its face (T3O-86).
+    case "board.card-resources-recorded":
     // Placement: the bound worker and the move are shell fields on
     // the card aggregate.
     case "board.card-worker-pinned":
@@ -1167,6 +1187,10 @@ export function boardShellStreamEvent(event: BoardEvent): Option.Option<BoardShe
         // Which limit holds it, only beside `queued`.
         ...(event.payload.state.status === "queued" && event.payload.state.queuedBy !== null
           ? { queuedBy: event.payload.state.queuedBy }
+          : {}),
+        // T3o: what it waits on (T3O-86).
+        ...(event.payload.state.status === "queued" && event.payload.state.queuedDetail !== null
+          ? { queuedDetail: event.payload.state.queuedDetail }
           : {}),
       });
 

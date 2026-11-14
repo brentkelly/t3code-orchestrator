@@ -184,6 +184,7 @@ const runningStep = (overrides?: Partial<BoardCardStepState>): BoardCardStepStat
   slotHeld: true,
   forceStart: false,
   queuedBy: null,
+  queuedDetail: null,
   startedAt: STARTED,
   updatedAt: STARTED,
   ...overrides,
@@ -585,8 +586,12 @@ it.effect("removing the worker restarts a fallback card's parked step on the def
         Effect.gen(function* () {
           yield* h.reactor.drain;
           assert.strictEqual((yield* step(h))?.status, "awaiting-input");
-          // The removal fell the card back to the default worker.
+          // The removal fell the card back to the default worker, and W1 left the registry.
           yield* setCard(h, { ...pinned, pinnedWorkerId: null });
+          yield* Ref.update(h.model, (model) => ({
+            ...model,
+            board: { ...model.board!, workers: [] },
+          }));
           yield* h.pumpDomain({
             type: "board.worker-removed",
             sequence: 2,

@@ -8,7 +8,10 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import { layer as BoardPullRequestGatewayLive } from "./BoardPullRequestGateway.ts";
-import { BoardStepSlotsLive } from "./BoardStepSlots.ts";
+import { BoardCapacityClientLive } from "./capacity/BoardCapacityClient.ts";
+import { BoardActualsMeterLive } from "./actuals/BoardActualsMeter.ts";
+import { BoardActualsRecorderLive } from "./actuals/BoardActualsRecorder.ts";
+import { BoardMeasuredCiRunnerLive } from "./actuals/measuredCiRunner.ts";
 import { BoardProjectFileLive } from "./projectConfig/BoardProjectFile.ts";
 import { BoardRuntimeLive } from "./runtimeLayer.ts";
 import { SupervisorReactor, SupervisorReactorLive } from "./supervisorReactor.ts";
@@ -29,6 +32,7 @@ import { BoardWorkersLive } from "./workers/BoardWorkers.ts";
 import { McpRelayHostLive } from "./workers/McpRelayHost.ts";
 import { WorkerConnectionsLive } from "./workers/WorkerConnections.ts";
 import { WorkerGatewayHostLive } from "./workers/WorkerGatewayHost.ts";
+import { BoardWorkerCapacityLive } from "./capacity/BoardWorkerCapacityLive.ts";
 import { WorkerSignalFeedLive } from "./workers/WorkerSignalFeed.ts";
 import { WorkerSnapshotStoreLive } from "./workers/WorkerSnapshotStore.ts";
 import { WorkerTransportLive } from "./workers/WorkerTransport.ts";
@@ -56,6 +60,12 @@ const WorkerConnectionsServerLive = WorkerConnectionsLive.pipe(
 const BoardThreadsLive = ThreadGatewayRouterLive.pipe(
   Layer.provideMerge(WorkerSignalFeedLive),
   Layer.provideMerge(WorkerGatewayHostLive),
+  // T3o: worker-owned capacity, which the gateway host answers claims from (T3O-86).
+  Layer.provideMerge(BoardWorkerCapacityLive),
+  // T3o: every heavy step's measured actuals, and the CI runner that measures its passes
+  // (T3O-87). Provided here so the gateway host, setup and the supervisor all capture them.
+  Layer.provideMerge(BoardMeasuredCiRunnerLive),
+  Layer.provideMerge(BoardActualsMeterLive),
   Layer.provideMerge(McpRelayHostLive),
   Layer.provideMerge(BoardRelayStoreLive),
   Layer.provideMerge(WorkerConnectionsServerLive),
@@ -74,11 +84,15 @@ export const BoardServerLive = BoardMcpRelayClientLive.pipe(
   // Board code reaches upstream services through ports; the adapters
   // live here so the upstream requirement still flows up to `server.ts`.
   Layer.provideMerge(SupervisorReactorLive.pipe(Layer.provide(BoardSetupScriptRunnerLive))),
+  // T3o: stores each heavy step's actuals and learns each project's baseline (T3O-87).
+  Layer.provideMerge(BoardActualsRecorderLive),
   // Webhook scheduled tasks reach the board through the runner this registers.
   Layer.provideMerge(BoardWebhookActionsLive),
   // Moving a card to another worker, for the Move dialog's RPCs.
   Layer.provideMerge(BoardCardMoverLive),
-  Layer.provide(BoardStepSlotsLive),
+  // T3o: the board's side of worker-owned capacity, which replaced its concurrency slots
+  // (T3O-86).
+  Layer.provideMerge(BoardCapacityClientLive),
   // T3o.json import/export from this server's checkout, for the
   // project config RPCs.
   Layer.provideMerge(BoardProjectFileLive),

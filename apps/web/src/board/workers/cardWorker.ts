@@ -4,14 +4,14 @@
  * colour; worker trouble goes in the card's notice slot.
  */
 import {
+  boardReadinessIsFor,
   BOARD_LOCAL_WORKER_ID,
   BOARD_WORKER_PROTOCOL_FLOOR_T3O_VERSION,
-  resolveBoardWorkerConcurrency,
   resolveBoardWorkerCheckout,
   type BoardCard,
   type BoardCardShell,
-  type BoardConcurrencySettings,
   type BoardStepQueuedBy,
+  type BoardWorkerCapacitySnapshot,
   type BoardWorkerId,
   type BoardWorkersState,
   type BoardWorkerSetup,
@@ -20,6 +20,7 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 
+import { boardShellHoldsWorktree } from "./boardWorkerFilter";
 import { localWorkerLabel } from "./threadWorker";
 import { clockTime } from "./workerCopy";
 
@@ -34,60 +35,50 @@ export function boardWorkerLabel(workerId: BoardWorkerId, state: BoardWorkersSta
   return state.workers.find((worker) => worker.id === workerId)?.label ?? workerId;
 }
 
-/** Where a card runs, as its shell and the board's default say: its bound
-    worker (a pin, or where it holds a worktree), else the default. */
+/** Where a card runs, as its shell says: its bound worker (a pin, or where it holds a
+    worktree), else the board server. T3o: there is no default worker (T3O-87). */
 function boardCardWorker(
   card: Pick<BoardCardShell, "workerId">,
-  state: BoardWorkersState,
+  _state: BoardWorkersState,
 ): { readonly workerId: BoardWorkerId; readonly bound: boolean } {
   return card.workerId === undefined
-    ? { workerId: state.defaultWorkerId, bound: false }
+    ? { workerId: BOARD_LOCAL_WORKER_ID, bound: false }
     : { workerId: card.workerId, bound: true };
 }
 
 export interface BoardCardWorkerChip {
   readonly label: string;
-  /** Solid when the card is pinned or holds a worktree; dashed when it
-      follows the default and hasn't started. */
-  readonly bound: boolean;
+  /** T3o: a server icon once placed, a pin icon while only pinned (T3O-87). */
+  readonly kind: "placed" | "pinned";
   readonly tooltip: string;
 }
 
-/** The meta row's worker chip (prototype 4.4), or null on a one-worker board. */
+/** The meta row's worker chip, or null on a one-worker board or before the card is placed
+    or pinned. */
 export function boardCardWorkerChip(
-  card: Pick<BoardCardShell, "workerId">,
+  card: Pick<BoardCardShell, "workerId" | "worktreeReady" | "worktreeProvisioning">,
   state: BoardWorkersState,
 ): BoardCardWorkerChip | null {
-  if (!boardShowsWorkers(state)) return null;
-  const { workerId, bound } = boardCardWorker(card, state);
-  const name = boardWorkerLabel(workerId, state);
+  if (!boardShowsWorkers(state) || card.workerId === undefined) return null;
+  const name = boardWorkerLabel(card.workerId, state);
+  const placed = boardShellHoldsWorktree(card);
   return {
-    label: workerId === BOARD_LOCAL_WORKER_ID ? "local" : name,
-    bound,
-    tooltip: bound ? `Runs on ${name}` : `Follows the default worker (${name})`,
+    label: card.workerId === BOARD_LOCAL_WORKER_ID ? "local" : name,
+    kind: placed ? "placed" : "pinned",
+    tooltip: placed ? `Placed on ${name}` : `Pinned to ${name}: its builds run there`,
   };
 }
 
-/** Agents running on each worker, from the shells: the "1 of 4 busy" count. */
-export function boardWorkerRunningCounts(
-  cards: ReadonlyArray<Pick<BoardCardShell, "workerId" | "stepRunning">>,
-  state: BoardWorkersState,
-): ReadonlyMap<BoardWorkerId, number> {
-  const counts = new Map<BoardWorkerId, number>();
-  for (const card of cards) {
-    if (!card.stepRunning) continue;
-    const { workerId } = boardCardWorker(card, state);
-    counts.set(workerId, (counts.get(workerId) ?? 0) + 1);
-  }
-  return counts;
-}
+const round = (value: number) => Math.round(value * 10) / 10;
 
-/** "1 of 4 busy", "4 of 4 busy · will queue", or "2 busy" with no limit. */
-export function boardWorkerLoadLabel(running: number, limit: number | null): string {
-  if (limit === null) return `${running} busy`;
-  return running >= limit
-    ? `${running} of ${limit} busy · will queue`
-    : `${running} of ${limit} busy`;
+/** A worker's load as its latest capacity snapshot says: "2 agents · 6 cores, 24 GiB free". */
+export function boardWorkerLoadLabel(snapshot: BoardWorkerCapacitySnapshot | undefined): string {
+  if (snapshot === undefined) return "No capacity report yet";
+  if (snapshot.over.cpuRam) return "Full · will queue";
+  const { running } = snapshot.agents;
+  const cpu = round(Math.max(0, snapshot.headroom.cpuCores));
+  const ram = round(Math.max(0, snapshot.headroom.ramGiB));
+  return `${running} ${running === 1 ? "agent" : "agents"} · ${cpu} cores, ${ram} GiB free`;
 }
 
 export interface BoardWorkerChoice {
@@ -138,14 +129,10 @@ export function boardWorkerChoices(input: {
   readonly projectRepositoryKey: string | null;
   /** The project's short name, as the rows say it ("advisor"). */
   readonly projectName: string;
-  readonly running: ReadonlyMap<BoardWorkerId, number>;
-  readonly concurrency: BoardConcurrencySettings;
+  /** Each worker's latest capacity snapshot, from the capacity stream. */
+  readonly capacity: ReadonlyMap<string, BoardWorkerCapacitySnapshot>;
 }): ReadonlyArray<BoardWorkerChoice> {
-  const load = (workerId: BoardWorkerId) =>
-    boardWorkerLoadLabel(
-      input.running.get(workerId) ?? 0,
-      resolveBoardWorkerConcurrency(input.concurrency, workerId).maxConcurrent,
-    );
+  const load = (workerId: BoardWorkerId) => boardWorkerLoadLabel(input.capacity.get(workerId));
   const local: BoardWorkerChoice = {
     workerId: BOARD_LOCAL_WORKER_ID,
     label: `${localWorkerLabel(input.state)} (local)`,
@@ -185,7 +172,26 @@ export function boardWorkerChoices(input: {
     }
     const setup = setupOf(input.state, worker.id, input.projectId);
     if (boardWorkerHasCheckout(worker, input.projectRepositoryKey)) {
-      return { ...base, selectable: true, detail: load(worker.id), tooltip: null };
+      const readiness = input.capacity
+        .get(worker.id)
+        ?.readiness.find((entry) =>
+          boardReadinessIsFor(entry, input.projectRepositoryKey, input.projectId),
+        );
+      // A worker can't be a project's pin until it is ready for it; the server refuses it too.
+      return readiness === undefined || readiness.state === "ready"
+        ? { ...base, selectable: true, detail: load(worker.id), tooltip: null }
+        : {
+            ...base,
+            selectable: false,
+            detail:
+              readiness.state === "checking"
+                ? `Checking ${input.projectName}`
+                : `Not ready for ${input.projectName}`,
+            tooltip:
+              readiness.state === "checking"
+                ? `${worker.label} is checking it's ready for ${input.projectName}. Pin it once the check passes.`
+                : `${worker.label}'s readiness check for ${input.projectName} fails. Re-check it on the Workers page, then pin it.`,
+          };
     }
     if (setup?.phase === "cloning") {
       return {
@@ -207,17 +213,37 @@ export function boardWorkerChoices(input: {
   return [local, ...rows];
 }
 
-/** The closed Worker field: "Follow default (This server)", or the pin. */
+/** T3o: the unpinned choice: the placement gate picks at build start (T3O-87). */
+export const BOARD_ANY_READY_WORKER_LABEL = "Any ready worker";
+
+/** The closed Worker field: "Any ready worker", or the pin. */
 export function boardWorkerFieldLabel(
   pinnedWorkerId: BoardWorkerId | null,
   state: BoardWorkersState,
 ): { readonly label: string; readonly pinned: boolean } {
   return pinnedWorkerId === null
-    ? {
-        label: `Follow default (${boardWorkerLabel(state.defaultWorkerId, state)})`,
-        pinned: false,
-      }
+    ? { label: BOARD_ANY_READY_WORKER_LABEL, pinned: false }
     : { label: boardWorkerLabel(pinnedWorkerId, state), pinned: true };
+}
+
+/**
+ * T3o: the card's placement line (T3O-87): where and when the gate placed it and why, or that
+ * it is chosen when the build starts.
+ */
+export function boardCardPlacementLine(
+  placement: {
+    readonly workerId: string;
+    readonly at: string;
+    readonly reason: string | null;
+  } | null,
+  holdsWorktree: boolean,
+  state: BoardWorkersState,
+): string {
+  if (placement === null || !holdsWorktree) return "Not placed yet: chosen when the build starts";
+  const worker = boardWorkerLabel(placement.workerId as BoardWorkerId, state);
+  return `${worker} · placed at ${clockTime(placement.at)}${
+    placement.reason === null ? "" : ` · ${placement.reason}`
+  }`;
 }
 
 /**
@@ -227,35 +253,49 @@ export function boardWorkerFieldLabel(
  */
 export function boardWorkerCheckoutWarning(input: {
   readonly state: BoardWorkersState;
-  /** The card's pin; null follows the default. */
+  /** The card's pin; null goes to any ready worker, so nothing to warn about. */
   readonly pinnedWorkerId?: BoardWorkerId | null;
   readonly projectRepositoryKey: string | null;
   readonly projectName: string;
 }): string | null {
-  const { state } = input;
-  const workerId = input.pinnedWorkerId ?? state.defaultWorkerId;
-  if (workerId === BOARD_LOCAL_WORKER_ID) return null;
-  const worker = state.workers.find((candidate) => candidate.id === workerId);
+  const workerId = input.pinnedWorkerId ?? null;
+  if (workerId === null || workerId === BOARD_LOCAL_WORKER_ID) return null;
+  const worker = input.state.workers.find((candidate) => candidate.id === workerId);
   if (worker === undefined || boardWorkerHasCheckout(worker, input.projectRepositoryKey)) {
     return null;
   }
-  return (input.pinnedWorkerId ?? null) === null
-    ? `${worker.label} has no checkout of ${input.projectName}. Set up on worker or pin another.`
-    : `${worker.label} has no checkout of ${input.projectName}. The card waits until it is set up there. Set up on worker or pick another.`;
+  return `${worker.label} has no checkout of ${input.projectName}. The card waits until it is set up there. Set up on worker or pick another.`;
 }
 
 // ── Queue reasons (prototype notice copy) ─────────────────────────
 
-/** What a queued card is waiting on, ready for `boardQueueInfo`. */
+/** What a queued card is waiting on, ready for `boardQueueInfo` (T3O-86). */
 export type BoardQueueReason =
   | {
-      readonly kind: "worker";
+      readonly kind: "capacity";
       readonly worker: string;
-      readonly running: number;
-      readonly limit: number;
+      readonly dimension: "cpu" | "ram" | "disk" | null;
+      /** The card ahead in this board's queue on that worker, by key. */
+      readonly behind: string | null;
+      /** Bigger than the worker declares: no room will ever free there. */
+      readonly tooBig: boolean;
+      /** T3o: an unpinned card too big for every ready worker names none (T3O-87). */
+      readonly anyWorker: boolean;
     }
-  | { readonly kind: "provider"; readonly worker: string }
-  | { readonly kind: "board"; readonly running: number; readonly limit: number }
+  | { readonly kind: "no-ready-worker"; readonly project: string }
+  | {
+      readonly kind: "server-checkout";
+      readonly project: string;
+      readonly missing: boolean;
+    }
+  | { readonly kind: "server-sign-in"; readonly provider: string }
+  /** T3o: the card holds `worker` and starts there when room frees (T3O-87). */
+  | { readonly kind: "holding"; readonly worker: string }
+  /** T3o: `worker` isn't taking new cards: held for this board's `behind`, or not said why. */
+  | { readonly kind: "reserved"; readonly worker: string; readonly behind: string | null }
+  | { readonly kind: "quota"; readonly worker: string }
+  | { readonly kind: "agent-cap"; readonly worker: string }
+  | { readonly kind: "needs-update"; readonly worker: string }
   | {
       readonly kind: "setup";
       readonly worker: string;
@@ -264,39 +304,73 @@ export type BoardQueueReason =
           progress so its ticks don't re-render the board. */
       readonly cloning: boolean;
       readonly failed: boolean;
+      /** Why, when it isn't a checkout on its way: see `BoardStepQueuedDetail.setupCause`. */
+      readonly cause: "not-ready" | "not-set-up" | "card-setup" | null;
     };
 
 /**
- * The binding limit's copy inputs for a queued card, or null with one worker —
- * a local-only board keeps plain "Queued #n".
+ * The copy inputs for what holds a queued card, or null for plain "Queued #n". Shown on a
+ * board with no remote workers too: there the worker is this server. Legacy reasons from the
+ * board's old concurrency limits read as plain "Queued".
  */
 export function boardQueueReason(input: {
-  readonly card: Pick<BoardCardShell, "workerId" | "queuedBy" | "projectId">;
+  readonly card: Pick<BoardCardShell, "workerId" | "queuedBy" | "queuedDetail" | "projectId">;
   readonly state: BoardWorkersState;
-  readonly cards: ReadonlyArray<Pick<BoardCardShell, "workerId" | "stepRunning">>;
-  readonly concurrency: BoardConcurrencySettings;
+  /** Card keys by id, for "Waiting behind T3O-90". */
+  readonly cardKeys: ReadonlyMap<string, string>;
   readonly projectName: string;
 }): BoardQueueReason | null {
   const queuedBy: BoardStepQueuedBy | undefined = input.card.queuedBy;
-  if (!boardShowsWorkers(input.state) || queuedBy === undefined) return null;
-  const { workerId } = boardCardWorker(input.card, input.state);
+  if (queuedBy === undefined) return null;
+  const detail = input.card.queuedDetail;
+  const workerId = detail?.workerId ?? boardCardWorker(input.card, input.state).workerId;
   const worker = boardWorkerLabel(workerId, input.state);
   switch (queuedBy) {
-    case "worker": {
-      const limit = resolveBoardWorkerConcurrency(input.concurrency, workerId).maxConcurrent;
-      const running = boardWorkerRunningCounts(input.cards, input.state).get(workerId) ?? 0;
-      return { kind: "worker", worker, running, limit: limit ?? running };
-    }
+    case "board":
+    case "worker":
     case "provider":
-      return { kind: "provider", worker };
-    case "board": {
-      let running = 0;
-      for (const card of input.cards) if (card.stepRunning) running += 1;
-      return { kind: "board", running, limit: input.concurrency.globalMaxConcurrent };
-    }
     case "worker-offline":
-      // The card's Worker offline notice says it.
+      // Legacy limits read as plain Queued; Worker offline has its own notice.
       return null;
+    case "capacity":
+      return {
+        kind: "capacity",
+        worker,
+        dimension: detail?.dimension ?? null,
+        behind:
+          detail?.behindCardId === undefined
+            ? null
+            : (input.cardKeys.get(detail.behindCardId) ?? null),
+        tooBig: detail?.tooBig === true,
+        anyWorker: detail?.tooBig === true && detail.workerId === undefined,
+      };
+    case "no-ready-worker":
+      return { kind: "no-ready-worker", project: input.projectName };
+    case "server-checkout":
+      return {
+        kind: "server-checkout",
+        project: input.projectName,
+        missing: detail?.serverCheckout === "missing",
+      };
+    case "server-sign-in":
+      return { kind: "server-sign-in", provider: detail?.providerInstanceId ?? "the provider" };
+    case "holding":
+      return { kind: "holding", worker };
+    case "reserved":
+      return {
+        kind: "reserved",
+        worker,
+        behind:
+          detail?.behindCardId === undefined
+            ? null
+            : (input.cardKeys.get(detail.behindCardId) ?? null),
+      };
+    case "quota":
+      return { kind: "quota", worker };
+    case "agent-cap":
+      return { kind: "agent-cap", worker };
+    case "needs-update":
+      return { kind: "needs-update", worker };
     case "setup": {
       const setup = setupOf(input.state, workerId, input.card.projectId);
       return {
@@ -305,6 +379,7 @@ export function boardQueueReason(input: {
         project: input.projectName,
         cloning: setup?.phase === "cloning",
         failed: setup?.phase === "failed",
+        cause: detail?.setupCause ?? null,
       };
     }
   }

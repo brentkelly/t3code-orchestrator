@@ -9,6 +9,7 @@ import {
   type BoardWorkersDismissSetupInput,
   type BoardWorkersRenameInput,
   type BoardWorkersSetDefaultInput,
+  type BoardWorkersCloneHereInput,
   type BoardWorkersSetupProjectInput,
 } from "@t3tools/contracts";
 
@@ -39,6 +40,10 @@ export const setDefaultBoardWorker = (input: BoardWorkersSetDefaultInput) =>
 
 export const setupBoardWorkerProject = (input: BoardWorkersSetupProjectInput) =>
   request(BOARD_WORKERS_WS_METHODS.setupProject, input);
+
+/** T3o: clone a project into its folder on the board server, for planning (T3O-87). */
+export const cloneBoardProjectHere = (input: BoardWorkersCloneHereInput) =>
+  request(BOARD_WORKERS_WS_METHODS.cloneHere, input);
 
 export const dismissBoardWorkerSetup = (input: BoardWorkersDismissSetupInput) =>
   request(BOARD_WORKERS_WS_METHODS.dismissSetup, input);

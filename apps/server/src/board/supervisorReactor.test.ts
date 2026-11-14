@@ -27,7 +27,6 @@ import { BoardSetupScriptRunner } from "./ports/BoardSetupScriptRunner.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { ServerActivation } from "../serverActivation.ts";
-import { BoardStepSlotsLive } from "./BoardStepSlots.ts";
 import {
   BoardPullRequestGateway,
   BoardPullRequestGatewayError,
@@ -96,6 +95,7 @@ const card: BoardCard = {
   ci: null,
   ciLastOutcome: null,
   ciRoundTrips: 0,
+  resources: null,
   worktree: {
     branch: "board/t3-1",
     baseRefName: "main",
@@ -141,6 +141,7 @@ const runningState: BoardCardStepState = {
   slotHeld: true,
   forceStart: false,
   queuedBy: null,
+  queuedDetail: null,
   startedAt: NOW,
   updatedAt: NOW,
 };
@@ -280,7 +281,6 @@ function reconcileCommandObjects(input: {
             ),
         }),
       ),
-      BoardStepSlotsLive,
       Layer.succeed(
         ServerActivation,
         input.gateOnActivation === undefined

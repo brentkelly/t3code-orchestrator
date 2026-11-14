@@ -6,6 +6,11 @@
  */
 import {
   BOARD_SEED_STAGE_IDS,
+  EMPTY_BOARD_CARD_RESOURCES,
+  type BoardCardResources,
+  canonicalJson,
+  withBoardCardPlannerSize,
+  withBoardCardSizeEdit,
   BOARD_DECISIONS_PER_CALL_MAX,
   isBoardCardAutoPlanPending,
   BOARD_CARD_BRIEF_BODY_KIND,
@@ -123,6 +128,7 @@ import {
   boardCardBoundWorkerId,
   boardCardEffectiveWorkerId,
   boardCardHoldsWorktree,
+  boardWorktreeKeepsHome,
   boardCardWorkerRemovalOutcome,
   type BoardCardWorkerMove,
   type BoardWorkerId,
@@ -526,6 +532,69 @@ const makeBoardEventBase = Effect.fn("makeBoardEventBase")(function* (input: {
     correlationId: input.commandId,
     metadata: {},
   };
+});
+
+const withoutEmptyResources = (resources: BoardCardResources): BoardCardResources | null =>
+  resources.sizing === null &&
+  resources.grant === null &&
+  resources.setup === null &&
+  resources.setupDue !== true &&
+  (resources.placement ?? null) === null
+    ? null
+    : resources;
+
+/** A new worktree has never run setup, whatever ran in the card's last one. */
+const withSetupDue = (resources: BoardCardResources | null): BoardCardResources => ({
+  ...(resources ?? EMPTY_BOARD_CARD_RESOURCES),
+  setup: null,
+  setupDue: true,
+});
+
+/** T3o: a card with no placement on record (T3O-87). */
+const withoutPlacement = (resources: BoardCardResources | null): BoardCardResources | null =>
+  resources === null ? null : withoutEmptyResources({ ...resources, placement: null });
+
+/** T3o: a card's resources changed (T3O-86), carrying the whole card. */
+const cardResourcesRecordedEvent = Effect.fn("cardResourcesRecordedEvent")(function* (input: {
+  readonly card: BoardCard;
+  readonly resources: BoardCard["resources"];
+  readonly command: Pick<BoardCommand, "commandId" | "createdAt">;
+  readonly setupRequested?: "retry" | "cancel";
+}) {
+  const card: BoardCard = { ...input.card, resources: input.resources };
+  return {
+    ...(yield* makeBoardEventBase({
+      cardId: card.id,
+      occurredAt: input.command.createdAt,
+      commandId: input.command.commandId,
+    })),
+    type: "board.card-resources-recorded" as const,
+    payload: {
+      cardId: card.id,
+      card,
+      ...(input.setupRequested === undefined ? {} : { setupRequested: input.setupRequested }),
+    },
+  } satisfies PlannedBoardEvent;
+});
+
+/** The planner's size for a card proposed one plan, or null when nothing changes. A split's
+    sizes reach each child at approval instead. */
+const plannerSizeRecorded = Effect.fn("plannerSizeRecorded")(function* (input: {
+  readonly board: BoardState;
+  readonly command: Pick<BoardCommand, "commandId" | "createdAt">;
+  readonly card: BoardCard;
+  readonly plans: ReadonlyArray<Pick<BoardPlan, "size" | "sizeReason">>;
+}) {
+  const only = input.plans.length === 1 ? input.plans[0]! : null;
+  const planner =
+    only?.size === undefined ? null : { size: only.size, reason: only.sizeReason ?? null };
+  const current = input.card.resources?.sizing?.planner ?? null;
+  if (canonicalJson(current) === canonicalJson(planner)) return null;
+  return yield* cardResourcesRecordedEvent({
+    card: input.card,
+    resources: withBoardCardPlannerSize(input.card.resources, planner),
+    command: input.command,
+  });
 });
 
 /**
@@ -2736,7 +2805,8 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         command.addDependsOn === undefined &&
         command.removeDependsOn === undefined &&
         command.addLabels === undefined &&
-        command.removeLabels === undefined
+        command.removeLabels === undefined &&
+        command.size === undefined
       ) {
         return yield* invariant(command, `Update for card '${command.cardId}' carries no changes.`);
       }
@@ -2888,6 +2958,16 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           command.scheduledStartAt === undefined ? card.scheduledStartAt : command.scheduledStartAt,
         autoMergeHold: mergeStrategyChanged ? null : card.autoMergeHold,
         mergeStrategy,
+        // T3o: a size edit (T3O-86); null drops it, back to the planner's.
+        resources:
+          command.size === undefined
+            ? card.resources
+            : withBoardCardSizeEdit(
+                card.resources,
+                command.size === null
+                  ? null
+                  : { size: command.size, by: command.sizeEditor ?? "human" },
+              ),
         priority: command.priority ?? card.priority,
         updatedAt: command.createdAt,
       };
@@ -4220,6 +4300,8 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           // Only a split's plans carry the flag; a single plan is the card's
           // own, which is planned by definition.
           ...(command.plans.length >= 2 && plan.planned === false ? { planned: false } : {}),
+          ...(plan.size === undefined ? {} : { size: plan.size }),
+          ...(plan.sizeReason === undefined ? {} : { sizeReason: plan.sizeReason }),
           createdAt: prior?.createdAt ?? command.createdAt,
           updatedAt: command.createdAt,
           body: plan.body,
@@ -4261,9 +4343,15 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         command.planReview?.enabled === true && plans.length > 0
           ? livePlanReviewStep(board, command.cardId)
           : null;
-      if (reviewStep === null || reviewStep.planReviewStartedAt !== undefined) return proposed;
+      // T3o: a single plan's size is the card's own planner size (T3O-86); a split's
+      // reaches each child at approval.
+      const sized = yield* plannerSizeRecorded({ board, command, card: proposalCard, plans });
+      if (reviewStep === null || reviewStep.planReviewStartedAt !== undefined) {
+        return sized === null ? proposed : [proposed, sized];
+      }
       return [
         proposed,
+        ...(sized === null ? [] : [sized]),
         yield* planReviewStartedEvent({
           command,
           state: reviewStep,
@@ -4477,6 +4565,18 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
             parentCardId: card.id,
             sourcePlanId: plan.planId,
             ...(inheritedPin === null ? {} : { pinnedWorkerId: inheritedPin }),
+            ...(plan.size === undefined
+              ? {}
+              : {
+                  resources: {
+                    sizing: {
+                      planner: { size: plan.size, reason: plan.sizeReason ?? null },
+                      edit: null,
+                    },
+                    grant: null,
+                    setup: null,
+                  },
+                }),
             ...(card.priority === "normal" ? {} : { priority: card.priority }),
             stage,
             orderKey,
@@ -4538,6 +4638,13 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           `Card '${command.cardId}' worktree is '${card.worktree.status}'; only a failed, reclaimed or branch-only worktree can be re-provisioned.`,
         );
       }
+      // T3o: the placement gate records where the card goes before it provisions (T3O-87).
+      if (card.placedWorkerId === null) {
+        return yield* invariant(
+          command,
+          `Card '${command.cardId}' has no placement; the board places a card before it provisions it.`,
+        );
+      }
       // `failed` is a retry, so `attempts` climbs; `reclaimed` and `branch-only` are
       // fresh provisions, so it restarts. The round boundary belongs to the move out of
       // Done, not here: a worktree that survived Done is never re-provisioned.
@@ -4547,6 +4654,10 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         card.worktree.status === "branch-only"
           ? 1
           : card.worktree.attempts + 1;
+      // T3o: a re-provision of a reclaimed card, and every retry of one, keeps its home worker.
+      const reprovision =
+        card.worktree?.status === "reclaimed" ||
+        (card.worktree?.status === "failed" && card.worktree.reprovision === true);
       const nextCard: BoardCard = {
         ...card,
         worktree: {
@@ -4557,10 +4668,12 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           attempts,
           lastError: null,
           reclaimBlockedReason: null,
+          ...(reprovision ? { reprovision: true } : {}),
         },
-        // The worktree binds the card to the worker it is cut on, so placement is recorded in
-        // the same event: the card's pin, or the default. From here only a move changes it.
-        placedWorkerId: boardCardEffectiveWorkerId(card, board.defaultWorkerId),
+        // The worktree binds the card to the worker the gate placed it on (T3O-87). From
+        // here only a move or the worker's removal changes it.
+        placedWorkerId: card.placedWorkerId,
+        resources: withSetupDue(card.resources),
         updatedAt: command.createdAt,
       };
       return {
@@ -4671,10 +4784,11 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           `Card '${command.cardId}' has no worktree in 'provisioning'; cannot record a ready worktree.`,
         );
       }
+      const { reprovision: _reprovision, ...landed } = card.worktree;
       const nextCard: BoardCard = {
         ...card,
         worktree: {
-          ...card.worktree,
+          ...landed,
           path: command.path,
           status: "ready",
           lastError: null,
@@ -4969,6 +5083,114 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           ...(summary === null ? {} : { reviewSummary: summary }),
         },
       };
+    }
+
+    case "board.card.record-grant": {
+      const card = yield* requireBoardCard({ board, command });
+      const current = card.resources?.grant ?? null;
+      if (command.clear === true) {
+        if (current === null) return [];
+        return yield* cardResourcesRecordedEvent({
+          card,
+          resources: { ...(card.resources ?? EMPTY_BOARD_CARD_RESOURCES), grant: null },
+          command,
+        });
+      }
+      // A grant needs a profile: one already granted, or the one the command brings.
+      const profile = command.profile ?? current?.profile;
+      if (profile === undefined) {
+        return yield* invariant(command, `Card '${command.cardId}' has no grant to change.`);
+      }
+      const next = {
+        profile,
+        heavy: command.heavy ?? current?.heavy ?? false,
+        claimId: current?.claimId ?? null,
+        grantedAt: current?.grantedAt ?? command.createdAt,
+        settled: command.settled ?? current?.settled ?? false,
+      };
+      if (current !== null && canonicalJson(current) === canonicalJson(next)) return [];
+      return yield* cardResourcesRecordedEvent({
+        card,
+        resources: { ...(card.resources ?? EMPTY_BOARD_CARD_RESOURCES), grant: next },
+        command,
+      });
+    }
+
+    case "board.card.record-setup": {
+      const card = yield* requireBoardCard({ board, command });
+      const current = card.resources?.setup ?? null;
+      if (canonicalJson(current) === canonicalJson(command.setup)) return [];
+      const { setupDue: _due, ...base } = card.resources ?? EMPTY_BOARD_CARD_RESOURCES;
+      return yield* cardResourcesRecordedEvent({
+        card,
+        resources: withoutEmptyResources({ ...base, setup: command.setup }),
+        command,
+      });
+    }
+
+    case "board.card.setup-action": {
+      const card = yield* requireActiveBoardCard({ board, command });
+      const setup = card.resources?.setup ?? null;
+      // Nothing to act on: a click that raced the setup's end, or a card with no worktree.
+      if (setup === null || card.worktree?.status !== "ready") return [];
+      if (command.action === "cancel") {
+        if (setup.status !== "running") return [];
+        return yield* cardResourcesRecordedEvent({
+          card,
+          resources: { ...card.resources!, setup: { ...setup, status: "cancelled" } },
+          command,
+          setupRequested: "cancel",
+        });
+      }
+      if (setup.status === "running") return [];
+      // Retry re-runs the setup script only: fetch, checkout and submodules stand.
+      return yield* cardResourcesRecordedEvent({
+        card,
+        resources: {
+          ...card.resources!,
+          setup: {
+            ...setup,
+            status: "running",
+            stage: "setup-script",
+            exitCode: null,
+            startedAt: command.createdAt,
+            durationMs: null,
+            detail: null,
+          },
+        },
+        command,
+        setupRequested: "retry",
+      });
+    }
+
+    case "board.card.undo-provision": {
+      const card = yield* requireBoardCard({ board, command });
+      // Only a provision still in flight is undone; one that landed or failed stands.
+      if (card.worktree?.status !== "provisioning") return [];
+      // The worktree that was due its setup never landed: the next provision marks it again.
+      const { setupDue: _due, ...rest } = card.resources ?? EMPTY_BOARD_CARD_RESOURCES;
+      // T3o: the claim expired, so the placement goes too and the card is ranked again
+      // (T3O-87) — unless the restored record still binds it to its worker. A reclaimed or
+      // failed re-provision keeps its worker too: unpushed commits may live only there.
+      const restoredHolds = boardCardHoldsWorktree({ worktree: command.restore });
+      const keepsHome = boardWorktreeKeepsHome(command.restore);
+      return yield* cardResourcesRecordedEvent({
+        card: {
+          ...card,
+          worktree: command.restore,
+          placedWorkerId: restoredHolds || keepsHome ? card.placedWorkerId : null,
+          updatedAt: command.createdAt,
+        },
+        resources:
+          card.resources === null
+            ? null
+            : withoutEmptyResources({
+                ...rest,
+                grant: null,
+                ...(restoredHolds ? {} : { placement: null }),
+              }),
+        command,
+      });
     }
 
     case "board.card.record-auto-merge-hold": {
@@ -5338,6 +5560,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         stalledReason: "gave-up",
         retryAt: null,
         queuedBy: null,
+        queuedDetail: null,
         lastNudgeAt: null,
         // No human has typed into a fresh step, so no free turn-ending is owed.
         humanTurnAt: null,
@@ -5490,6 +5713,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
             stalledReason: "gave-up",
             retryAt: null,
             queuedBy: null,
+            queuedDetail: null,
             startedAt: command.createdAt,
             updatedAt: command.createdAt,
           }
@@ -5497,7 +5721,12 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           ? // Re-recording which limit holds an already-queued step
             // touches only that: a resumed step waits queued on its own
             // thread, and dropping it would spawn a fresh one on admission.
-            { ...current, queuedBy: command.queuedBy ?? null, updatedAt: command.createdAt }
+            {
+              ...current,
+              queuedBy: command.queuedBy ?? null,
+              queuedDetail: command.queuedDetail ?? null,
+              updatedAt: command.createdAt,
+            }
           : {
               ...current,
               status: "queued",
@@ -5505,6 +5734,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
               slotHeld: false,
               // Which limit holds it; absent keeps plain "Queued".
               queuedBy: command.queuedBy ?? null,
+              queuedDetail: command.queuedDetail ?? null,
               startedAt: null,
               updatedAt: command.createdAt,
             };
@@ -5890,6 +6120,9 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
     case "board.project.set-ci-steps":
     case "board.project.set-ci-enabled":
     case "board.project.set-ci-stop-on-failure":
+    case "board.project.set-resources":
+    // T3o: the board's learned baseline (T3O-87).
+    case "board.project.record-learned":
     case "board.project.reset":
     case "board.project.import-file":
     case "board.project.dismiss-import":
@@ -5959,6 +6192,9 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       const reattached: PlannedBoardEvent[] = [];
       for (const card of command.mode === "rename" ? [] : board.cards) {
         if (card.placementOrphaned?.workerId !== worker.id) continue;
+        // T3o: only a card still placed there reattaches; one placed elsewhere since is the
+        // orphan sweep's (T3O-87).
+        if (card.placedWorkerId !== null && card.placedWorkerId !== worker.id) continue;
         reattached.push({
           ...(yield* makeBoardEventBase({
             cardId: card.id,
@@ -5988,12 +6224,6 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       if (existing === undefined) {
         return yield* invariant(command, `Worker '${command.workerId}' is not registered.`);
       }
-      if ((board.defaultWorkerId ?? BOARD_LOCAL_WORKER_ID) === command.workerId) {
-        return yield* invariant(
-          command,
-          `${existing.label} is the default worker. Make another worker the default first.`,
-        );
-      }
       const removed: PlannedBoardEvent = {
         ...(yield* makeBoardWorkerEventBase({
           workerId: command.workerId,
@@ -6008,12 +6238,67 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       // step holds for a human. Archived cards too.
       const cardEvents: PlannedBoardEvent[] = [];
       const afterRemoval = new Map<BoardCardId, BoardCard>();
+      // T3o: the removal sequence classified each card it probed (T3O-87).
+      const classified = new Map(
+        (command.classifications ?? []).map((entry) => [entry.cardId, entry.outcome]),
+      );
+      const withoutWorker = (card: BoardCard): Pick<BoardCard, "pinnedWorkerId"> => ({
+        pinnedWorkerId: card.pinnedWorkerId === command.workerId ? null : card.pinnedWorkerId,
+      });
+      const unplacedResources = (card: BoardCard) =>
+        card.resources === null
+          ? null
+          : withoutEmptyResources({ ...card.resources, grant: null, placement: null });
       for (const card of board.cards) {
-        const outcome = boardCardWorkerRemovalOutcome(
+        // A worktree outcome stands only while the card still has its worktree there: a Move
+        // that landed since the probe keeps its new one.
+        const probed = classified.get(card.id);
+        const classification =
+          probed === "unplaced" ||
+          (card.placedWorkerId === command.workerId && boardCardHoldsWorktree(card))
+            ? probed
+            : undefined;
+        if (classification === "reclaimed" || classification === "fresh") {
+          const nextCard: BoardCard = {
+            ...card,
+            ...withoutWorker(card),
+            placedWorkerId: null,
+            worktree:
+              classification === "fresh" || card.worktree === null
+                ? null
+                : { ...card.worktree, status: "reclaimed", path: null },
+            resources: unplacedResources(card),
+            updatedAt: command.createdAt,
+          };
+          afterRemoval.set(card.id, nextCard);
+          cardEvents.push({
+            ...(yield* makeBoardEventBase({
+              cardId: card.id,
+              occurredAt: command.createdAt,
+              commandId: command.commandId,
+            })),
+            type: "board.card-worker-removal",
+            payload: {
+              cardId: card.id,
+              workerId: command.workerId,
+              workerLabel: existing.label,
+              outcome: "reclaimed",
+              card: nextCard,
+            },
+          });
+          continue;
+        }
+        const derived = boardCardWorkerRemovalOutcome(
           card,
           boardCardStepState(board, card.id),
           command.workerId,
         );
+        const outcome =
+          classification === "orphaned"
+            ? "orphaned"
+            : classification === "unplaced" && derived !== null
+              ? "fallback"
+              : derived;
         if (outcome === null) continue;
         const nextCard: BoardCard =
           outcome === "orphaned"
@@ -6028,10 +6313,12 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
               }
             : {
                 ...card,
-                pinnedWorkerId:
-                  card.pinnedWorkerId === command.workerId ? null : card.pinnedWorkerId,
+                ...withoutWorker(card),
                 placedWorkerId:
                   card.placedWorkerId === command.workerId ? null : card.placedWorkerId,
+                ...(card.placedWorkerId === command.workerId
+                  ? { resources: unplacedResources(card) }
+                  : {}),
                 updatedAt: command.createdAt,
               };
         afterRemoval.set(card.id, nextCard);
@@ -6101,9 +6388,10 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       // A card with a worktree is bound to its worker: changing that is a
       // move, which checks the work is pushed first. A pin that lands where the
       // worktree already is changes nothing about where the card runs.
-      if (boardCardHoldsWorktree(card)) {
-        const current = boardCardEffectiveWorkerId(card, board.defaultWorkerId);
-        const target = command.workerId ?? board.defaultWorkerId ?? BOARD_LOCAL_WORKER_ID;
+      // T3o: Unpin on a placed card leaves it where it is (T3O-87).
+      if (boardCardHoldsWorktree(card) && command.workerId !== null) {
+        const current = boardCardEffectiveWorkerId(card);
+        const target = command.workerId;
         if (target !== current) {
           return yield* invariant(
             command,
@@ -6140,18 +6428,53 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         return yield* invariant(command, `Worker '${command.workerId}' is not registered.`);
       }
       if (boardCardHoldsWorktree(card)) {
-        const current = boardCardEffectiveWorkerId(card, board.defaultWorkerId);
+        const current = boardCardEffectiveWorkerId(card);
         if (current !== command.workerId) {
           return yield* invariant(
             command,
             `Card '${card.key}' has a worktree on worker '${current}'; only a move places it elsewhere.`,
           );
         }
+      } else if (card.pinnedWorkerId !== null && card.pinnedWorkerId !== command.workerId) {
+        // A pin that landed after the pass ranked the card's workers.
+        return yield* invariant(
+          command,
+          `Card '${card.key}' is pinned to worker '${card.pinnedWorkerId}'; it can't be placed on '${command.workerId}'.`,
+        );
       }
-      if (card.placedWorkerId === command.workerId) return [];
+      const placement = {
+        workerId: command.workerId,
+        at: command.createdAt,
+        reason: command.reason ?? null,
+      };
+      if (
+        card.placedWorkerId === command.workerId &&
+        command.grantedProfile === undefined &&
+        command.reason === undefined
+      ) {
+        return [];
+      }
+      // T3o: the gate's grant and its reason are on record before the provision (T3O-87).
+      const base = card.resources ?? EMPTY_BOARD_CARD_RESOURCES;
+      const resources: BoardCardResources = {
+        ...base,
+        placement,
+        ...(command.grantedProfile === undefined
+          ? {}
+          : {
+              grant: {
+                profile: command.grantedProfile,
+                heavy: command.heavyGranted ?? true,
+                claimId: command.claimId ?? null,
+                grantedAt: command.createdAt,
+                settled: false,
+              },
+            }),
+      };
       const nextCard: BoardCard = {
         ...card,
         placedWorkerId: command.workerId,
+        resources,
         updatedAt: command.createdAt,
       };
       return {
@@ -6206,7 +6529,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
             `Card '${card.key}' has no worktree to move; pin it to the worker instead.`,
           );
         }
-        const from = holds ? boardCardEffectiveWorkerId(card, board.defaultWorkerId) : null;
+        const from = holds ? boardCardEffectiveWorkerId(card) : null;
         if (from === step.toWorkerId) {
           return yield* invariant(
             command,
@@ -6242,6 +6565,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
             placedWorkerId: null,
             // Off the removed worker for good: the hold is over.
             placementOrphaned: null,
+            resources: withoutPlacement(card.resources),
             updatedAt: command.createdAt,
           };
         } else if (step.phase === "done") {
@@ -6260,10 +6584,11 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
             );
           }
           recorded = move;
+          const { reprovision: _reprovision, ...moved } = card.worktree;
           nextCard = {
             ...card,
             worktree: {
-              ...card.worktree,
+              ...moved,
               path: step.worktreePath,
               status: "ready",
               lastError: null,
@@ -6273,6 +6598,12 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
             placedWorkerId: move.toWorkerId,
             workerMove: null,
             placementOrphaned: null,
+            // T3o: the moved worktree runs setup once (T3O-86); the Worker row names where it
+            // landed (T3O-87).
+            resources: {
+              ...withSetupDue(card.resources),
+              placement: { workerId: move.toWorkerId, at: command.createdAt, reason: "moved here" },
+            },
             updatedAt: command.createdAt,
           };
         } else if (step.phase === "restarted") {
@@ -6287,6 +6618,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
             placedWorkerId: null,
             workerMove: null,
             placementOrphaned: null,
+            resources: withoutPlacement(card.resources),
             updatedAt: command.createdAt,
           };
         } else {

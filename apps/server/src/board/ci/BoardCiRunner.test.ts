@@ -12,6 +12,7 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { vi } from "vite-plus/test";
 
 import {
@@ -551,6 +552,23 @@ it.live("a step past its limit settles timed-out even when its kill never lands"
     }).pipe(Effect.timeoutOption("2 seconds"));
     assert.deepStrictEqual(exit, Option.some({ status: "timed-out" as const, exitCode: null }));
     assert.include(tail.text(), "timed out");
+  }),
+);
+
+it.live("a script that isn't a CI step runs without CI's environment", () =>
+  Effect.gen(function* () {
+    const cwd = workdir();
+    const tail = new BoardCiTail();
+    yield* runBoardCiStep({
+      command: 'printf "ci=%s result=%s home=%s" "$CI" "$T3O_CI_RESULT" "$HOME"',
+      cwd,
+      timeoutMs: 5_000,
+      tail,
+      logPath: NodePath.join(cwd, "setup.log"),
+      resultPath: NodePath.join(cwd, "setup.result"),
+      ciEnvironment: false,
+    }).pipe(Effect.provideService(HostProcess.Environment, { HOME: "/home/dev" }));
+    assert.strictEqual(tail.text().trim(), "ci= result= home=/home/dev");
   }),
 );
 

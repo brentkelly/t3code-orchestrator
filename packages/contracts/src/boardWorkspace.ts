@@ -13,6 +13,7 @@ import {
   EnvironmentAuthorizationError,
 } from "./auth.ts";
 import { NonNegativeInt, PositiveInt, ProjectId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { BoardProvisionClaim } from "./boardCapacity.ts";
 import { VcsStatusChangeRequest } from "./git.ts";
 import { PullRequestMergeMethod } from "./pullRequest.ts";
 
@@ -176,7 +177,11 @@ export class BoardWorkerGitError extends Schema.TaggedError<BoardWorkerGitError>
   {
     operation: Schema.String,
     detail: Schema.String,
-    refusal: Schema.optionalKey(Schema.Literals(["host", "blocked", "unavailable"])),
+    /** T3o (T3O-86): `claim-expired` is a provision whose claim the worker no longer held and
+        that no longer fits; `needs-update` is a board too old to send one. */
+    refusal: Schema.optionalKey(
+      Schema.Literals(["host", "blocked", "unavailable", "claim-expired", "needs-update"]),
+    ),
   },
 ) {}
 
@@ -202,6 +207,8 @@ export const BOARD_WORKER_GIT_WS_METHODS = {
   deleteCardBranch: "boardWorker.git.deleteCardBranch",
   gitUserName: "boardWorker.git.gitUserName",
   remoteBranchTip: "boardWorker.git.remoteBranchTip",
+  // T3o: push a card's own branch before its worker is removed (T3O-87). Never forced.
+  pushCardBranch: "boardWorker.git.pushCardBranch",
   pullRequestByBranch: "boardWorker.git.pullRequestByBranch",
   getPullRequest: "boardWorker.git.getPullRequest",
   mergePullRequest: "boardWorker.git.mergePullRequest",
@@ -244,6 +251,9 @@ const boardBranchName = branchName.check(
   }),
 );
 const path = TrimmedNonEmptyString;
+/** T3o: the placement the provision consumes (T3O-86). A worker refuses a provision
+    without one: that is how an older board is caught. */
+const claim = Schema.optionalKey(BoardProvisionClaim);
 
 export const BOARD_WORKER_GIT_RPCS = [
   Rpc.make(M.resolveDefaultBranch, {
@@ -262,12 +272,12 @@ export const BOARD_WORKER_GIT_RPCS = [
     error: gitError,
   }),
   Rpc.make(M.provisionWorktree, {
-    payload: { ...onProject, branch: boardBranchName, baseRefName: branchName },
+    payload: { ...onProject, branch: boardBranchName, baseRefName: branchName, claim },
     success: BoardWorkspaceProvisionedWorktree,
     error: gitError,
   }),
   Rpc.make(M.provisionWorktreeFromRemoteBranch, {
-    payload: { ...onProject, branch: boardBranchName, baseRefName: branchName },
+    payload: { ...onProject, branch: boardBranchName, baseRefName: branchName, claim },
     success: BoardWorkspaceProvisionedWorktree,
     error: gitError,
   }),
@@ -354,6 +364,11 @@ export const BOARD_WORKER_GIT_RPCS = [
     success: BoardWorkspaceRemoteBranchTip,
     error: gitError,
   }),
+  Rpc.make(M.pushCardBranch, {
+    payload: { ...onProject, worktreePath: path, branch: boardBranchName },
+    success: Schema.Struct({ pushed: Schema.Boolean, detail: Schema.NullOr(Schema.String) }),
+    error: gitError,
+  }),
   Rpc.make(M.pullRequestByBranch, {
     payload: {
       ...onProject,
@@ -432,6 +447,7 @@ export const BOARD_WORKER_GIT_RPC_SCOPES = {
   [M.deleteCardBranch]: AuthSourceControlWriteScope,
   [M.gitUserName]: AuthOrchestrationReadScope,
   [M.remoteBranchTip]: AuthSourceControlWriteScope,
+  [M.pushCardBranch]: AuthSourceControlWriteScope,
   [M.pullRequestByBranch]: AuthOrchestrationReadScope,
   [M.getPullRequest]: AuthOrchestrationReadScope,
   [M.mergePullRequest]: AuthSourceControlWriteScope,

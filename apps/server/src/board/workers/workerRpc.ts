@@ -18,22 +18,27 @@ import {
   type BoardWorkersDismissSetupInput,
   type BoardWorkersRenameInput,
   type BoardWorkersSetDefaultInput,
+  type BoardWorkersCloneHereInput,
   type BoardWorkersSetupProjectInput,
   boardIdOfBoardSubject,
   T3O_BOARD_USER_SUBJECT_PREFIX,
   t3oBoardSubject,
   t3oBoardUserSubject,
   type AuthEnvironmentScope,
+  type BoardWorkersCapacityActionInput,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
 
 import packageJson from "../../../package.json" with { type: "json" };
 import { EnvironmentAuth, type AuthenticatedSession } from "../../auth/EnvironmentAuth.ts";
 import { ServerEnvironment } from "../../environment/ServerEnvironment.ts";
 import { ProjectService } from "../../project/ProjectService.ts";
 import { ProviderRegistry } from "../../provider/ProviderRegistry.ts";
+import { BoardWorkerCapacity } from "../capacity/BoardWorkerCapacity.ts";
+import { boardCapacityAction, boardCapacityStream } from "../capacity/boardCapacityRpc.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { BoardWorkers } from "./BoardWorkers.ts";
 import * as ManagedLimits from "../../policy/managedLimits.ts";
@@ -120,6 +125,14 @@ export const reconcileBoardUserSessions = Effect.fn("boardWorker.reconcileBoardU
   },
 );
 
+const forgetReleasedBoard = (input: BoardWorkerReleaseInput, subject: string) => {
+  const boardId = boardIdOfBoardSubject(subject);
+  if (input.all !== true || boardId === null) return Effect.void;
+  return Effect.flatMap(Effect.serviceOption(BoardWorkerCapacity), (capacity) =>
+    capacity._tag === "Some" ? capacity.value.forgetBoard(boardId) : Effect.void,
+  );
+};
+
 const requestError = (message: string) => (cause: unknown) =>
   new BoardWorkerRequestError({ message, cause });
 
@@ -204,11 +217,30 @@ export const boardWorkerRpcHandlers = (currentSession: AuthenticatedSession) =>
           BOARD_WORKERS_WS_METHODS.setupProject,
           Effect.flatMap(workers, (service) => service.setupProject(input)),
         ),
+      [BOARD_WORKERS_WS_METHODS.cloneHere]: (input: BoardWorkersCloneHereInput) =>
+        authorized(
+          BOARD_WORKERS_WS_METHODS.cloneHere,
+          Effect.flatMap(workers, (service) => service.cloneHere(input.projectId)),
+        ),
       [BOARD_WORKERS_WS_METHODS.dismissSetup]: (input: BoardWorkersDismissSetupInput) =>
         authorized(
           BOARD_WORKERS_WS_METHODS.dismissSetup,
           Effect.flatMap(workers, (service) => service.dismissSetup(input)),
         ),
+      // T3o: worker capacity for the Workers page, the pin picker and queued cards (T3O-86).
+      [BOARD_WORKERS_WS_METHODS.subscribeCapacity]: (_input: Record<string, never>) =>
+        currentSession.scopes.includes(
+          BOARD_WORKER_RPC_SCOPES[BOARD_WORKERS_WS_METHODS.subscribeCapacity],
+        )
+          ? boardCapacityStream
+          : Stream.fail(
+              new EnvironmentAuthorizationError({
+                message: "The authenticated token is missing a required scope.",
+                requiredScope: BOARD_WORKER_RPC_SCOPES[BOARD_WORKERS_WS_METHODS.subscribeCapacity],
+              }),
+            ),
+      [BOARD_WORKERS_WS_METHODS.capacityAction]: (input: BoardWorkersCapacityActionInput) =>
+        authorized(BOARD_WORKERS_WS_METHODS.capacityAction, boardCapacityAction(input)),
 
       // ── Worker: answering a central server ──────────────────────────
       [BOARD_WORKER_WS_METHODS.hello]: (_input: Record<string, never>) =>
@@ -270,13 +302,22 @@ export const boardWorkerRpcHandlers = (currentSession: AuthenticatedSession) =>
       [BOARD_WORKER_WS_METHODS.release]: (input: BoardWorkerReleaseInput) =>
         authorized(
           BOARD_WORKER_WS_METHODS.release,
-          Effect.flatMap(auth, (service) =>
-            input.all === true
-              ? Effect.asVoid(
-                  revokeBoardSessions(service, boardIdOfBoardSubject(currentSession.subject) ?? ""),
-                )
-              : Effect.asVoid(service.revokeSession(currentSession.sessionId)),
-          ).pipe(Effect.delay(RELEASE_GRACE), Effect.ignore, Effect.forkDetach, Effect.asVoid),
+          // T3o: a board that removed this worker leaves its card records and claims behind
+          // it (T3O-86); a renewal's release keeps them.
+          forgetReleasedBoard(input, currentSession.subject).pipe(
+            Effect.andThen(
+              Effect.flatMap(auth, (service) =>
+                input.all === true
+                  ? Effect.asVoid(
+                      revokeBoardSessions(
+                        service,
+                        boardIdOfBoardSubject(currentSession.subject) ?? "",
+                      ),
+                    )
+                  : Effect.asVoid(service.revokeSession(currentSession.sessionId)),
+              ).pipe(Effect.delay(RELEASE_GRACE), Effect.ignore, Effect.forkDetach, Effect.asVoid),
+            ),
+          ),
         ),
       [BOARD_WORKER_WS_METHODS.mintUserSession]: (input: BoardWorkerMintUserSessionInput) =>
         authorized(

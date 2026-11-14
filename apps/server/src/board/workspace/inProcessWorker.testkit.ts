@@ -32,9 +32,10 @@ export const boardSession = (
     AuthOrchestrationReadScope,
     AuthSourceControlWriteScope,
   ],
+  boardId = "env-board",
 ): AuthenticatedSession => ({
-  sessionId: AuthSessionId.make("session-board-on-worker"),
-  subject: "board",
+  sessionId: AuthSessionId.make(`session-${boardId}-on-worker`),
+  subject: `t3o-board:${boardId}`,
   method: "bearer-access-token",
   scopes,
 });

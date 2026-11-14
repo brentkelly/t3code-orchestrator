@@ -15,13 +15,20 @@ import {
   type BoardWorkerGitOperation,
   type BoardWorkerGitPayload,
   type BoardWorkerGitSuccess,
+  type BoardProvisionClaim,
   type ProjectId,
+  boardIdOfBoardSubject,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 
 import type { AuthenticatedSession } from "../../auth/EnvironmentAuth.ts";
+import {
+  provisionUnderClaim,
+  type BoardWorkerCapacityShape,
+} from "../capacity/BoardWorkerCapacity.ts";
 import type { BoardWorkspacesShape } from "./BoardWorkspace.ts";
+import { boardWorktreeOwnerOf } from "./LocalBoardWorkspace.ts";
 import { decodeGitPayload, encodeGitSuccess } from "./gitWire.ts";
 
 export type BoardWorkerGitHandlers = {
@@ -39,9 +46,10 @@ const pathsOf = (input: Record<string, unknown>): ReadonlyArray<string> => {
   return typeof path === "string" ? [path] : [];
 };
 
-/** The operations that change or remove the checkout they name. */
+/** The operations that change, remove or publish from the checkout they name. */
 const WRITES_TO_PATH: ReadonlySet<BoardWorkerGitOperation> = new Set([
   "pinGhDefault",
+  "pushCardBranch",
   "pruneWorktree",
   "retireWorktree",
 ]);
@@ -51,10 +59,15 @@ const guardPaths = (
   operation: BoardWorkerGitOperation,
   projectId: ProjectId,
   paths: ReadonlyArray<string>,
+  boardId: string,
 ) =>
   Effect.forEach(paths, (path) =>
     workspaces
-      .ownsWorktreePath(projectId, path, WRITES_TO_PATH.has(operation) ? "central" : undefined)
+      .ownsWorktreePath(
+        projectId,
+        path,
+        WRITES_TO_PATH.has(operation) ? boardWorktreeOwnerOf(boardId) : undefined,
+      )
       .pipe(
         Effect.flatMap((owned) =>
           owned
@@ -85,10 +98,11 @@ const guardBranch = Effect.fn("BoardWorkerGitRpc.guardBranch")(function* (
   operation: BoardWorkerGitOperation,
   projectId: ProjectId,
   input: Record<string, unknown>,
+  boardId: string,
 ) {
   const branch = String(input["branch"]);
   if (operation === "deleteCardBranch") {
-    if (yield* workspaces.centralMayDeleteBranch(projectId, branch)) return;
+    if (yield* workspaces.centralMayDeleteBranch(projectId, branch, boardId)) return;
     return yield* new BoardWorkerGitError({
       operation,
       detail: `${branch} belongs to this server's own board or a checkout the board didn't make.`,
@@ -103,9 +117,41 @@ const guardBranch = Effect.fn("BoardWorkerGitRpc.guardBranch")(function* (
   });
 });
 
+/**
+ * T3o (T3O-86): a provision consumes a placement claim. The claim must still be held here,
+ * or fit again now (`claim-expired` when it doesn't); one with no claim is from a board too
+ * old to send it (`needs-update`). Absent capacity (a harness) checks nothing.
+ */
+const withProvisionClaim = <A extends { readonly path: string }>(
+  capacity: BoardWorkerCapacityShape | undefined,
+  boardId: string,
+  operation: BoardWorkerGitOperation,
+  input: Record<string, unknown>,
+  run: Effect.Effect<A, BoardWorkerGitError>,
+): Effect.Effect<A, BoardWorkerGitError> => {
+  if (capacity === undefined || !PROVISIONS_WORKTREE.has(operation)) return run;
+  const claim = input["claim"] as BoardProvisionClaim | undefined;
+  if (claim === undefined) {
+    return Effect.fail(
+      new BoardWorkerGitError({
+        operation,
+        detail: "This worker needs a newer board: the provision carried no capacity claim.",
+        refusal: "needs-update",
+      }),
+    );
+  }
+  return provisionUnderClaim(capacity, boardId, operation, claim, String(input["branch"]), run);
+};
+
+const PROVISIONS_WORKTREE: ReadonlySet<BoardWorkerGitOperation> = new Set([
+  "provisionWorktree",
+  "provisionWorktreeFromRemoteBranch",
+]);
+
 const boardWorkerGitRpcHandlers = (
   currentSession: AuthenticatedSession,
   workspaces: BoardWorkspacesShape,
+  capacity: BoardWorkerCapacityShape | undefined,
 ): BoardWorkerGitHandlers => {
   const handler =
     (op: BoardWorkerGitOperation) =>
@@ -120,12 +166,40 @@ const boardWorkerGitRpcHandlers = (
           }),
         );
       }
+      const boardId = boardIdOfBoardSubject(currentSession.subject);
+      if (boardId === null) {
+        return Effect.fail(
+          new EnvironmentAuthorizationError({
+            message: "Only a board's own session may call this on a worker.",
+            requiredScope,
+          }),
+        );
+      }
       return Effect.gen(function* () {
-        yield* guardPaths(workspaces, op, input.projectId, pathsOf(input));
-        yield* guardBranch(workspaces, op, input.projectId, input);
-        const run = workspaces.forCentral[op] as (
+        yield* guardPaths(workspaces, op, input.projectId, pathsOf(input), boardId);
+        yield* guardBranch(workspaces, op, input.projectId, input, boardId);
+        const run = workspaces.forBoard(boardId)[op] as (
           payload: unknown,
         ) => Effect.Effect<unknown, BoardWorkerGitError | { readonly _tag: "WorkerUnavailable" }>;
+        if (PROVISIONS_WORKTREE.has(op)) {
+          return yield* withProvisionClaim(
+            capacity,
+            boardId,
+            op,
+            input,
+            run(input).pipe(
+              Effect.map((value) => value as { readonly path: string }),
+              Effect.mapError((error) =>
+                error._tag === "BoardWorkerGitError"
+                  ? error
+                  : new BoardWorkerGitError({
+                      operation: op,
+                      detail: "This server is unavailable.",
+                    }),
+              ),
+            ),
+          );
+        }
         return yield* run(input);
       }).pipe(
         Effect.mapError((error) =>
@@ -163,8 +237,13 @@ const operationOf = Object.fromEntries(
 export const boardWorkerGitCallRpcHandlers = (
   currentSession: AuthenticatedSession,
   workspaces: BoardWorkspacesShape,
+  capacity?: BoardWorkerCapacityShape,
 ) => {
-  const operations = boardWorkerGitRpcHandlers(currentSession, workspaces) as unknown as Record<
+  const operations = boardWorkerGitRpcHandlers(
+    currentSession,
+    workspaces,
+    capacity,
+  ) as unknown as Record<
     BoardWorkerGitMethod,
     (input: unknown) => Effect.Effect<unknown, BoardWorkerGitError | EnvironmentAuthorizationError>
   >;

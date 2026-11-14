@@ -73,9 +73,9 @@ import { boardCardCreateShortcutLabel, isBoardCardCreateShortcut } from "./board
 import { BoardBaseBranchSelect } from "./BoardBaseBranchSelect";
 import { BoardWorkerPicker } from "./workers/BoardWorkerPicker";
 import {
+  BOARD_ANY_READY_WORKER_LABEL,
   boardWorkerCheckoutWarning,
   boardWorkerFieldLabel,
-  boardWorkerLabel,
 } from "./workers/cardWorker";
 import { useBoardWorkerChoices } from "./workers/useBoardWorkerChoices";
 import { BoardCardSchedulePopover } from "./BoardCardSchedulePopover";
@@ -748,7 +748,7 @@ export function BoardCardCreateDialog({
                 <BoardWorkerPicker
                   choices={workerField.choices}
                   className="h-8 w-full"
-                  followLabel={`Follow default (${boardWorkerLabel(workerField.workers.defaultWorkerId, workerField.workers)})`}
+                  followLabel={BOARD_ANY_READY_WORKER_LABEL}
                   onSelect={setPinnedWorkerId}
                   onSetUp={workerField.setUp}
                   pinnedWorkerId={pinnedWorkerId}

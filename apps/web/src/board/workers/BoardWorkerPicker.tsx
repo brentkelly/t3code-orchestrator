@@ -16,9 +16,9 @@ import { BoardPopoverPopup } from "../ui/BoardPopoverPopup";
 
 export function BoardWorkerPicker(props: {
   readonly choices: ReadonlyArray<BoardWorkerChoice>;
-  /** The pin, or null when the card follows the default. */
+  /** The pin, or null when any ready worker may take the card. */
   readonly pinnedWorkerId: BoardWorkerId | null;
-  /** "Follow default (This server)". */
+  /** "Any ready worker". */
   readonly followLabel: string;
   /** The closed field's text and whether it reads as pinned. */
   readonly value: { readonly label: string; readonly pinned: boolean };
@@ -71,10 +71,12 @@ export function BoardWorkerPicker(props: {
             ) : null}
           </span>
           <span className="text-board-11 text-muted-foreground">
-            Moves with the default until the card has a worktree
+            The board picks the best ready worker when the build starts
           </span>
         </button>
-        <p className="px-2 pt-2 pb-1 text-board-11 font-medium text-muted-foreground">Pin to</p>
+        <p className="px-2 pt-2 pb-1 text-board-11 font-medium text-muted-foreground">
+          Pin builds to
+        </p>
         {props.choices.map((choice) => {
           const row = (
             <div

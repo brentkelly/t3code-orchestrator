@@ -15,6 +15,7 @@ import {
   type BoardWorkersDismissSetupInput,
   type BoardWorkersRenameInput,
   type BoardWorkersSetDefaultInput,
+  type BoardWorkersCloneHereInput,
   type BoardWorkersSetupProjectInput,
   type BoardAttachCardFileInput,
   type BoardDetachCardFileInput,
@@ -39,6 +40,7 @@ import {
   type OrchestrationV2ThreadShell,
   type ProjectId,
   type ThreadId,
+  type BoardWorkersCapacityActionInput,
 } from "@t3tools/contracts";
 import {
   type BoardThreadShellFields,
@@ -60,6 +62,7 @@ import {
   renameBoardWorker,
   setDefaultBoardWorker,
   setupBoardWorkerProject,
+  cloneBoardProjectHere,
 } from "../operations/boardWorkers.ts";
 import {
   approveBoardPlans,
@@ -112,6 +115,10 @@ import {
   undeleteBoardLabel,
   unlinkBoardCardThread,
   updateBoardCard,
+  setBoardProjectResources,
+  type SetBoardProjectResourcesInput,
+  boardCardSetupAction,
+  type BoardCardSetupActionInput,
   setBoardCardProject,
   pinBoardCardWorker,
   boardCardWorkerMove,
@@ -154,6 +161,7 @@ import {
   type UpdateBoardLabelInput,
 } from "../operations/boardCommands.ts";
 import type { EnvironmentShellState } from "./shell.ts";
+import { boardCapacityAction, boardCapacityViewStream } from "./boardCapacity.ts";
 import {
   createEnvironmentCommand,
   createEnvironmentRpcQueryAtomFamily,
@@ -862,8 +870,20 @@ export function createBoardEnvironmentAtoms<R, ER>(
       boardCiLogDownloadStream(request),
   });
 
+  /** T3o: each worker's capacity, for the views that show it (T3O-86). */
+  const capacityAtom = createEnvironmentSubscriptionAtomFamily(runtime, {
+    label: "environment-board-capacity",
+    idleTtlMs: 5_000,
+    subscribe: (_request: Record<string, never>) => boardCapacityViewStream(),
+  });
+
   return {
     boardAtom,
+    capacityAtom,
+    capacityAction: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:capacity-action",
+      execute: (input: BoardWorkersCapacityActionInput) => boardCapacityAction(input),
+    }),
     ciLogAtom,
     ciLogDownloadAtom,
     cardsByProjectAtom,
@@ -992,6 +1012,10 @@ export function createBoardEnvironmentAtoms<R, ER>(
       label: "environment-data:commands:board:setup-worker-project",
       execute: (input: BoardWorkersSetupProjectInput) => setupBoardWorkerProject(input),
     }),
+    cloneProjectHere: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:clone-project-here",
+      execute: (input: BoardWorkersCloneHereInput) => cloneBoardProjectHere(input),
+    }),
     dismissWorkerSetup: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:dismiss-worker-setup",
       execute: (input: BoardWorkersDismissSetupInput) => dismissBoardWorkerSetup(input),
@@ -1039,6 +1063,10 @@ export function createBoardEnvironmentAtoms<R, ER>(
     updateCard: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:update-card",
       execute: (input: UpdateBoardCardInput) => updateBoardCard(input),
+    }),
+    cardSetupAction: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:card-setup-action",
+      execute: (input: BoardCardSetupActionInput) => boardCardSetupAction(input),
     }),
     /** Move a card to another project — human-only, and refused by the
         decider once the card has ever been built. */
@@ -1139,6 +1167,10 @@ export function createBoardEnvironmentAtoms<R, ER>(
       label: "environment-data:commands:board:set-project-ci-stop-on-failure",
       execute: (input: SetBoardProjectCiStopOnFailureInput) =>
         setBoardProjectCiStopOnFailure(input),
+    }),
+    setProjectResources: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:set-project-resources",
+      execute: (input: SetBoardProjectResourcesInput) => setBoardProjectResources(input),
     }),
     resetProject: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:reset-project",

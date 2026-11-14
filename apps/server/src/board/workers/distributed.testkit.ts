@@ -124,7 +124,7 @@ export const makeInProcessWorker = (
     const workerConfig = yield* ServerConfig.ServerConfig.pipe(Effect.provide(workerContext));
     const worker = yield* kit.fake.add(WORKER_URL, WORKER_ID);
     // The board's own session on the worker, as a real link would carry.
-    worker.gateway = hostForSession(host, BOARD_SESSION_ID);
+    worker.gateway = hostForSession(host, { sessionId: BOARD_SESSION_ID, boardId: CENTRAL_ID });
     worker.projects = [
       {
         projectId: WORKER_PROJECT_ID,
