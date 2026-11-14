@@ -113,7 +113,7 @@ describe("the review row's later-rounds model (T3O-94)", () => {
       ...boardSettings.pipeline,
       [review]: {
         ...reviewExec,
-        laterReviewModel: { afterRound: 2, model: haiku },
+        laterReviewModel: { afterRound: 2, model: haiku, runtimeMode: "full-access" },
         phases: { ...reviewExec.phases, review: { ...reviewExec.phases.review, model: opus } },
       },
     },
@@ -126,7 +126,7 @@ describe("the review row's later-rounds model (T3O-94)", () => {
   it("names the early model as inherited and carries the later one", () => {
     const row = reviewRow();
     expect(row?.inheritedModel).toEqual(opus);
-    expect(row?.laterRounds).toEqual({ afterRound: 2, model: haiku });
+    expect(row?.laterRounds).toEqual({ afterRound: 2, model: haiku, runtimeMode: "full-access" });
   });
 
   it("keeps the later model beside a parent's override, which replaces both tiers", () => {
@@ -140,13 +140,34 @@ describe("the review row's later-rounds model (T3O-94)", () => {
     const row = reviewRow()!;
     const at = (round: number, cardOverride: typeof haiku | null = null) =>
       boardReviewRoundInheritedModel({ row, cardOverride, round });
-    expect(at(2)).toEqual({ model: opus, source: "stage" });
-    expect(at(3)).toEqual({ model: haiku, source: "later" });
-    expect(at(3, opus)).toEqual({ model: opus, source: "card" });
+    expect(at(2)).toEqual({ model: opus, source: "stage", runtimeMode: "auto" });
+    expect(at(3)).toEqual({ model: haiku, source: "later", runtimeMode: "full-access" });
+    // A card override replaces both tiers: with no level of its own it runs at the stage's.
+    expect(at(3, opus)).toEqual({ model: opus, source: "card", runtimeMode: "auto" });
+    expect(
+      boardReviewRoundInheritedModel({
+        row,
+        cardOverride: { ...opus, runtimeMode: "approval-required" },
+        round: 3,
+      }),
+    ).toEqual({ model: opus, source: "card", runtimeMode: "approval-required" });
     const childRow = reviewRow({ key: "T3O-41", modelOverrides: { [review]: opus } })!;
     expect(boardReviewRoundInheritedModel({ row: childRow, cardOverride: null, round: 5 })).toEqual(
-      { model: opus, source: "parent" },
+      { model: opus, source: "parent", runtimeMode: "auto" },
     );
+    const leveledChild = reviewRow({
+      key: "T3O-41",
+      modelOverrides: { [review]: { ...opus, runtimeMode: "auto-accept-edits" } },
+    })!;
+    expect(
+      boardReviewRoundInheritedModel({ row: leveledChild, cardOverride: null, round: 5 })
+        .runtimeMode,
+    ).toBe("auto-accept-edits");
+    // The child's own override is used whole, so the parent's level does not leak into it.
+    expect(
+      boardReviewRoundInheritedModel({ row: leveledChild, cardOverride: opus, round: 5 })
+        .runtimeMode,
+    ).toBe("auto");
   });
 
   it("is null off the review row and when Settings leaves it off", () => {

@@ -33,6 +33,8 @@ export interface BoardCardModelRowSpec {
       rather than the workspace, so the row can say so. */
   readonly inheritedFromCardKey: string | null;
   readonly inheritedRuntimeMode: RuntimeMode;
+  /** The Review phase's own level, which a card override with no level of its own runs at. */
+  readonly stageRuntimeMode: RuntimeMode;
   /** The review row only: the later-rounds model Settings runs after `afterRound`, which any
       card or parent Review override replaces. `inheritedModel` is then the early rounds' model. */
   readonly laterRounds: BoardReviewLaterModel | null;
@@ -91,6 +93,7 @@ export function boardCardModelRows(input: {
           : { instanceId: inherited.instanceId, model: inherited.model },
       inheritedFromCardKey: inherited === undefined ? null : (input.parentCard?.key ?? null),
       inheritedRuntimeMode: inherited?.runtimeMode ?? workspaceRuntimeMode,
+      stageRuntimeMode: workspaceRuntimeMode,
       laterRounds: review?.laterReviewModel ?? null,
     });
   }
@@ -103,6 +106,7 @@ export type BoardReviewRoundModelSource = "card" | "parent" | "later" | "stage";
 export interface BoardReviewRoundInheritedModel {
   readonly model: BoardModelSelection | null;
   readonly source: BoardReviewRoundModelSource;
+  readonly runtimeMode: RuntimeMode;
 }
 
 /** The model a review round with no per-round override runs on, from the review row and the
@@ -114,17 +118,26 @@ export function boardReviewRoundInheritedModel(input: {
   readonly round: number;
 }): BoardReviewRoundInheritedModel {
   const { row, cardOverride, round } = input;
+  // A card or parent override replaces both tiers, level included, as the executor does: its
+  // own level, else the Review phase's.
   if (cardOverride != null) {
     return {
       model: { instanceId: cardOverride.instanceId, model: cardOverride.model },
       source: "card",
+      runtimeMode: cardOverride.runtimeMode ?? row.stageRuntimeMode,
     };
   }
-  if (row.inheritedFromCardKey !== null) return { model: row.inheritedModel, source: "parent" };
-  if (row.laterRounds !== null && round > row.laterRounds.afterRound) {
-    return { model: row.laterRounds.model, source: "later" };
+  if (row.inheritedFromCardKey !== null) {
+    return { model: row.inheritedModel, source: "parent", runtimeMode: row.inheritedRuntimeMode };
   }
-  return { model: row.inheritedModel, source: "stage" };
+  if (row.laterRounds !== null && round > row.laterRounds.afterRound) {
+    return {
+      model: row.laterRounds.model,
+      source: "later",
+      runtimeMode: row.laterRounds.runtimeMode ?? row.stageRuntimeMode,
+    };
+  }
+  return { model: row.inheritedModel, source: "stage", runtimeMode: row.stageRuntimeMode };
 }
 
 /** The kebab item's right-aligned summary: which of the rows this card has

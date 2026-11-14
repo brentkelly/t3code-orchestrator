@@ -480,6 +480,10 @@ export function BoardBriefThumbnailStrip(props: {
   ];
   const resourceUrls = useAssetUrls(props.environmentId, resources);
   let hydratedIndex = images.length;
+  const stagedUrls: Array<string | null> = [];
+  for (const row of stagedImages) {
+    stagedUrls.push(isHydratedRow(row) ? (resourceUrls[hydratedIndex++] ?? null) : row.previewUrl);
+  }
   const tiles = [
     ...images.map((attachment, index) => ({
       id: attachment.id as string,
@@ -489,11 +493,11 @@ export function BoardBriefThumbnailStrip(props: {
       persisted: attachment,
       staged: null,
     })),
-    ...stagedImages.map((row) => ({
+    ...stagedImages.map((row, index) => ({
       id: row.id,
       name: row.name,
       mimeType: row.mimeType,
-      url: isHydratedRow(row) ? (resourceUrls[hydratedIndex++] ?? null) : row.previewUrl,
+      url: stagedUrls[index] ?? null,
       persisted: null,
       staged: row,
     })),

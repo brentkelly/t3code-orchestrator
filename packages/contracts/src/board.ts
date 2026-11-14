@@ -12105,6 +12105,8 @@ export const DEFAULT_BOARD_REVIEW_LATER_MODEL_AFTER_ROUND = 2;
 export const BoardReviewLaterModel = Schema.Struct({
   afterRound: PositiveInt,
   model: BoardModelSelection,
+  /** Unset inherits the Review phase's level. */
+  runtimeMode: Schema.optional(RuntimeMode),
 });
 export type BoardReviewLaterModel = typeof BoardReviewLaterModel.Type;
 
@@ -12199,6 +12201,17 @@ export function resolveBoardReviewTierModel(
   const later = review.laterReviewModel;
   if (later !== null && round > later.afterRound) return later.model;
   return review.phases.review.model;
+}
+
+export function resolveBoardReviewTierRuntimeMode(
+  review: Pick<BoardStageExecutionReview, "phases" | "laterReviewModel">,
+  round: number,
+): RuntimeMode | undefined {
+  const later = review.laterReviewModel;
+  if (later !== null && round > later.afterRound && later.runtimeMode !== undefined) {
+    return later.runtimeMode;
+  }
+  return review.phases.review.runtimeMode;
 }
 
 /**

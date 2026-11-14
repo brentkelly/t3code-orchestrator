@@ -1860,7 +1860,13 @@ function LaterReviewModelRows(props: {
   const setLater = (model: BoardModelSelection, round = afterRound) => {
     setLastAfterRound(round);
     setPendingOn(false);
-    set({ laterReviewModel: { afterRound: round, model } });
+    set({
+      laterReviewModel: {
+        afterRound: round,
+        model,
+        ...(later?.runtimeMode === undefined ? {} : { runtimeMode: later.runtimeMode }),
+      },
+    });
   };
   return (
     <>
@@ -1919,9 +1925,14 @@ function LaterReviewModelRows(props: {
                 options === undefined ? { instanceId, model } : { instanceId, model, options },
               );
             }}
-            runtimeMode={effectiveBoardRuntimeMode(exec.phases.review.runtimeMode, "build")}
-            onRuntimeModeChange={() => {}}
-            hideRuntimeMode
+            runtimeMode={effectiveBoardRuntimeMode(
+              later?.runtimeMode ?? exec.phases.review.runtimeMode,
+              "build",
+            )}
+            onRuntimeModeChange={(runtimeMode) => {
+              if (later !== null) set({ laterReviewModel: { ...later, runtimeMode } });
+            }}
+            hideRuntimeMode={later === null}
           />
         </>
       ) : null}

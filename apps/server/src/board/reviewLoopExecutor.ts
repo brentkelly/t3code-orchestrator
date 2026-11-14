@@ -25,10 +25,10 @@ import {
   parseReviewStepId,
   reviewStepId,
   resolveBoardReviewTierModel,
+  resolveBoardReviewTierRuntimeMode,
   reviewStepLabel,
   type BoardCardReviewOverrides,
   type BoardModelSelection,
-  type BoardReviewPhaseExecution,
   type BoardReviewRoundOverride,
   type BoardCardStageModelOverride,
   boardModelSelectionOfOverride,
@@ -107,18 +107,18 @@ function resolvePhaseModel(input: {
  */
 function resolvePhaseRuntimeMode(input: {
   readonly phase: BoardReviewPhaseId;
-  readonly phaseConfig: BoardReviewPhaseExecution;
+  readonly configuredRuntimeMode: RuntimeMode | undefined;
   readonly roundOverride: BoardReviewRoundOverride | undefined;
   readonly cardOverride: BoardCardStageModelOverride | null;
 }): RuntimeMode {
-  // Same ladder as the model, and independently resolved: an
-  // override that names a model but no access level inherits the level from
-  // the next rung down rather than dragging its own absence with it.
+  // Same ladder as the model, resolved independently: a round override with no
+  // access level inherits the next rung's; a card override with no level takes
+  // the Review phase's, since it replaces both tiers (see the caller).
   const override =
     input.phase === "review"
       ? (input.roundOverride?.runtimeMode ?? input.cardOverride?.runtimeMode)
       : undefined;
-  return effectiveBoardRuntimeMode(override ?? input.phaseConfig.runtimeMode, "build");
+  return effectiveBoardRuntimeMode(override ?? input.configuredRuntimeMode, "build");
 }
 
 /**
@@ -227,7 +227,11 @@ function reviewLoopDecision(input: {
       }),
       runtimeMode: resolvePhaseRuntimeMode({
         phase,
-        phaseConfig,
+        // A card (or parent) Review override replaces both tiers, as it does for the model.
+        configuredRuntimeMode:
+          phase === "review" && config.cardOverride === null
+            ? resolveBoardReviewTierRuntimeMode(review, round)
+            : phaseConfig.runtimeMode,
         roundOverride: overrides?.roundModels[String(round)],
         cardOverride: config.cardOverride,
       }),
@@ -282,7 +286,7 @@ function reviewLoopDecision(input: {
       }),
       runtimeMode: resolvePhaseRuntimeMode({
         phase: basePhase,
-        phaseConfig,
+        configuredRuntimeMode: phaseConfig.runtimeMode,
         roundOverride: undefined,
         cardOverride: config.cardOverride,
       }),

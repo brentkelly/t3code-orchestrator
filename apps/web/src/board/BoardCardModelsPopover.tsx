@@ -197,7 +197,11 @@ export function BoardCardModelsPopover({
                   setRow(row.stageId, current === null ? null : { ...current, runtimeMode })
                 }
                 placeholder={placeholderFor(row, getModelOptions, instanceEntries)}
-                runtimeMode={current?.runtimeMode ?? row.inheritedRuntimeMode}
+                runtimeMode={
+                  current === null
+                    ? row.inheritedRuntimeMode
+                    : (current.runtimeMode ?? row.stageRuntimeMode)
+                }
                 selection={
                   current === null ? null : { instanceId: current.instanceId, model: current.model }
                 }
