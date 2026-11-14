@@ -19,7 +19,12 @@ import {
   type ReactNode,
 } from "react";
 
-import { useAssetUrlState } from "../assets/assetUrls";
+import { useAssetUrls, useAssetUrlState } from "../assets/assetUrls";
+import { ExpandedImageDialog } from "../components/chat/ExpandedImageDialog";
+import {
+  expandedImageKey,
+  type ExpandedImagePreview,
+} from "../components/chat/ExpandedImagePreview";
 import { useStableCallback } from "../hooks/useStableCallback";
 import { cn, randomUUID } from "../lib/utils";
 import { usePreparedConnection } from "../state/session";
@@ -364,101 +369,69 @@ function RemoveBadge({ label, onClick }: { readonly label: string; readonly onCl
   );
 }
 
-function PersistedImageThumb(props: {
-  readonly environmentId: EnvironmentId;
-  readonly cardId: BoardCardId;
-  readonly attachment: BoardCardAttachment;
-  readonly onDetach: ((attachmentId: BoardCardAttachment["id"]) => void) | null;
+/** Opens the thumbnail in the same lightbox the chat composer uses. */
+function ImageThumbButton(props: {
+  readonly name: string;
+  readonly url: string | null;
+  readonly failed?: boolean;
+  readonly onExpand: (() => void) | null;
+  readonly children?: ReactNode;
 }) {
-  const url = useBoardAssetUrl(props.environmentId, {
-    _tag: "board-attachment",
-    cardId: props.cardId,
-    fileName: props.attachment.name,
-    mimeType: props.attachment.mimeType,
-  });
   return (
-    <div className="relative shrink-0">
-      <BoardHint label={props.attachment.name}>
-        <a
-          className={cn(THUMB_CLASS, "block")}
-          href={url ?? undefined}
-          rel="noreferrer"
-          style={url ? { backgroundImage: `url("${url}")` } : undefined}
-          target="_blank"
-        >
-          <span className="sr-only">{props.attachment.name}</span>
-        </a>
-      </BoardHint>
-      {props.onDetach ? (
-        <RemoveBadge label="Remove" onClick={() => props.onDetach?.(props.attachment.id)} />
-      ) : null}
-    </div>
+    <BoardHint label={props.name}>
+      <button
+        aria-label={`Preview ${props.name}`}
+        className={cn(
+          THUMB_CLASS,
+          "relative block",
+          props.onExpand !== null && "cursor-zoom-in",
+          props.failed && "ring-2 ring-destructive/60",
+        )}
+        disabled={props.onExpand === null}
+        onClick={() => props.onExpand?.()}
+        onMouseDown={(event) => event.preventDefault()}
+        style={props.url ? { backgroundImage: `url("${props.url}")` } : undefined}
+        type="button"
+      >
+        {props.children}
+      </button>
+    </BoardHint>
   );
 }
 
 function StagedImageThumb(props: {
   readonly row: BoardStagedAttachment;
+  readonly onExpand: (() => void) | null;
   readonly onRemove: (id: string) => void;
   readonly onRetry: (id: string) => void;
 }) {
   const { row } = props;
   return (
     <div className="relative shrink-0">
-      <BoardHint label={row.error ?? row.name}>
-        <div
-          className={cn(THUMB_CLASS, row.status === "failed" && "ring-2 ring-destructive/60")}
-          style={row.previewUrl ? { backgroundImage: `url("${row.previewUrl}")` } : undefined}
+      <ImageThumbButton
+        failed={row.status === "failed"}
+        name={row.error ?? row.name}
+        onExpand={props.onExpand}
+        url={row.previewUrl}
+      >
+        {row.status === "uploading" || row.status === "preparing" || row.status === "attaching" ? (
+          <div className="absolute inset-x-1 bottom-1 h-1 overflow-hidden rounded-full bg-background/70">
+            <div
+              className="h-full bg-primary transition-[width]"
+              style={{ width: `${Math.round(row.progress * 100)}%` }}
+            />
+          </div>
+        ) : null}
+      </ImageThumbButton>
+      {row.status === "failed" ? (
+        <button
+          className="absolute inset-0 rounded-board-9 bg-background/60 text-board-10 font-medium text-destructive-foreground"
+          onClick={() => props.onRetry(row.id)}
+          type="button"
         >
-          {row.status === "uploading" ||
-          row.status === "preparing" ||
-          row.status === "attaching" ? (
-            <div className="absolute inset-x-1 bottom-1 h-1 overflow-hidden rounded-full bg-background/70">
-              <div
-                className="h-full bg-primary transition-[width]"
-                style={{ width: `${Math.round(row.progress * 100)}%` }}
-              />
-            </div>
-          ) : null}
-          {row.status === "failed" ? (
-            <button
-              className="absolute inset-0 rounded-board-9 bg-background/60 text-board-10 font-medium text-destructive-foreground"
-              onClick={() => props.onRetry(row.id)}
-              type="button"
-            >
-              Retry
-            </button>
-          ) : null}
-        </div>
-      </BoardHint>
-      <RemoveBadge label="Remove" onClick={() => props.onRemove(row.id)} />
-    </div>
-  );
-}
-
-/** A row restored from a draft: the bytes are gone, so the tile
-    renders from the pending upload's signed URL. No progress bar and no
-    retry — there is nothing local left to retry with; remove and attach
-    again. A URL that never resolves degrades to the empty tile. */
-function HydratedImageThumb(props: {
-  readonly environmentId: EnvironmentId;
-  readonly row: BoardHydratedAttachment;
-  readonly onRemove: (id: string) => void;
-}) {
-  const { row } = props;
-  const url = useBoardAssetUrl(props.environmentId, {
-    _tag: "attachment",
-    attachmentId: row.upload.pendingAttachmentId,
-    fileName: row.name,
-    mimeType: row.mimeType,
-  });
-  return (
-    <div className="relative shrink-0">
-      <BoardHint label={row.name}>
-        <div
-          className={THUMB_CLASS}
-          style={url ? { backgroundImage: `url("${url}")` } : undefined}
-        />
-      </BoardHint>
+          Retry
+        </button>
+      ) : null}
       <RemoveBadge label="Remove" onClick={() => props.onRemove(row.id)} />
     </div>
   );
@@ -473,7 +446,9 @@ function isHydratedRow(row: BoardStagedAttachment): row is BoardHydratedAttachme
 }
 
 /** Images: persisted from the card, then staged, as 56×56 tiles. Renders
-    nothing when there are none, so the editor sits flush. */
+    nothing when there are none, so the editor sits flush. A restored draft
+    row has no local bytes, so it renders from its pending upload's signed URL
+    and offers no retry. */
 export function BoardBriefThumbnailStrip(props: {
   readonly environmentId: EnvironmentId;
   readonly cardId: BoardCardId | null;
@@ -484,39 +459,98 @@ export function BoardBriefThumbnailStrip(props: {
   readonly onDetach: ((attachmentId: BoardCardAttachment["id"]) => void) | null;
   readonly className?: string;
 }) {
-  const images = props.attachments.filter((attachment) => attachment.type === "image");
+  const [preview, setPreview] = useState<ExpandedImagePreview | null>(null);
+  const { cardId } = props;
+  const images =
+    cardId === null ? [] : props.attachments.filter((attachment) => attachment.type === "image");
   const stagedImages = props.state.staged.filter((row) => row.type === "image");
-  if (images.length === 0 && stagedImages.length === 0) return null;
+  const resources: Array<AssetResource> = [
+    ...images.map((attachment): AssetResource => ({
+      _tag: "board-attachment",
+      cardId: cardId as BoardCardId,
+      fileName: attachment.name,
+      mimeType: attachment.mimeType,
+    })),
+    ...stagedImages.filter(isHydratedRow).map((row): AssetResource => ({
+      _tag: "attachment",
+      attachmentId: row.upload.pendingAttachmentId,
+      fileName: row.name,
+      mimeType: row.mimeType,
+    })),
+  ];
+  const resourceUrls = useAssetUrls(props.environmentId, resources);
+  let hydratedIndex = images.length;
+  const tiles = [
+    ...images.map((attachment, index) => ({
+      id: attachment.id as string,
+      name: attachment.name,
+      mimeType: attachment.mimeType,
+      url: resourceUrls[index] ?? null,
+      persisted: attachment,
+      staged: null,
+    })),
+    ...stagedImages.map((row) => ({
+      id: row.id,
+      name: row.name,
+      mimeType: row.mimeType,
+      url: isHydratedRow(row) ? (resourceUrls[hydratedIndex++] ?? null) : row.previewUrl,
+      persisted: null,
+      staged: row,
+    })),
+  ];
+  if (tiles.length === 0) return null;
+  const viewable = tiles.filter((tile) => tile.url !== null);
+  const expand = (id: string) => {
+    const index = viewable.findIndex((tile) => tile.id === id);
+    if (index < 0) return;
+    setPreview({
+      images: viewable.map((tile) => ({
+        src: tile.url,
+        name: tile.name,
+        mimeType: tile.mimeType,
+      })),
+      index,
+    });
+  };
   return (
     <div className={cn("flex flex-wrap gap-2.5", props.className)}>
-      {props.cardId !== null
-        ? images.map((attachment) => (
-            <PersistedImageThumb
-              attachment={attachment}
-              cardId={props.cardId as BoardCardId}
-              environmentId={props.environmentId}
-              key={attachment.id}
-              onDetach={props.editable ? props.onDetach : null}
-            />
-          ))
-        : null}
-      {stagedImages.map((row) =>
-        isHydratedRow(row) ? (
-          <HydratedImageThumb
-            environmentId={props.environmentId}
-            key={row.id}
-            onRemove={props.state.removeStaged}
-            row={row}
-          />
+      {tiles.map((tile) => {
+        const onExpand = tile.url === null ? null : () => expand(tile.id);
+        if (tile.persisted !== null) {
+          const attachment = tile.persisted;
+          return (
+            <div className="relative shrink-0" key={tile.id}>
+              <ImageThumbButton name={tile.name} onExpand={onExpand} url={tile.url} />
+              {props.editable && props.onDetach ? (
+                <RemoveBadge label="Remove" onClick={() => props.onDetach?.(attachment.id)} />
+              ) : null}
+            </div>
+          );
+        }
+        const row = tile.staged;
+        if (row === null) return null;
+        return isHydratedRow(row) ? (
+          <div className="relative shrink-0" key={tile.id}>
+            <ImageThumbButton name={tile.name} onExpand={onExpand} url={tile.url} />
+            <RemoveBadge label="Remove" onClick={() => props.state.removeStaged(row.id)} />
+          </div>
         ) : (
           <StagedImageThumb
-            key={row.id}
+            key={tile.id}
+            onExpand={onExpand}
             onRemove={props.state.removeStaged}
             onRetry={props.state.retry}
             row={row}
           />
-        ),
-      )}
+        );
+      })}
+      {preview !== null ? (
+        <ExpandedImageDialog
+          key={expandedImageKey(preview)}
+          onClose={() => setPreview(null)}
+          preview={preview}
+        />
+      ) : null}
     </div>
   );
 }
