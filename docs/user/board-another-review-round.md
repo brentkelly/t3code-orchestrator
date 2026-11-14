@@ -44,7 +44,8 @@ reachable at any stage, Ready for merge included. Set it, then ask for the round
 To save tokens on long loops, the review phase can switch to a cheaper model after the first few
 rounds: in Settings → Board → Code review, turn on **Use a different model for later rounds** under
 the Review phase and pick the round and the model. Every round after that one, including an extra
-round you ask for, reviews on the later model. A card's own **Review** model replaces both, and a
+round you ask for, reviews on the later model. The later model has its own access level, which
+starts out the same as the Review model's. A card's own **Review** model replaces both, and a
 model picked for one round in the Review pane still wins.
 
 ## Request review

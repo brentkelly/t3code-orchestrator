@@ -1019,7 +1019,7 @@ function PlannedRoundSettings({
         onRuntimeModeChange={(runtimeMode) =>
           onChange(model === null ? null : { ...model, runtimeMode })
         }
-        runtimeMode={model?.runtimeMode ?? phaseRuntimeMode}
+        runtimeMode={model?.runtimeMode ?? inherited?.runtimeMode ?? phaseRuntimeMode}
         selection={model === null ? null : { instanceId: model.instanceId, model: model.model }}
       />
       <p className="text-board-11 text-muted-foreground">

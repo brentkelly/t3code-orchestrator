@@ -1475,6 +1475,7 @@ describe("per-card merge strategy (T3O-80)", () => {
 });
 
 const decodeStageExecution = Schema.decodeUnknownSync(BoardStageExecution);
+const encodeStageExecution = Schema.encodeSync(BoardStageExecution);
 
 describe("resolveBoardReviewTierModel (T3O-94)", () => {
   const fable = { instanceId: ProviderInstanceId.make("anthropic"), model: "claude-fable-5-2" };
@@ -1537,11 +1538,7 @@ describe("resolveBoardReviewTierRuntimeMode (T3O-98)", () => {
     });
     const withLevel = decode({ afterRound: 2, model: opus, runtimeMode: "full-access" });
     expect(withLevel.laterReviewModel?.runtimeMode).toBe("full-access");
-    expect(
-      Schema.decodeUnknownSync(BoardStageExecution)(
-        Schema.encodeSync(BoardStageExecution)(withLevel),
-      ),
-    ).toEqual(withLevel);
+    expect(decodeStageExecution(encodeStageExecution(withLevel))).toEqual(withLevel);
   });
 
   it.each([
