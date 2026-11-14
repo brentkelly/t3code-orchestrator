@@ -111,9 +111,9 @@ function resolvePhaseRuntimeMode(input: {
   readonly roundOverride: BoardReviewRoundOverride | undefined;
   readonly cardOverride: BoardCardStageModelOverride | null;
 }): RuntimeMode {
-  // Same ladder as the model, and independently resolved: an
-  // override that names a model but no access level inherits the level from
-  // the next rung down rather than dragging its own absence with it.
+  // Same ladder as the model, resolved independently: a round override with no
+  // access level inherits the next rung's; a card override with no level takes
+  // the Review phase's, since it replaces both tiers (see the caller).
   const override =
     input.phase === "review"
       ? (input.roundOverride?.runtimeMode ?? input.cardOverride?.runtimeMode)
