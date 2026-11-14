@@ -115,6 +115,21 @@ function tooBigMessage(
   return `${NAMES[dimension]} ${size[dimension]} needs ${need} ${UNITS[dimension]}; ${worker.label} has ${has}. ${cause}, or unpin.`;
 }
 
+/**
+ * The collapsed Resources section's summary: the size, unless something needs a look. Too big
+ * and a failed setup are amber, setup in progress is blue.
+ */
+export function boardCardResourcesSummary(
+  capacity: Pick<BoardCardCapacityView, "size" | "tooBig">,
+  setup: Pick<BoardCardSetupView, "face" | "faceTone">,
+): { readonly text: string; readonly tone: "blocked" | "running" | null } {
+  if (capacity.tooBig !== null) return { text: "Too big", tone: "blocked" };
+  if (setup.face !== null && setup.faceTone !== null) {
+    return { text: setup.face, tone: setup.faceTone };
+  }
+  return { text: sizeLine(capacity.size), tone: null };
+}
+
 /** "6m 12s", "48s". */
 function boardDurationLabel(ms: number): string {
   const seconds = Math.max(0, Math.round(ms / 1000));
