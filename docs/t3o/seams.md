@@ -834,10 +834,11 @@ Parity again: nothing new upstream offers is adopted.
   longer counts as a second database.
 - **Migrations.** Upstream adds `081_ProjectionMessageSearchText`. The board has its own ledger,
   so nothing moved.
-- **Workflows.** One new file, `mobile-dev-client.yml`, which fires on push to `main`. Pushing the
-  mirror starts a run, so cancel it and disable the workflow straight after the push (see
-  "Inherited workflows"). `ci.yml` and four `mobile-*` files changed, and all of them were already
-  off.
+- **Workflows.** One new file, `mobile-dev-client.yml`, which fires on push to `main`. The mirror
+  push started a run, which skipped itself, and the workflow was disabled straight after. The three
+  `v0.1.6` rows had never been disabled (`agent-context-budget.yml` was still running on every
+  PR), so they were disabled then too. `ci.yml` and four `mobile-*` files changed, and all of them
+  were already off.
 - **Known failures, not this sync's.** On `t3o` already, `vp lint` reports 55 design-token and
   restyle findings in `board/usage/BoardUsagePopovers.tsx` (`T3O-77`) and 1 long comment in
   `board/supervisor.ts`.
@@ -1585,9 +1586,8 @@ file we do not otherwise care about. The YAML never says whether a workflow is o
 `gh workflow list` in a worktree can resolve to the `upstream` remote and report pingdotgg's state.
 
 Recorded here so a future reader knows what was switched off deliberately and what was not. The
-state below was read off the fork on the `v0.1.6` sync (2026-11-02). The three `v0.1.6` rows and the
-`v0.1.9` row are disabled once their sync lands, because GitHub lists a workflow only after it
-reaches the default branch or has run.
+state below was read off the fork on the `v0.1.9` sync (2026-11-15). A new workflow can be disabled
+only once GitHub lists it, which is after it reaches the default branch or has run.
 
 **Off — deliberately:**
 
@@ -1610,10 +1610,10 @@ reaches the default branch or has run.
 | `agent-context-budget.yml`        | (since `v0.1.6`) Fails a PR that grows the agent-context budget without upstream's label. CI is off on the fork, and the budget test runs locally with the server suite.                                                                           |
 | `mobile-eas-preview-fork.yml`     | (since `v0.1.6`) Builds EAS previews for labelled fork PRs on `pull_request_target`. Same missing EAS credentials as `mobile-eas-preview.yml` (D17).                                                                                               |
 | `mobile-fingerprint-label.yml`    | (since `v0.1.6`) Labels PRs after `mobile-fingerprint-check.yml` runs. That workflow is off, so this one has nothing to follow.                                                                                                                    |
-| `mobile-dev-client.yml`           | (since `v0.1.9`) Builds mobile dev clients into upstream's native-client cache on push to `main` and on PRs that touch it. Mobile is out of scope (D17). Disabled once the `v0.1.9` sync lands.                                                    |
+| `mobile-dev-client.yml`           | (since `v0.1.9`) Builds mobile dev clients into upstream's native-client cache on push to `main` and on PRs that touch it. Mobile is out of scope (D17). Disabled right after the mirror push started its first run.                               |
 
 **On:** only `Dependency Graph`, GitHub's own. `issue-labels.yml` shows as disabled too (state read
-on the `v0.1.6` sync, 2026-11-02).
+on the `v0.1.9` sync, 2026-11-15).
 
 **Cannot fire on their own,** so they need nothing: `publish-aur.yml` (since `v0.0.38`),
 `release-desktop.yml` (since `v0.0.42`) — both `workflow_call`-only; `windows-tests.yml` (since
