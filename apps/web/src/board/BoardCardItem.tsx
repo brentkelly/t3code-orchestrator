@@ -620,7 +620,9 @@ export function BoardCardContent({
           <BoardHint label={`${queueSlot.headline}. ${queueSlot.detail}`}>
             <span
               className={cn(
-                "inline-flex shrink-0 items-center rounded px-1.5 text-board-10 font-medium",
+                // Shrinks and ellipsizes: a worker name can outrun the card,
+                // and the tooltip carries the full reason.
+                "block min-w-0 truncate rounded px-1.5 text-board-10 font-medium",
                 queueSlot.blocked === true
                   ? "bg-warning/14 text-board-amber-text"
                   : queueSlot.attention === true
