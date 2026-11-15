@@ -3,20 +3,17 @@
  * links to its own pages (pipeline, CI, resources, t3o.json import) and its icon and colour.
  */
 import {
-  DEFAULT_BOARD_KEY_PREFIX,
+  BOARD_KEY_PREFIX_MAX_LENGTH,
+  boardProjectAcronym,
   type BoardSettings,
   type EnvironmentId,
   type ProjectId,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { Link } from "@tanstack/react-router";
-import { EyeIcon, EyeOffIcon, SettingsIcon, WorkflowIcon } from "lucide-react";
+import { EyeIcon, EyeOffIcon, SettingsIcon } from "lucide-react";
 import * as Option from "effect/Option";
 
-import {
-  deriveLogicalProjectKeyFromSettings,
-  selectProjectGroupingSettings,
-} from "@t3tools/client-runtime/state/project-grouping";
 import {
   normalizeKeyPrefixInput,
   setBoardProjectSetting,
@@ -24,7 +21,6 @@ import {
 import { searchableSetting } from "../../components/settings/settingsSearch";
 import { SettingsSection } from "../../components/settings/settingsLayout";
 import { Button } from "../../components/ui/button";
-import { useClientSettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { environmentShell } from "../../state/shell";
 import { projectAccent, projectIconColorOf } from "../projectAccent";
@@ -72,9 +68,10 @@ function ProjectsSection({
   return (
     <SettingsSection id="board-projects" title={anchor.title} variant="plain">
       <p className="mb-2 max-w-xl px-3 text-board-13 leading-board-1-55 text-muted-foreground/80 sm:px-4">
-        The prefix for each project's card keys (e.g. T3 → T3-42). Cards take their colour from the
-        project's icon; the gear opens the project's settings to change it. The flow icon opens its
-        pipeline and CI. The eye hides a project and its cards from the board without touching them.
+        The prefix for each project's card keys, up to three characters (e.g. T3O → T3O-42). The
+        gear opens the project's board settings: its pipeline, CI, resources and t3o.json. The eye
+        hides a project and its cards from the board without touching them. Cards take their colour
+        from the project's icon, set in Code → Projects.
       </p>
       <ProjectRows board={board} environmentId={environmentId} update={update} />
     </SettingsSection>
@@ -92,7 +89,6 @@ function ProjectRows({
 }) {
   const shellState = useAtomValue(environmentShell.stateValueAtom(environmentId));
   const projects = Option.getOrNull(shellState.snapshot)?.projects ?? [];
-  const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
 
   const setProject = (
     projectId: ProjectId,
@@ -142,33 +138,25 @@ function ProjectRows({
             <BoardInput
               key={`${project.id}:${entry?.keyPrefix ?? ""}`}
               defaultValue={entry?.keyPrefix ?? ""}
-              placeholder={DEFAULT_BOARD_KEY_PREFIX}
+              // Unset, the first card takes this: the name's acronym, clear of other projects'.
+              placeholder={boardProjectAcronym(
+                project.title,
+                Object.entries(board.projects).flatMap(([projectId, other]) =>
+                  projectId === project.id || other.keyPrefix === null ? [] : [other.keyPrefix],
+                ),
+              )}
+              maxLength={BOARD_KEY_PREFIX_MAX_LENGTH}
               aria-label={`Card key prefix for ${project.title}`}
               className="h-7.5 w-24"
               look="key-prefix"
               onBlur={(event) => {
                 const next = normalizeKeyPrefixInput(event.target.value);
+                if (next !== null && next.length > BOARD_KEY_PREFIX_MAX_LENGTH) return;
                 if (next !== (entry?.keyPrefix ?? null))
                   setProject(project.id, { keyPrefix: next });
               }}
             />
             <div className="flex shrink-0 items-center gap-0.5">
-              {/* The project's pipeline, CI and t3o.json. */}
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                className="text-muted-foreground"
-                title={`${project.title} pipeline & CI`}
-                aria-label={`Open ${project.title} pipeline & CI`}
-                render={
-                  <Link
-                    to="/settings/board/projects/$projectId/$tab"
-                    params={{ projectId: project.id, tab: "pipeline" }}
-                  />
-                }
-              >
-                <WorkflowIcon />
-              </Button>
               <BoardButton
                 variant="ghost"
                 size="icon-sm"
@@ -184,21 +172,17 @@ function ProjectRows({
               >
                 {hidden ? <EyeOffIcon /> : <EyeIcon />}
               </BoardButton>
+              {/* The project's board settings: pipeline, CI, resources and t3o.json. */}
               <Button
                 variant="ghost"
                 size="icon-sm"
                 className="text-muted-foreground"
-                title={`${project.title} icon & colour (project settings)`}
-                aria-label={`Open ${project.title} project settings`}
+                title={`${project.title} board settings`}
+                aria-label={`Open ${project.title} board settings`}
                 render={
                   <Link
-                    to="/projects/$projectKey"
-                    params={{
-                      projectKey: deriveLogicalProjectKeyFromSettings(
-                        { ...project, environmentId },
-                        projectGroupingSettings,
-                      ),
-                    }}
+                    to="/settings/board/projects/$projectId/$tab"
+                    params={{ projectId: project.id, tab: "pipeline" }}
                   />
                 }
               >

@@ -202,7 +202,7 @@ describe("boardCardProjectOptions", () => {
       currentProjectId: alpha,
       cardKeys: [],
     });
-    expect(options.find((option) => option.id === beta)?.nextKey).toBe("MW-1");
+    expect(options.find((option) => option.id === beta)?.nextKey).toBe("MWE-1");
   });
 
   it("checks the current project and shows it no key", () => {

@@ -395,24 +395,35 @@ describe("resolveBoard* helpers", () => {
 });
 
 describe("project key acronyms (D14)", () => {
-  it("reads a name as words — separators and camelCase humps both split", () => {
+  it("makes three letters: initials, topped up from the last word", () => {
     expect(boardProjectAcronym("core.agent.advisor")).toBe("CAA");
-    expect(boardProjectAcronym("mesh.web")).toBe("MW");
-    expect(boardProjectAcronym("mesh-relay")).toBe("MR");
-    expect(boardProjectAcronym("meshRelay")).toBe("MR");
-    expect(boardProjectAcronym("t3o-test")).toBe("TT");
-    // One word gives its opening letters, digits included.
+    expect(boardProjectAcronym("mesh.web")).toBe("MWE");
+    expect(boardProjectAcronym("mesh-relay")).toBe("MRE");
+    expect(boardProjectAcronym("meshRelay")).toBe("MRE");
+    expect(boardProjectAcronym("t3o-test")).toBe("TTE");
+    expect(boardProjectAcronym("12z.hub")).toBe("1HU");
+    // One word gives its opening letters, digits included; a short name stays short.
     expect(boardProjectAcronym("backend")).toBe("BAC");
     expect(boardProjectAcronym("t3o")).toBe("T3O");
+    expect(boardProjectAcronym("go")).toBe("GO");
     // Nothing to read: the compiled-in default, never an empty prefix.
     expect(boardProjectAcronym("···")).toBe(DEFAULT_BOARD_KEY_PREFIX);
   });
 
-  it("never hands two projects the same prefix", () => {
-    expect(boardProjectAcronym("mesh.web", ["MW"])).toBe("MES");
-    expect(boardProjectAcronym("mesh.web", ["MW", "MES"])).toBe("MW2");
+  it("never hands two projects the same prefix, and never goes past three characters", () => {
+    expect(boardProjectAcronym("mesh.web", ["MWE"])).toBe("MES");
+    expect(boardProjectAcronym("mesh.web", ["MWE", "MES"])).toBe("MEW");
+    expect(boardProjectAcronym("mesh.web", ["MWE", "MES", "MEW"])).toBe("MW2");
+    expect(
+      boardProjectAcronym("mesh.web", [
+        "MWE",
+        "MES",
+        "MEW",
+        ...Array.from({ length: 8 }, (_, index) => `MW${index + 2}`),
+      ]),
+    ).toBe("M10");
     // Case never smuggles a collision through.
-    expect(boardProjectAcronym("mesh.web", ["mw"])).toBe("MES");
+    expect(boardProjectAcronym("mesh.web", ["mwe"])).toBe("MES");
   });
 
   it("assigns an acronym once, then leaves the stored prefix alone", () => {
@@ -421,20 +432,20 @@ describe("project key acronyms (D14)", () => {
       projectId: PROJECT,
       projectTitle: "mesh.web",
     });
-    expect(first).toEqual({ prefix: "MW", assigned: true });
+    expect(first).toEqual({ prefix: "MWE", assigned: true });
 
     // Persisted — a later card (even after a rename) keeps the same keys.
     const stored = decodeSettings({
-      projects: { [PROJECT]: { keyPrefix: "MW" } },
+      projects: { [PROJECT]: { keyPrefix: "MWE" } },
     });
     expect(
       assignBoardKeyPrefix({ board: stored, projectId: PROJECT, projectTitle: "mesh.gateway" }),
-    ).toEqual({ prefix: "MW", assigned: false });
+    ).toEqual({ prefix: "MWE", assigned: false });
 
-    // A second project with the same initials gets its own namespace.
+    // A second project reading the same gets its own namespace.
     const other = ProjectId.make("project-2");
     expect(
-      assignBoardKeyPrefix({ board: stored, projectId: other, projectTitle: "mesh-worker" }),
+      assignBoardKeyPrefix({ board: stored, projectId: other, projectTitle: "mesh-web" }),
     ).toEqual({ prefix: "MES", assigned: true });
   });
 });

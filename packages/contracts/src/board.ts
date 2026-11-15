@@ -13547,30 +13547,34 @@ function boardProjectNameWords(title: string): ReadonlyArray<string> {
     .filter((word) => word.length > 0);
 }
 
+/** The longest card key prefix a project can have: `T3O-42`, not `MESHWEB-42`. */
+export const BOARD_KEY_PREFIX_MAX_LENGTH = 3;
+
 /**
- * `taken` holds other projects' prefixes; a collision falls through to other shapes and then
- * a numeric suffix. Only the first prefix is derived; it is then persisted, so a rename never
- * orphans printed keys.
+ * Initials topped up from the last word (`mesh.web` → MWE); `taken` collisions try other shapes,
+ * then a number in the last place (MW2), never past three characters. Only the first prefix is
+ * derived; it is then persisted, so a rename never orphans printed keys.
  */
 export function boardProjectAcronym(title: string, taken: ReadonlyArray<string> = []): string {
-  const words = boardProjectNameWords(title);
+  const max = BOARD_KEY_PREFIX_MAX_LENGTH;
+  const words = boardProjectNameWords(title).map((word) => word.toUpperCase());
   const used = new Set(taken.map((prefix) => prefix.toUpperCase()));
-  const initials = words.map((word) => word[0]!.toUpperCase());
-  const candidates = (
-    words.length >= 2
-      ? [initials.slice(0, 3).join(""), initials.slice(0, 2).join(""), words[0]!.slice(0, 3)]
-      : words.length === 1
-        ? [words[0]!.slice(0, 3), words[0]!.slice(0, 2)]
-        : []
-  )
-    .map((candidate) => candidate.toUpperCase())
-    .filter((candidate) => candidate.length > 0);
+  const initials = words.map((word) => word[0]!).join("");
+  const last = words.at(-1) ?? "";
+  const first = words[0] ?? "";
+  const candidates = [
+    words.length === 1 ? first.slice(0, max) : (initials + last.slice(1)).slice(0, max),
+    first.slice(0, max),
+    words.length >= 2 ? (first.slice(0, max - 1) + (words[1]![0] ?? "")).slice(0, max) : "",
+  ].filter((candidate) => candidate.length > 0);
   const preferred = candidates.length > 0 ? candidates : [DEFAULT_BOARD_KEY_PREFIX];
   const free = preferred.find((candidate) => !used.has(candidate));
   if (free !== undefined) return free;
-  // Every derived shape is spoken for — number the preferred one.
+  // Every derived shape is spoken for: number the preferred one, keeping to three characters.
+  const stem = preferred[0]!;
   for (let suffix = 2; suffix < 100; suffix += 1) {
-    const candidate = `${preferred[0]!}${suffix}`;
+    const digits = String(suffix);
+    const candidate = stem.slice(0, Math.max(1, max - digits.length)) + digits;
     if (!used.has(candidate)) return candidate;
   }
   return DEFAULT_BOARD_KEY_PREFIX;
