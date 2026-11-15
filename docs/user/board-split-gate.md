@@ -55,8 +55,9 @@ dock turns into a bar, **Split approved · N cards created after review**, and t
 agent is told it can finish without waiting for you.
 
 **Undo** on the bar takes the approval back at any time before the cards are created; the split then
-waits for you as usual. If a later review round adds, removes, merges or renames a card, the approval
-is dropped and the dock asks you to approve again. Edits to a plan's text keep it.
+waits for you as usual. If a later review round adds, removes, merges, renames or reorders a card,
+or changes which cards depend on which, the approval is dropped and the dock asks you to approve
+again. Edits to a plan's text keep it.
 
 When planning is paused or waiting on a question, you can choose either: approve after review, or
 **Approve now**, which ends the review and creates the cards straight away. If planning fails, an
