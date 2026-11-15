@@ -162,7 +162,10 @@ const BoardCardContextAncestor = Schema.Struct({
 
 /** A plan review's instructions, as the planning agent receives them. */
 const BoardPlanReviewToolResult = Schema.Struct({
+  /** The round target now. */
   rounds: PositiveInt,
+  /** The round the agent last reported starting; absent before the first. */
+  round: Schema.optionalKey(PositiveInt),
   instructions: Schema.String,
 });
 
@@ -368,6 +371,25 @@ const BoardCompleteStepTool = Tool.make("board_complete_step", {
   dependencies,
 }).annotate(Tool.Title, "Complete board work");
 
+const BoardPlanReviewRoundTool = Tool.make("board_plan_review_round", {
+  description:
+    "Report your plan review's progress, during a plan review only. Call it with { round } before each review round (1 for the first), and with { finished: true } before you summarise, including when the review converges early. It returns the review's current policy: targetRounds (the round target now; the human can change it between rounds, so it overrides any round count in your instructions), continue (false means stop reviewing now: summarise and finish), unattended (true: ask the human nothing, decide every finding yourself and record unsure calls as unclear with board_record_decisions) and splitApprovedAfterReview. Refused when no plan review is running on your card. Your card is resolved from your thread.",
+  parameters: Schema.Struct({
+    /** The round you are about to run, 1-based. */
+    round: Schema.optional(PositiveInt),
+    /** The review is over: you are about to summarise. */
+    finished: Schema.optional(Schema.Literal(true)),
+  }),
+  success: Schema.Struct({
+    targetRounds: PositiveInt,
+    continue: Schema.Boolean,
+    unattended: Schema.Boolean,
+    splitApprovedAfterReview: Schema.Boolean,
+  }),
+  failure: BoardToolFailure,
+  dependencies,
+}).annotate(Tool.Title, "Report a plan review round");
+
 // ── Board-scoped tools (explicit target) ───────────────────────────────
 
 const BoardListCardsTool = Tool.make("board_list_cards", {
@@ -461,7 +483,7 @@ const BoardMoveCardTool = Tool.make("board_move_card", {
 
 const BoardUpdateCardTool = Tool.make("board_update_card", {
   description:
-    "Update a card's title, brief, labels, dependencies, external reference, or linked pull request. cardId takes the card's key (e.g. 'Z5-39') or id. Only the fields you pass change. REPLACING fields overwrite the whole value: title; brief (pass null to clear); labels (the whole label set, named against the catalogue; unknown names are rejected, so create a new label with board_manage_labels first); dependsOn (the whole dependency set); externalRef (null clears; rejected when another live card already tracks the same system and id); pullRequest links a pull request to the card so it tracks its status, merge and settling just as if the card's own branch had opened it (a url, or repository and number, on the card's project repository, checked with the forge first). Use it to link a pull request to ANY card, not only your own, instead of setting externalRef. Linking the pull request the card already has changes nothing; pullRequest null removes an explicit link only, and a pull request found on the card's own branch reappears on the next refresh. ADDING fields keep what is there: briefAppend adds text to the end of the brief; briefSection replaces only the section under one markdown heading (e.g. '## Notes from Z5-34'), or adds it at the end if that heading is not there yet, so repeating the same call does not duplicate it (the section is closed by a '<!-- end <heading> -->' line; leave that line in place); addDependsOn and removeDependsOn add or remove single dependencies by key or id, leaving the rest alone (removing one that is not there does nothing); addLabels and removeLabels add or remove single labels by name, leaving the rest alone (adding one the card has, or removing one it does not, does nothing; a name that is no label at all is rejected; a deleted label can be removed but not added; a name in both is rejected). These are applied to the card as it is when your update lands, so prefer them to read-change-replace: they never overwrite an edit made before yours lands. They do not stop a later whole-brief replace (for example a person saving the brief in the board UI) from overwriting yours. Pass at most one of brief, briefAppend and briefSection, not dependsOn together with addDependsOn/removeDependsOn, and not labels together with addLabels/removeLabels. expectedBriefVersion (from board_get_card or board_get_card_context) makes any brief change fail if the brief changed since you read it; re-read and reapply when that happens. Any dependency change is rejected if it would form a cycle. Dependencies may cross groups; a dependency on a group is met when the whole group is done. A card cannot depend on a group it is inside, and a group cannot depend on a card inside it. planReview turns the card's adversarial plan review on or off and sets its rounds (1-20); null follows the Settings default. Rounds cannot change once a review has started, and turning it off stops a running review. mergeStrategy sets how this card's pull request merges (squash, merge or rebase), and null returns it to its group's strategy or the board default. An upstream-sync card must use merge, or the upstream ancestry is lost. priority (low, normal, high or urgent) decides which waiting card gets the next worker slot; set it only when the user directs it; a group has no priority, so it is rejected there. size sets the card's size per dimension ({ cpu, ram, disk }, each S, M, L or XL), recorded as your edit beside the planner's suggestion; null drops the edit, back to the planner's. A card already placed keeps the size it was granted until it is placed again. Pinning a card to a worker and starting a card over its worker's capacity are for humans only: no tool does either.",
+    "Update a card's title, brief, labels, dependencies, external reference, or linked pull request. cardId takes the card's key (e.g. 'Z5-39') or id. Only the fields you pass change. REPLACING fields overwrite the whole value: title; brief (pass null to clear); labels (the whole label set, named against the catalogue; unknown names are rejected, so create a new label with board_manage_labels first); dependsOn (the whole dependency set); externalRef (null clears; rejected when another live card already tracks the same system and id); pullRequest links a pull request to the card so it tracks its status, merge and settling just as if the card's own branch had opened it (a url, or repository and number, on the card's project repository, checked with the forge first). Use it to link a pull request to ANY card, not only your own, instead of setting externalRef. Linking the pull request the card already has changes nothing; pullRequest null removes an explicit link only, and a pull request found on the card's own branch reappears on the next refresh. ADDING fields keep what is there: briefAppend adds text to the end of the brief; briefSection replaces only the section under one markdown heading (e.g. '## Notes from Z5-34'), or adds it at the end if that heading is not there yet, so repeating the same call does not duplicate it (the section is closed by a '<!-- end <heading> -->' line; leave that line in place); addDependsOn and removeDependsOn add or remove single dependencies by key or id, leaving the rest alone (removing one that is not there does nothing); addLabels and removeLabels add or remove single labels by name, leaving the rest alone (adding one the card has, or removing one it does not, does nothing; a name that is no label at all is rejected; a deleted label can be removed but not added; a name in both is rejected). These are applied to the card as it is when your update lands, so prefer them to read-change-replace: they never overwrite an edit made before yours lands. They do not stop a later whole-brief replace (for example a person saving the brief in the board UI) from overwriting yours. Pass at most one of brief, briefAppend and briefSection, not dependsOn together with addDependsOn/removeDependsOn, and not labels together with addLabels/removeLabels. expectedBriefVersion (from board_get_card or board_get_card_context) makes any brief change fail if the brief changed since you read it; re-read and reapply when that happens. Any dependency change is rejected if it would form a cycle. Dependencies may cross groups; a dependency on a group is met when the whole group is done. A card cannot depend on a group it is inside, and a group cannot depend on a card inside it. planReview turns the card's adversarial plan review on or off, sets its rounds (1-20) and whether it runs unattended (unattended: true, like Auto-plan); null follows the Settings default. A rounds change during a review moves its target, which the planning agent reads at its next round; turning it off stops a running review. Turned on after the plan is posted, the review waits for a human to start it. mergeStrategy sets how this card's pull request merges (squash, merge or rebase), and null returns it to its group's strategy or the board default. An upstream-sync card must use merge, or the upstream ancestry is lost. priority (low, normal, high or urgent) decides which waiting card gets the next worker slot; set it only when the user directs it; a group has no priority, so it is rejected there. size sets the card's size per dimension ({ cpu, ram, disk }, each S, M, L or XL), recorded as your edit beside the planner's suggestion; null drops the edit, back to the planner's. A card already placed keeps the size it was granted until it is placed again. Pinning a card to a worker and starting a card over its worker's capacity are for humans only: no tool does either.",
   parameters: Schema.Struct({
     /** Card key or id. */
     cardId: TrimmedNonEmptyString,
@@ -838,6 +860,7 @@ const shownToThreads = (): boolean => {
 export const BoardToolkit = Toolkit.make(
   BoardGetCardContextTool.annotate(McpSchema.EnabledWhen, shownToThreads),
   BoardCompleteStepTool.annotate(McpSchema.EnabledWhen, shownToThreads),
+  BoardPlanReviewRoundTool.annotate(McpSchema.EnabledWhen, shownToThreads),
   BoardGetCardTool.annotate(McpSchema.EnabledWhen, shownToThreads),
   BoardListProjectsTool.annotate(McpSchema.EnabledWhen, shownToThreads),
   BoardListCardsTool.annotate(McpSchema.EnabledWhen, shownToThreads),

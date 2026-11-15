@@ -4001,6 +4001,21 @@ export function boardCardPlanningFinished(
   return state !== null && state.stepId === card.stage && state.status === "succeeded";
 }
 
+/**
+ * An unattended plan review finished on the card's plan step and its single plan waits on the
+ * Sign-off gate. Auto sign-off then approves it; a split always waits for a human.
+ */
+export function isBoardCardReviewSignOffPending(
+  board: BoardState,
+  card: Pick<BoardCard, "id" | "stage" | "planReview">,
+): boolean {
+  if (card.planReview?.enabled !== true || card.planReview.unattended !== true) return false;
+  if (!boardCardPlanningFinished(board, card)) return false;
+  const state = boardCardStepState(board, card.id);
+  if (state?.planReviewStartedAt === undefined) return false;
+  return boardCardPlans(board, card.id).length === 1;
+}
+
 /** `resolveBoardCardAutomation` over the full board state. */
 export function resolveBoardCardAutomationIn(input: {
   readonly board: BoardState;

@@ -1,14 +1,13 @@
 /**
  * Plan review in the supervisor: turned on after the plan was posted,
  * the review's instructions go to the planning thread as a turn, even on a
- * step the decider reopened or resumed for it. A rounds change
- * mid-review tells the thread the new total.
+ * step the decider reopened or resumed for it. The review policy (rounds target,
+ * unattended) is delivered once from its stored fingerprint, never mid-turn.
  */
 import {
   BOARD_PLAN_REVIEW_LATE_START_LEAD,
   BOARD_PLAN_REVIEW_STOP_INSTRUCTION,
   BOARD_SEED_STAGE_IDS,
-  boardPlanReviewRoundsChangedLead,
   BoardCardId,
   boardCardStepState,
   boardPlanId,
@@ -22,7 +21,7 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Ref from "effect/Ref";
 
-import { fakeThreadState } from "./threadGateway.testkit.ts";
+import { aliveThread, fakeThreadState } from "./threadGateway.testkit.ts";
 
 import {
   NOW,
@@ -300,22 +299,165 @@ const roundsChanged = (state: BoardCardStepState, rounds: number, sequence: numb
     payload: { cardId: state.cardId, state: { ...state, planReviewRounds: rounds } },
   }) as unknown as HarnessEvent;
 
-it.effect("a rounds change mid-review tells the thread the new total", () =>
-  withGovernor(fixture("rounds"), ({ pumpDomain, board, commands }) =>
+const setShell = (
+  h: Parameters<Parameters<typeof withGovernor>[1]>[0],
+  threadId: string,
+  shell: ReturnType<typeof fakeThreadState>,
+) => Ref.update(h.shells, (shells) => new Map([...shells, [threadId, shell]]));
+
+it.effect("a rounds change mid-turn sends nothing; the next turn end delivers it once", () =>
+  withGovernor(fixture("rounds"), (h) =>
     Effect.gen(function* () {
       const id = BoardCardId.make("rounds");
-      yield* pumpDomain(cardMoved(planningCard("rounds"), "sprint", "planning", 1));
-      yield* pumpDomain(reviewStarted(boardCardStepState(yield* board, id)!, 2, false));
-      const running = boardCardStepState(yield* board, id)!;
-      const before = sends(yield* commands).length;
+      yield* h.pumpDomain(cardMoved(planningCard("rounds"), "sprint", "planning", 1));
+      yield* h.pumpDomain(reviewStarted(boardCardStepState(yield* h.board, id)!, 2, false));
+      const running = boardCardStepState(yield* h.board, id)!;
+      // The review's instructions carried the starting policy.
+      assert.strictEqual(running.planReviewPolicySent, "rounds=2;unattended=false;split=false");
+      const threadId = running.threadId!;
+      yield* setShell(h, threadId, aliveThread(threadId));
+      const before = sends(yield* h.commands).length;
 
-      yield* pumpDomain(roundsChanged(running, 4, 3));
+      yield* h.pumpDomain(roundsChanged(running, 4, 3));
+      yield* h.pumpDomain(roundsChanged({ ...running, planReviewRounds: 4 }, 5, 4));
+      assert.strictEqual(sends(yield* h.commands).length, before);
 
-      const after = sends(yield* commands);
+      yield* setShell(h, threadId, fakeThreadState(threadId));
+      yield* h.pumpRuntime(turnCompleted(ThreadId.make(threadId), "turn-1"));
+      const after = sends(yield* h.commands);
       assert.strictEqual(after.length, before + 1);
-      assert.strictEqual(after.at(-1)?.threadId, running.threadId);
-      assert.isTrue(after.at(-1)?.text.startsWith(boardPlanReviewRoundsChangedLead(4)));
-      assert.include(after.at(-1)?.text, "up to 4 rounds");
+      assert.include(after.at(-1)?.text, "5 rounds in total");
+      assert.strictEqual(
+        boardCardStepState(yield* h.board, id)?.planReviewPolicySent,
+        "rounds=5;unattended=false;split=false",
+      );
+
+      // Delivered once: the next turn end owes nothing.
+      yield* h.pumpRuntime(turnCompleted(ThreadId.make(threadId), "turn-2"));
+      assert.strictEqual(sends(yield* h.commands).length, before + 1);
+    }),
+  ),
+);
+
+it.effect("a policy change still owed at a restart is delivered once to the idle thread", () =>
+  Effect.gen(function* () {
+    let seeded: { board: BoardState; threadId: string } | undefined;
+    yield* withGovernor(fixture("rounds-boot"), (h) =>
+      Effect.gen(function* () {
+        const id = BoardCardId.make("rounds-boot");
+        yield* h.pumpDomain(cardMoved(planningCard("rounds-boot"), "sprint", "planning", 1));
+        yield* h.pumpDomain(reviewStarted(boardCardStepState(yield* h.board, id)!, 2, false));
+        const running = boardCardStepState(yield* h.board, id)!;
+        yield* setShell(h, running.threadId!, aliveThread(running.threadId!));
+        yield* h.pumpDomain(roundsChanged(running, 6, 3));
+        seeded = { board: yield* h.board, threadId: running.threadId! };
+      }),
+    );
+    const { board, threadId } = seeded!;
+    yield* withGovernor(
+      {
+        board,
+        settings,
+        initialShells: new Map([[threadId, fakeThreadState(threadId, { sessionStatus: "ready" })]]),
+      },
+      (h) =>
+        Effect.gen(function* () {
+          yield* h.reactor.drain;
+          const delivered = sends(yield* h.commands).filter((send) =>
+            send.text.includes("6 rounds in total"),
+          );
+          assert.strictEqual(delivered.length, 1);
+        }),
+    );
+  }),
+);
+
+const unattendedCard = (id: string): BoardCard => ({
+  ...planningCard(id),
+  planReview: { enabled: true, rounds: 2, unattended: true },
+});
+
+it.effect("an unattended review runs without a human: its turn end never parks", () =>
+  withGovernor(
+    {
+      board: {
+        cards: [unattendedCard("solo")],
+        plans: [plan("solo")],
+        nextCardNumberByProject: {},
+      },
+      settings,
+    },
+    (h) =>
+      Effect.gen(function* () {
+        const id = BoardCardId.make("solo");
+        yield* h.pumpDomain(cardMoved(unattendedCard("solo"), "sprint", "planning", 1));
+        assert.isTrue(boardCardStepState(yield* h.board, id)?.humanInLoop);
+        yield* h.pumpDomain(reviewStarted(boardCardStepState(yield* h.board, id)!, 2, false));
+        const running = boardCardStepState(yield* h.board, id)!;
+        // Retuned on start: nobody answers an unattended review.
+        assert.isFalse(running.humanInLoop);
+        assert.include(running.planReviewPolicySent ?? "", "unattended=true");
+        const threadId = running.threadId!;
+        yield* setShell(h, threadId, fakeThreadState(threadId));
+        yield* h.pumpRuntime(turnCompleted(ThreadId.make(threadId), "turn-1"));
+        assert.notStrictEqual(boardCardStepState(yield* h.board, id)?.status, "awaiting-input");
+      }),
+  ),
+);
+
+it.effect("Unattended turned on while parked on a question answers it once and resumes", () =>
+  withGovernor(fixture("handover"), (h) =>
+    Effect.gen(function* () {
+      const id = BoardCardId.make("handover");
+      yield* h.pumpDomain(cardMoved(planningCard("handover"), "sprint", "planning", 1));
+      yield* h.pumpDomain(reviewStarted(boardCardStepState(yield* h.board, id)!, 2, false));
+      const threadId = boardCardStepState(yield* h.board, id)!.threadId!;
+      // The agent asks the human about a finding and the step parks.
+      yield* setShell(h, threadId, fakeThreadState(threadId, { awaitingUserInput: true }));
+      yield* h.pumpRuntime(turnCompleted(ThreadId.make(threadId), "turn-1"));
+      assert.strictEqual(boardCardStepState(yield* h.board, id)?.status, "awaiting-input");
+      const answersBefore = (yield* h.commands).filter(
+        (command) => command.type === "thread.answer-pending-input",
+      ).length;
+
+      const card = (yield* h.board).cards.find((candidate) => candidate.id === id)!;
+      yield* h.pumpDomain({
+        type: "board.card-updated",
+        sequence: 4,
+        payload: {
+          cardId: id,
+          card: { ...card, planReview: { enabled: true, rounds: 2, unattended: true } },
+        },
+      } as unknown as HarnessEvent);
+
+      const answers = (yield* h.commands).filter(
+        (command) => command.type === "thread.answer-pending-input",
+      );
+      assert.strictEqual(answers.length, answersBefore + 1);
+      const after = boardCardStepState(yield* h.board, id)!;
+      assert.strictEqual(after.status, "running");
+      assert.include(after.planReviewPolicySent ?? "", "unattended=true");
+    }),
+  ),
+);
+
+it.effect("an attended review never answers the human's pending question about a finding", () =>
+  withGovernor(fixture("attended"), (h) =>
+    Effect.gen(function* () {
+      const id = BoardCardId.make("attended");
+      yield* h.pumpDomain(cardMoved(planningCard("attended"), "sprint", "planning", 1));
+      yield* h.pumpDomain(reviewStarted(boardCardStepState(yield* h.board, id)!, 2, false));
+      const running = boardCardStepState(yield* h.board, id)!;
+      const threadId = running.threadId!;
+      yield* setShell(h, threadId, fakeThreadState(threadId, { awaitingUserInput: true }));
+      yield* h.pumpRuntime(turnCompleted(ThreadId.make(threadId), "turn-1"));
+      yield* h.pumpDomain(roundsChanged(boardCardStepState(yield* h.board, id)!, 4, 4));
+      assert.strictEqual(
+        (yield* h.commands).filter((command) => command.type === "thread.answer-pending-input")
+          .length,
+        0,
+      );
+      assert.strictEqual(boardCardStepState(yield* h.board, id)?.status, "awaiting-input");
     }),
   ),
 );

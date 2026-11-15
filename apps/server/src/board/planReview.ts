@@ -39,15 +39,22 @@ function planStageExecution(
   return execution.kind === "simple" ? execution : null;
 }
 
-/** The plan review a new card in this project is created with. */
-export function planReviewCreationDefaults(input: {
-  readonly board: BoardState;
-  readonly settings: BoardSettings;
-  readonly projectId: ProjectId;
-}): BoardCardPlanReview {
-  return boardPlanReviewCreationDefaults(
-    planStageExecution(input.board, input.settings, { projectId: input.projectId }),
-  );
+/** A create command with the project's new-card plan review stamped on, unless it names
+    its own or creates a heading, which plans nothing. */
+export function withPlanReviewCreationDefaults<
+  C extends {
+    readonly projectId: ProjectId;
+    readonly heading?: boolean | undefined;
+    readonly planReview?: BoardCardPlanReview | undefined;
+  },
+>(command: C, board: BoardState, settings: BoardSettings): C {
+  if (command.planReview !== undefined || command.heading === true) return command;
+  return {
+    ...command,
+    planReview: boardPlanReviewCreationDefaults(
+      planStageExecution(board, settings, { projectId: command.projectId }),
+    ),
+  };
 }
 
 /** What the planning agent must know between rounds: delivered by the round tool's
