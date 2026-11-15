@@ -12256,7 +12256,9 @@ const make = Effect.gen(function* () {
           // target changed. A few per review.
           event.type !== "board.plan-review-stopped" &&
           event.type !== "board.plan-review-rounds-changed" &&
-          event.type !== "board.plan-review-started"
+          event.type !== "board.plan-review-started" &&
+          // T3o: a split approved after review, or undone, changes the review policy (T3O-105).
+          event.type !== "board.split-approval-changed"
         ) {
           return Effect.void;
         }

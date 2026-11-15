@@ -11,6 +11,7 @@ import {
   BoardCardId,
   boardCardStepState,
   boardPlanId,
+  boardSplitFingerprint,
   type BoardCard,
   type BoardCardStepState,
   type BoardPlan,
@@ -575,4 +576,199 @@ it.effect("a rounds change on a paused review is recorded but sends nothing", ()
       assert.strictEqual(after?.planReviewRounds, 4);
     }),
   ),
+);
+
+// ── T3O-105: a split approved after review ──────────────────────────
+
+const splitPlan = (cardId: string, key: string, ordinal: number, dependsOn: string[] = []) => ({
+  ...plan(cardId),
+  planId: boardPlanId(BoardCardId.make(cardId), key),
+  title: `Plan ${key}`,
+  dependsOn: dependsOn.map((dependency) => boardPlanId(BoardCardId.make(cardId), dependency)),
+  ordinal,
+});
+
+const splitFixture = (id: string, plans?: ReadonlyArray<BoardPlan>) => ({
+  board: {
+    cards: [{ ...planningCard(id), splitRationale: "Two parts that ship and review apart." }],
+    plans: plans ?? [splitPlan(id, "a", 0), splitPlan(id, "b", 1)],
+    nextCardNumberByProject: {},
+  },
+  settings,
+});
+
+/** The card as `board.split.approve-after-review` leaves it. */
+const splitApproved = (card: BoardCard, plans: ReadonlyArray<BoardPlan>, sequence: number) =>
+  ({
+    type: "board.split-approval-changed",
+    sequence,
+    payload: {
+      cardId: card.id,
+      change: "approved",
+      card: {
+        ...card,
+        pendingSplitApproval: {
+          autoBuild: false,
+          mergeTarget: "inherit",
+          fingerprint: boardSplitFingerprint(plans),
+          approvedAt: NOW,
+        },
+      },
+    },
+  }) as unknown as HarnessEvent;
+
+const cardOf = (board: BoardState, id: string) =>
+  board.cards.find((candidate) => candidate.id === BoardCardId.make(id));
+
+/** Into Planning with a review running, the split approved after review; idle unless `busy`. */
+const approvedDuringReview = (
+  h: Parameters<Parameters<typeof withGovernor>[1]>[0],
+  id: string,
+  busy = false,
+) =>
+  Effect.gen(function* () {
+    yield* h.pumpDomain(cardMoved(planningCard(id), "sprint", "planning", 1));
+    const cardId = BoardCardId.make(id);
+    yield* h.pumpDomain(reviewStarted(boardCardStepState(yield* h.board, cardId)!, 2, false));
+    const threadId = boardCardStepState(yield* h.board, cardId)!.threadId!;
+    yield* setShell(h, threadId, busy ? aliveThread(threadId) : fakeThreadState(threadId));
+    const board = yield* h.board;
+    yield* h.pumpDomain(
+      splitApproved(
+        cardOf(board, id)!,
+        (board.plans ?? []).filter((candidate) => candidate.cardId === cardId),
+        3,
+      ),
+    );
+    return threadId;
+  });
+
+const children = (board: BoardState, id: string) =>
+  board.cards.filter((candidate) => candidate.parentCardId === BoardCardId.make(id));
+
+it.effect("a split approved after review creates its cards when the planning step completes", () =>
+  withGovernor(splitFixture("deferred"), (h) =>
+    Effect.gen(function* () {
+      yield* approvedDuringReview(h, "deferred");
+      assert.strictEqual(children(yield* h.board, "deferred").length, 0);
+
+      yield* h.pumpDomain(
+        stepCompleted(BoardCardId.make("deferred"), "succeeded", 4, "planning"),
+      );
+
+      const board = yield* h.board;
+      assert.strictEqual(children(board, "deferred").length, 2);
+      const card = cardOf(board, "deferred");
+      assert.isUndefined(card?.pendingSplitApproval);
+      // The stored gate settings, not the recommendation.
+      assert.strictEqual(card?.group?.target, "inherit");
+      assert.isFalse(card?.group?.autoBuild);
+    }),
+  ),
+);
+
+it.effect("a failed planning step leaves the approval waiting", () =>
+  withGovernor(splitFixture("deferred-failed"), (h) =>
+    Effect.gen(function* () {
+      yield* approvedDuringReview(h, "deferred-failed");
+      yield* h.pumpDomain(
+        stepCompleted(BoardCardId.make("deferred-failed"), "failed", 4, "planning"),
+      );
+      const board = yield* h.board;
+      assert.strictEqual(children(board, "deferred-failed").length, 0);
+      assert.isDefined(cardOf(board, "deferred-failed")?.pendingSplitApproval);
+    }),
+  ),
+);
+
+it.effect("an approval refused when it fires is cleared with the refusal", () =>
+  withGovernor(
+    // A dependency cycle: the gate re-validates the graph and refuses it.
+    splitFixture("deferred-refused", [
+      splitPlan("deferred-refused", "a", 0, ["b"]),
+      splitPlan("deferred-refused", "b", 1, ["a"]),
+    ]),
+    (h) =>
+      Effect.gen(function* () {
+        yield* approvedDuringReview(h, "deferred-refused");
+        yield* h.pumpDomain(
+          stepCompleted(BoardCardId.make("deferred-refused"), "succeeded", 4, "planning"),
+        );
+        const board = yield* h.board;
+        assert.strictEqual(children(board, "deferred-refused").length, 0);
+        assert.isUndefined(cardOf(board, "deferred-refused")?.pendingSplitApproval);
+        const refused = (yield* h.commands).find(
+          (command) => command.type === "board.split.record-approval-refused",
+        );
+        assert.include(
+          (refused as { readonly detail?: string } | undefined)?.detail ?? "",
+          "cycle",
+        );
+      }),
+  ),
+);
+
+it.effect("the attended planner is told once that the split is approved after review", () =>
+  withGovernor(splitFixture("deferred-told"), (h) =>
+    Effect.gen(function* () {
+      yield* approvedDuringReview(h, "deferred-told");
+      const told = sends(yield* h.commands).filter((send) =>
+        send.text.includes("The split is approved to take effect when the review finishes"),
+      );
+      assert.strictEqual(told.length, 1);
+      assert.notInclude(told[0]?.text ?? "", "wait for sign-off");
+      assert.include(
+        boardCardStepState(yield* h.board, BoardCardId.make("deferred-told"))
+          ?.planReviewPolicySent ?? "",
+        "split=true",
+      );
+
+      // Undo before it fires: the next steer hands the split back to the human's gate.
+      const card = cardOf(yield* h.board, "deferred-told")!;
+      const { pendingSplitApproval: _undone, ...undone } = card;
+      yield* h.pumpDomain({
+        type: "board.split-approval-changed",
+        sequence: 5,
+        payload: { cardId: card.id, change: "undone", card: undone },
+      } as unknown as HarnessEvent);
+      assert.include(sends(yield* h.commands).at(-1)?.text ?? "", "split approval was undone");
+      yield* h.pumpDomain(
+        stepCompleted(BoardCardId.make("deferred-told"), "succeeded", 6, "planning"),
+      );
+      assert.strictEqual(children(yield* h.board, "deferred-told").length, 0);
+    }),
+  ),
+);
+
+it.effect("an approval owed at a restart is told once, and fires when the review ends", () =>
+  Effect.gen(function* () {
+    let seeded: { board: BoardState; threadId: string } | undefined;
+    yield* withGovernor(splitFixture("deferred-boot"), (h) =>
+      Effect.gen(function* () {
+        // Busy: the steer waits for the turn end, which the restart cuts off.
+        const threadId = yield* approvedDuringReview(h, "deferred-boot", true);
+        seeded = { board: yield* h.board, threadId };
+      }),
+    );
+    const { board, threadId } = seeded!;
+    assert.notInclude(
+      boardCardStepState(board, BoardCardId.make("deferred-boot"))?.planReviewPolicySent ?? "",
+      "split=true",
+    );
+    yield* withGovernor(
+      { board, settings, initialShells: new Map([[threadId, fakeThreadState(threadId)]]) },
+      (h) =>
+        Effect.gen(function* () {
+          yield* h.reactor.drain;
+          const told = sends(yield* h.commands).filter((send) =>
+            send.text.includes("The split is approved to take effect"),
+          );
+          assert.strictEqual(told.length, 1);
+          yield* h.pumpDomain(
+            stepCompleted(BoardCardId.make("deferred-boot"), "succeeded", 10, "planning"),
+          );
+          assert.strictEqual(children(yield* h.board, "deferred-boot").length, 2);
+        }),
+    );
+  }),
 );
