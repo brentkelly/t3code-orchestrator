@@ -26,6 +26,8 @@ export function useBoardImportCandidates(projectIds: ReadonlyArray<ProjectId>) {
     null,
   );
   const [nonce, setNonce] = useState(0);
+  // Rows imported or dismissed here hide at once; the server persists behind them.
+  const [hidden, setHidden] = useState<ReadonlySet<string>>(() => new Set());
   const key = projectIds.join("\u0000");
   const readCandidates = useEffectEvent((forEnvironment: typeof environmentId, refresh: boolean) =>
     projectIds.length === 0
@@ -58,18 +60,36 @@ export function useBoardImportCandidates(projectIds: ReadonlyArray<ProjectId>) {
     key,
     nonce,
   ]);
-  return { candidates, refresh: () => setNonce((value) => value + 1) };
+  const setHiddenFor = (candidate: BoardProjectImportCandidate, hide: boolean) => {
+    const id = hiddenKey(candidate);
+    setHidden((current) => {
+      const next = new Set(current);
+      if (hide) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+    setImportWaiting(candidate.projectId, !hide);
+  };
+  return {
+    candidates,
+    refresh: () => setNonce((value) => value + 1),
+    isWaiting: (candidate: BoardProjectImportCandidate) =>
+      candidate.status === "differs" && !candidate.dismissed && !hidden.has(hiddenKey(candidate)),
+    hide: (candidate: BoardProjectImportCandidate) => setHiddenFor(candidate, true),
+    restore: (candidate: BoardProjectImportCandidate) => setHiddenFor(candidate, false),
+  };
 }
+
+const hiddenKey = (candidate: BoardProjectImportCandidate) =>
+  `${candidate.projectId}\u0000${candidate.blobSha ?? ""}`;
 
 /** Settings → Board: one row per project whose committed file differs. */
 export function BoardImportNotices() {
   const { environmentId } = useBoardSettingsContext();
   const projects = useBoardSettingsProjects(environmentId);
   const ids = projects.map((project) => project.id);
-  const { candidates, refresh } = useBoardImportCandidates(ids);
-  const waiting = (candidates ?? []).filter(
-    (candidate) => candidate.status === "differs" && !candidate.dismissed,
-  );
+  const imports = useBoardImportCandidates(ids);
+  const waiting = (imports.candidates ?? []).filter(imports.isWaiting);
   if (waiting.length === 0) return null;
   const titleOf = (projectId: string) =>
     projects.find((project) => project.id === projectId)?.title ?? projectId;
@@ -83,8 +103,8 @@ export function BoardImportNotices() {
       {waiting.map((candidate) => (
         <ImportNoticeRow
           candidate={candidate}
+          imports={imports}
           key={candidate.projectId}
-          onDone={refresh}
           title={titleOf(candidate.projectId)}
         />
       ))}
@@ -100,12 +120,11 @@ export function BoardImportNoticeForProject(props: {
   readonly imports: BoardImportCandidates;
   readonly title: string;
 }) {
-  const { candidates, refresh } = props.imports;
-  const candidate = candidates?.[0];
-  if (candidate === undefined || candidate.status !== "differs" || candidate.dismissed) return null;
+  const candidate = props.imports.candidates?.[0];
+  if (candidate === undefined || !props.imports.isWaiting(candidate)) return null;
   return (
     <div className="mx-3 rounded-xl border border-attention/40 bg-attention/6 px-4 py-2 sm:mx-4">
-      <ImportNoticeRow candidate={candidate} onDone={refresh} title={props.title} />
+      <ImportNoticeRow candidate={candidate} imports={props.imports} title={props.title} />
     </div>
   );
 }
@@ -113,12 +132,12 @@ export function BoardImportNoticeForProject(props: {
 function ImportNoticeRow(props: {
   readonly candidate: BoardProjectImportCandidate;
   readonly title: string;
-  readonly onDone: () => void;
+  readonly imports: BoardImportCandidates;
 }) {
   const { environmentId } = useBoardSettingsContext();
   const dismiss = useAtomCommand(boardEnvironment.dismissProjectImport, { reportFailure: false });
   const [confirming, setConfirming] = useState(false);
-  const { candidate } = props;
+  const { candidate, imports } = props;
   const chips = candidate.preview === null ? [] : boardImportSummaryChips(candidate.preview);
   return (
     <div className="flex flex-wrap items-center gap-2 py-1">
@@ -139,6 +158,7 @@ function ImportNoticeRow(props: {
         variant="ghost"
         onClick={() => {
           if (candidate.blobSha === null) return;
+          imports.hide(candidate);
           void dismiss({
             environmentId,
             input: { projectId: candidate.projectId, blobSha: candidate.blobSha },
@@ -149,8 +169,10 @@ function ImportNoticeRow(props: {
                 description: describeBoardCommandFailure(result),
                 tone: "error",
               });
+              imports.restore(candidate);
+              return;
             }
-            props.onDone();
+            imports.refresh();
           });
         }}
       >
@@ -162,9 +184,13 @@ function ImportNoticeRow(props: {
       {confirming ? (
         <BoardImportConfirmDialog
           candidate={candidate}
-          onClose={(imported) => {
+          onCancel={() => setConfirming(false)}
+          onImporting={(done) => {
             setConfirming(false);
-            if (imported) props.onDone();
+            imports.hide(candidate);
+            void done.then((imported) =>
+              imported ? imports.refresh() : imports.restore(candidate),
+            );
           }}
           projectTitle={props.title}
         />

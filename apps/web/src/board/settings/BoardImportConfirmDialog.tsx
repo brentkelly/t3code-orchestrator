@@ -10,7 +10,6 @@ import {
   type BoardProjectImportCandidate,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import { useState } from "react";
 
 import {
   AlertDialog,
@@ -32,14 +31,16 @@ import { useBoardSettingsContext } from "./BoardSettingsLayout";
 export function BoardImportConfirmDialog(props: {
   readonly candidate: BoardProjectImportCandidate;
   readonly projectTitle: string;
-  readonly onClose: (imported: boolean) => void;
+  readonly onCancel: () => void;
+  /** Fired as the import starts, so the caller can close and hide at once;
+      `done` settles true once the server has imported. Failures toast here. */
+  readonly onImporting: (done: Promise<boolean>) => void;
 }) {
   const { environmentId } = useBoardSettingsContext();
   const configs = useAtomValue(boardEnvironment.projectStageConfigsAtom(environmentId));
   const stageList = useAtomValue(boardEnvironment.stageListAtom(environmentId));
   const stages = stageList.length > 0 ? stageList : BOARD_SEED_STAGES;
   const importFile = useAtomCommand(boardEnvironment.importProjectFile, { reportFailure: false });
-  const [pending, setPending] = useState(false);
   const { candidate } = props;
   const preview = candidate.preview;
   if (preview === null || candidate.blobSha === null) return null;
@@ -51,8 +52,7 @@ export function BoardImportConfirmDialog(props: {
 
   const onImport = () => {
     if (candidate.blobSha === null) return;
-    setPending(true);
-    void importFile({
+    const done = importFile({
       environmentId,
       input: {
         projectId: candidate.projectId,
@@ -60,36 +60,36 @@ export function BoardImportConfirmDialog(props: {
         expectedConfigVersion: version,
       },
     }).then((result) => {
-      setPending(false);
       if (result._tag === "Failure") {
         boardToast({
           title: "Couldn't import",
           description: describeBoardCommandFailure(result),
           tone: "error",
         });
-        return;
+        return false;
       }
       const outcome = result.value;
       if (outcome.outcome === "imported") {
         boardToast({ title: `Imported ${props.projectTitle}'s t3o.json` });
-        props.onClose(true);
-      } else {
-        boardToast({
-          title: "Nothing imported",
-          description:
-            outcome.outcome === "file-changed"
-              ? "The committed file changed since you opened this. Check again."
-              : outcome.outcome === "version-mismatch"
-                ? "Changed elsewhere, reload."
-                : outcome.reason,
-          tone: "error",
-        });
+        return true;
       }
+      boardToast({
+        title: "Nothing imported",
+        description:
+          outcome.outcome === "file-changed"
+            ? "The committed file changed since you opened this. Check again."
+            : outcome.outcome === "version-mismatch"
+              ? "Changed elsewhere, reload."
+              : outcome.reason,
+        tone: "error",
+      });
+      return false;
     });
+    props.onImporting(done);
   };
 
   return (
-    <AlertDialog open onOpenChange={(open) => (open ? undefined : props.onClose(false))}>
+    <AlertDialog open onOpenChange={(open) => (open ? undefined : props.onCancel())}>
       <AlertDialogPopup className="max-w-2xl">
         <AlertDialogHeader>
           <AlertDialogTitle>Import {props.projectTitle}&apos;s t3o.json?</AlertDialogTitle>
@@ -98,7 +98,7 @@ export function BoardImportConfirmDialog(props: {
             other projects are untouched.
           </AlertDialogDescription>
         </AlertDialogHeader>
-        <div className="flex max-h-[60vh] flex-col gap-3 overflow-y-auto px-6 text-xs">
+        <div className="flex max-h-[60vh] flex-col gap-3 overflow-y-auto px-6 pb-6 text-xs">
           <div className="flex flex-wrap gap-1">
             {boardImportSummaryChips(preview).map((chip) => (
               <span className="rounded-md bg-accent px-1.5 py-px text-muted-foreground" key={chip}>
@@ -153,9 +153,7 @@ export function BoardImportConfirmDialog(props: {
         </div>
         <AlertDialogFooter>
           <AlertDialogClose render={<Button variant="ghost" />}>Cancel</AlertDialogClose>
-          <Button disabled={pending} onClick={onImport}>
-            Replace and import
-          </Button>
+          <Button onClick={onImport}>Replace and import</Button>
         </AlertDialogFooter>
       </AlertDialogPopup>
     </AlertDialog>

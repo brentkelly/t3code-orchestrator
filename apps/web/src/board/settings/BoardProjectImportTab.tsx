@@ -138,9 +138,11 @@ export function BoardProjectImportTab(props: {
       {confirming && candidate !== null ? (
         <BoardImportConfirmDialog
           candidate={candidate}
-          onClose={(imported) => {
+          onCancel={() => setConfirming(false)}
+          onImporting={(done) => {
             setConfirming(false);
-            if (imported) refresh();
+            props.imports.hide(candidate);
+            void done.then((imported) => (imported ? refresh() : props.imports.restore(candidate)));
           }}
           projectTitle={props.projectTitle}
         />

@@ -278,18 +278,13 @@ export function WorkersSection(props: {
           cardKeyOf={cardKeyOf}
           live
           actions={
-            <>
-              <BoardHint label="The server hosting the board can't be removed.">
-                <span className="text-board-11 text-muted-foreground">Built-in</span>
-              </BoardHint>
-              <WorkerMenu
-                environmentId={environmentId}
-                workerId={BOARD_LOCAL_WORKER_ID}
-                label={localName}
-                live
-                onRename={() => setRenaming(localWorkerView(localName))}
-              />
-            </>
+            <WorkerMenu
+              environmentId={environmentId}
+              workerId={BOARD_LOCAL_WORKER_ID}
+              label={localName}
+              live
+              onRename={() => setRenaming(localWorkerView(localName))}
+            />
           }
         >
           <WorkerProjectRows
@@ -528,16 +523,21 @@ function ProviderQuota(props: { readonly lines: CapacityLines }) {
       {lines.providers.map((provider) => (
         <div key={provider.name} className="flex min-w-0 flex-col gap-1">
           <div className="flex min-w-0 flex-col">
-            <span className="font-medium">{provider.name}</span>
+            <span className="font-medium">
+              {provider.name}
+              {/* A signed-out provider is just unavailable here: the sign-in hint waits on hover. */}
+              {provider.signedOut === null ? null : (
+                <BoardHint label={provider.signedOut}>
+                  <span className="font-normal text-muted-foreground"> · Signed out</span>
+                </BoardHint>
+              )}
+            </span>
             {provider.account === null ? null : (
               <span className="truncate font-mono text-board-10-5 text-muted-foreground">
                 {provider.account}
               </span>
             )}
           </div>
-          {provider.signedOut === null ? null : (
-            <span className="text-attention-foreground">{provider.signedOut}</span>
-          )}
           {provider.windows.length === 0 ? null : (
             <div className="grid grid-cols-[minmax(0,5.5rem)_minmax(0,1fr)_2.5rem] items-center gap-x-2 gap-y-1">
               {provider.windows.map((window) => (
