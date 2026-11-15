@@ -5,15 +5,25 @@
  */
 import { useAtomValue } from "@effect/atom-react";
 import { selectEnvironmentQueryData } from "@t3tools/client-runtime/state/runtime";
+import {
+  type BoardCardThreadShells,
+  EMPTY_BOARD_CARD_THREAD_SHELLS,
+  projectBoardCardThreadShells,
+} from "@t3tools/client-runtime/state/shell";
 import { threadFamilyRead } from "@t3tools/client-runtime/state/threads";
 import type {
   BoardCardThreadLink,
+  BoardThreadStateSource,
   EnvironmentId,
   OrchestrationV2ThreadShell,
   ThreadId,
 } from "@t3tools/contracts";
+import * as Option from "effect/Option";
 import { Atom } from "effect/reactivity";
 
+import { orchestrationEnvironment } from "../state/orchestration";
+import { useEnvironmentQuery } from "../state/query";
+import { environmentShell } from "../state/shell";
 import { threadFamilies } from "../state/threads";
 
 /**
@@ -96,4 +106,61 @@ export function useBoardCardThreadRows(
   threadIds: ReadonlyArray<ThreadId>,
 ): BoardCardThreadRows {
   return useAtomValue(rowsAtom(JSON.stringify([environmentId, threadIds])));
+}
+
+const cardShellThreadsAtom = Atom.family((key: string) => {
+  const [environmentId, threadIds] = JSON.parse(key) as [EnvironmentId, ReadonlyArray<ThreadId>];
+  const linked = new Set(threadIds);
+  let previous: BoardCardThreadShells = EMPTY_BOARD_CARD_THREAD_SHELLS;
+  return Atom.make((get): BoardCardThreadShells => {
+    const shell = get(environmentShell.stateValueAtom(environmentId));
+    previous = projectBoardCardThreadShells({
+      linkedThreadIds: linked,
+      threads: Option.match(shell.snapshot, { onNone: () => [], onSome: (value) => value.threads }),
+      previous,
+    });
+    return previous;
+  }).pipe(Atom.withLabel(`t3o:board:card-shell-threads:${key}`));
+});
+
+/** The board fields of one card's threads that the shell holds. Keeps its identity across
+    pushes for other threads, so an open card does not re-render while unrelated agents stream. */
+export function useBoardCardShellThreads(
+  environmentId: EnvironmentId,
+  threadIds: ReadonlyArray<ThreadId>,
+): BoardCardThreadShells {
+  return useAtomValue(cardShellThreadsAtom(JSON.stringify([environmentId, threadIds])));
+}
+
+export interface BoardCardOffShellThreads {
+  /** Titles of the threads that exist, archived ones included. */
+  readonly titles: ReadonlyMap<ThreadId, string>;
+  readonly loading: boolean;
+}
+
+const NO_OFF_SHELL_TITLES: ReadonlyMap<ThreadId, string> = new Map();
+
+/** A thread the shell left out has settled: the shell keeps every thread with a live run. */
+export const OFF_SHELL_THREAD_STATE: BoardThreadStateSource = {
+  hasPendingUserInput: false,
+  hasPendingApprovals: false,
+  session: { status: "ready" },
+  backgroundLiveness: null,
+};
+
+/** The titles of `threadIds` the shell left out, in one read however many there are. */
+export function useBoardCardOffShellThreads(
+  environmentId: EnvironmentId,
+  threadIds: ReadonlyArray<ThreadId>,
+): BoardCardOffShellThreads {
+  const read = useEnvironmentQuery(
+    threadIds.length === 0
+      ? null
+      : orchestrationEnvironment.threadTitles({ environmentId, input: { threadIds } }),
+  );
+  const titles =
+    read.data === null
+      ? NO_OFF_SHELL_TITLES
+      : new Map(Object.entries(read.data) as Array<[ThreadId, string]>);
+  return { titles, loading: read.isPending };
 }

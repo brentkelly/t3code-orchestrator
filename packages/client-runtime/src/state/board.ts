@@ -491,6 +491,40 @@ function groupBoardCards(
   return byProject;
 }
 
+function sameCards(
+  left: ReadonlyArray<BoardCardShell> | undefined,
+  right: ReadonlyArray<BoardCardShell>,
+): boolean {
+  return (
+    left !== undefined &&
+    left.length === right.length &&
+    left.every((card, index) => card === right[index])
+  );
+}
+
+/** `next`, with each column whose cards are unchanged swapped for the array `previous` held,
+    so a view keyed on a column's identity skips it. */
+export function reuseBoardColumns(
+  previous: ReadonlyMap<ProjectId, BoardStageColumns>,
+  next: ReadonlyMap<ProjectId, BoardStageColumns>,
+): ReadonlyMap<ProjectId, BoardStageColumns> {
+  if (previous.size === 0) return next;
+  const out = new Map<ProjectId, BoardStageColumns>();
+  for (const [projectId, columns] of next) {
+    const held = previous.get(projectId);
+    if (held === undefined) {
+      out.set(projectId, columns);
+      continue;
+    }
+    const merged: Record<string, ReadonlyArray<BoardCardShell>> = {};
+    for (const [stage, cards] of Object.entries(columns)) {
+      merged[stage] = sameCards(held[stage], cards) ? held[stage]! : cards;
+    }
+    out.set(projectId, merged);
+  }
+  return out;
+}
+
 /**
  * Stage columns for the "All projects" scope — a view over the per-project
  * grouping, never a stored entity: cards stay keyed to their own
@@ -795,13 +829,18 @@ export function createBoardEnvironmentAtoms<R, ER>(
   );
 
   /** Cards grouped by project, then by stage in board column order, each
-      column sorted by orderKey. */
-  const cardsByProjectAtom = Atom.family((environmentId: EnvironmentId) =>
-    Atom.make((get) => {
+      column sorted by orderKey. A column whose cards did not change keeps its array. */
+  const cardsByProjectAtom = Atom.family((environmentId: EnvironmentId) => {
+    let previous = EMPTY_BOARD_PROJECTS;
+    return Atom.make((get) => {
       const board = get(boardAtom(environmentId));
-      return board === null ? EMPTY_BOARD_PROJECTS : groupBoardCards(board.cards);
-    }).pipe(Atom.withLabel(`environment-board-cards:${environmentId}`)),
-  );
+      previous =
+        board === null
+          ? EMPTY_BOARD_PROJECTS
+          : reuseBoardColumns(previous, groupBoardCards(board.cards));
+      return previous;
+    }).pipe(Atom.withLabel(`environment-board-cards:${environmentId}`));
+  });
 
   /**
    * Live card-thread links and cached todo summaries, keyed by card id; a projection over the

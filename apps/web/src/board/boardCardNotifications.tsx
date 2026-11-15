@@ -4,7 +4,13 @@
  * in the client, so nothing alerts while no client is open.
  */
 import { presentThreadShell } from "@t3tools/client-runtime/state/models";
-import { indexLiveCardThreadIds } from "@t3tools/client-runtime/state/shell";
+import {
+  boardCardLinkedThreadIds,
+  type BoardCardThreadShells,
+  EMPTY_BOARD_CARD_THREAD_SHELLS,
+  indexLiveCardThreadIds,
+  projectBoardCardThreadShells,
+} from "@t3tools/client-runtime/state/shell";
 import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
 import { threadKey } from "@t3tools/client-runtime/state/entities";
 import type { AnyRouter } from "@tanstack/react-router";
@@ -18,7 +24,7 @@ import {
 } from "@t3tools/contracts";
 import type { ClientSettings } from "@t3tools/contracts/settings";
 import * as Option from "effect/Option";
-import type { AtomRegistry } from "effect/reactivity";
+import { Atom, type AtomRegistry } from "effect/reactivity";
 import { LockIcon, MessageCircleQuestionIcon, TriangleAlertIcon } from "lucide-react";
 
 import { PullRequestGlyph } from "../components/pullRequest/pullRequestIcons";
@@ -50,6 +56,37 @@ import { setBoardMutedRoutineThreads } from "./boardThreadAlertMute";
 import { resolveBoardEnvironment, type BoardEnvironmentCandidate } from "./useBoardEnvironmentId";
 
 type ToastId = ReturnType<typeof toastManager.add>;
+
+interface WatchedThreads {
+  /** The shell is live with a snapshot: until then the overlay is not settled. */
+  readonly live: boolean;
+  /** The board fields of card-linked threads. */
+  readonly threads: BoardCardThreadShells;
+}
+
+/** What the notifier reads of the shell; equal across pushes that change no card-linked thread,
+    so streaming on unrelated threads does not wake it. */
+const watchedThreadsAtom = Atom.family((environmentId: EnvironmentId) => {
+  let previous: BoardCardThreadShells = EMPTY_BOARD_CARD_THREAD_SHELLS;
+  return Atom.make((get): WatchedThreads => {
+    const board = get(boardEnvironment.boardAtom(environmentId));
+    const shell = get(environmentShell.stateValueAtom(environmentId));
+    const live = shell.status === "live" && Option.isSome(shell.snapshot);
+    previous = projectBoardCardThreadShells({
+      linkedThreadIds:
+        board === null ? new Set() : boardCardLinkedThreadIds(board.cards, board.cardThreads),
+      threads: Option.match(shell.snapshot, { onNone: () => [], onSome: (value) => value.threads }),
+      previous,
+    });
+    return { live, threads: previous };
+  }).pipe(
+    Atom.withEquality(
+      (left: WatchedThreads, right: WatchedThreads) =>
+        left.live === right.live && left.threads === right.threads,
+    ),
+    Atom.withLabel(`t3o-board-notifier-threads:${environmentId}`),
+  );
+});
 
 const upstreamAlertsOn = (settings: ClientSettings) =>
   settings.notificationMode !== "off" || settings.inAppNotificationsEnabled;
@@ -189,7 +226,7 @@ export function startBoardCardNotifications(
 
   const readInputs = (environmentId: EnvironmentId): ReadonlyArray<unknown> => [
     registry.get(boardEnvironment.boardAtom(environmentId)),
-    registry.get(environmentShell.stateValueAtom(environmentId)),
+    registry.get(watchedThreadsAtom(environmentId)),
     registry.get(boardEnvironment.workersAtom(environmentId)),
     registry.get(boardEnvironment.stageListAtom(environmentId)),
     registry.get(boardEnvironment.projectStageConfigsAtom(environmentId)),
@@ -207,24 +244,21 @@ export function startBoardCardNotifications(
     wakeTimer = null;
     lastInputs = readInputs(environmentId);
     const board = registry.get(boardEnvironment.boardAtom(environmentId));
-    const shell = registry.get(environmentShell.stateValueAtom(environmentId));
+    const watchedThreads = registry.get(watchedThreadsAtom(environmentId));
     const target = resolveWatchedBoard(registry);
     // The baseline waits for both: the thread overlay racing the shell would
     // otherwise read as fresh waits at startup.
     if (
       board === null ||
-      shell.status !== "live" ||
-      Option.isNone(shell.snapshot) ||
+      !watchedThreads.live ||
       target?.environmentId !== environmentId ||
       !target.connected
     )
       return;
     const settings = getClientSettings();
-    const threads = shell.snapshot.value.threads;
-    const threadById = new Map(threads.map((thread) => [thread.id, thread]));
     const { cards, stageState, boardSettings, observations } = observe({
       cards: board.cards,
-      threadOf: (threadId) => threadById.get(threadId),
+      threadOf: (threadId) => watchedThreads.threads.get(threadId),
       stageList: registry.get(boardEnvironment.stageListAtom(environmentId)),
       projectStageConfigs: registry.get(boardEnvironment.projectStageConfigsAtom(environmentId)),
       serverSettings: registry.get(serverEnvironment.settingsValueAtom(environmentId)),
@@ -273,6 +307,14 @@ export function startBoardCardNotifications(
           isShownUnderParent({ environmentId, threadId: thread.id }, thread.lineage, delegated),
       };
     };
+    // The full rows, read only when something fires: presenting a thread needs more than the board's fields.
+    const shell =
+      fire.length === 0 ? null : registry.get(environmentShell.stateValueAtom(environmentId));
+    const threads =
+      shell === null
+        ? []
+        : Option.match(shell.snapshot, { onNone: () => [], onSome: (value) => value.threads });
+    const threadById = new Map(threads.map((thread) => [thread.id, thread]));
     for (const firing of fire) {
       const cardThreads = liveThreadIdsOf(firing.card).flatMap((threadId: ThreadId) => {
         const thread = threadById.get(threadId);
@@ -303,7 +345,7 @@ export function startBoardCardNotifications(
       registry.subscribe(boardEnvironment.boardAtom(environmentId), reevaluate, {
         immediate: true,
       }),
-      registry.subscribe(environmentShell.stateValueAtom(environmentId), reevaluate),
+      registry.subscribe(watchedThreadsAtom(environmentId), reevaluate),
       registry.subscribe(boardEnvironment.workersAtom(environmentId), reevaluate),
       registry.subscribe(boardEnvironment.stageListAtom(environmentId), reevaluate),
       registry.subscribe(boardEnvironment.projectStageConfigsAtom(environmentId), reevaluate),

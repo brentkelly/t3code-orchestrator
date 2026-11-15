@@ -44,6 +44,7 @@ import {
   createBoardEnvironmentAtoms,
   EMPTY_BOARD_CARD_THREAD_SHELLS,
   projectBoardCardThreadShells,
+  reuseBoardColumns,
   withBoardThreadFields,
 } from "./board.ts";
 import { v2Now, v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
@@ -1068,6 +1069,21 @@ describe("projectBoardCardThreadShells", () => {
       previous: first,
     });
     expect(next).toBe(first);
+  });
+});
+
+describe("reuseBoardColumns", () => {
+  it("keeps the array of a column whose cards did not change", () => {
+    const backlog = [cardShell("card-1"), cardShell("card-2")];
+    const sprint = [cardShell("card-3", { stage: BOARD_SEED_STAGE_IDS.sprint })];
+    const previous = new Map([[projectId, { backlog, sprint }]]);
+    const renamed = cardShell("card-3", { stage: BOARD_SEED_STAGE_IDS.sprint, title: "New" });
+    const next = reuseBoardColumns(
+      previous,
+      new Map([[projectId, { backlog: [...backlog], sprint: [renamed] }]]),
+    );
+    expect(next.get(projectId)?.backlog).toBe(backlog);
+    expect(next.get(projectId)?.sprint).toEqual([renamed]);
   });
 });
 

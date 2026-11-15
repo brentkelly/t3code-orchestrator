@@ -15,6 +15,7 @@ export type BoardCardThreadFields = Pick<
   OrchestrationV2ThreadShell,
   | "id"
   | "title"
+  | "branch"
   | "latestRunCompletedAt"
   | "activityRunStatus"
   | "status"
@@ -43,6 +44,7 @@ function sameFields(left: BoardCardThreadFields, right: BoardCardThreadFields): 
   return (
     left.id === right.id &&
     left.title === right.title &&
+    left.branch === right.branch &&
     left.activityRunStatus === right.activityRunStatus &&
     left.status === right.status &&
     left.latestRunId === right.latestRunId &&
@@ -58,6 +60,7 @@ function pickFields(thread: OrchestrationV2ThreadShell): BoardCardThreadFields {
   return {
     id: thread.id,
     title: thread.title,
+    branch: thread.branch,
     latestRunCompletedAt: thread.latestRunCompletedAt,
     activityRunStatus: thread.activityRunStatus,
     status: thread.status,

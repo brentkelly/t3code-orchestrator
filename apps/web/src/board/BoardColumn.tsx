@@ -386,9 +386,7 @@ function ExpandedColumn(props: BoardColumnProps) {
                   worktreeKeptReason={worktreeKeptFor(card)}
                   stageGone={stageGoneFor?.(card) ?? null}
                   todos={todosFor(card.cardId)}
-                  onOpenSubBoard={
-                    onOpenSubBoard === undefined ? undefined : () => onOpenSubBoard(card)
-                  }
+                  onOpenSubBoard={onOpenSubBoard}
                   group={groupFor?.(card) ?? null}
                   costSlot={costSlotFor?.(card) ?? null}
                 />

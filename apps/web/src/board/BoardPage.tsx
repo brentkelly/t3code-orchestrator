@@ -59,7 +59,6 @@ import {
   PlusIcon,
   TriangleAlertIcon,
 } from "lucide-react";
-import * as Option from "effect/Option";
 import { useEffect, useRef, useState, type DragEvent } from "react";
 
 import { Button } from "../components/ui/button";
@@ -67,7 +66,8 @@ import { SidebarInset } from "../components/ui/sidebar";
 import { toastManager } from "../components/ui/toast";
 import { isEditableFocused } from "../lib/editableFocus";
 import { cn } from "../lib/utils";
-import { environmentShell } from "../state/shell";
+import { useStableCallback } from "../hooks/useStableCallback";
+import { environmentProjects } from "../state/projects";
 import { environmentThreadShells } from "../state/threads";
 import { boardEnvironment, environmentBoard } from "../state/board";
 import { useAtomCommand } from "../state/use-atom-command";
@@ -276,18 +276,13 @@ function useBoardLiveColumns({
   readonly scopeProjectId: ProjectId | null;
   readonly orderedStages: ReadonlyArray<BoardStageDefinition>;
 }) {
-  const shellState = useAtomValue(environmentShell.stateValueAtom(environmentId));
+  // Card-linked threads only: an unrelated thread's push leaves the page alone.
+  const threadShellsById = useAtomValue(boardEnvironment.cardThreadShellsAtom(environmentId));
   const cardsByProject = useAtomValue(boardEnvironment.cardsByProjectAtom(environmentId));
   // Optimistic drop placements: applied over the live shells immediately,
   // pruned as the server's deltas confirm them, removed on rejection.
   const [placements, setPlacements] = useState<ReadonlyArray<BoardCardPlacement>>([]);
 
-  // The thread shells, joined from the snapshot the client already holds. Read
-  // by the card todo strips and by the attention settle grace.
-  const threadShellsById = (() => {
-    const shells = Option.getOrNull(shellState.snapshot)?.threads ?? [];
-    return new Map(shells.map((thread) => [thread.id, thread]));
-  })();
   const threadShellOf = (threadId: ThreadId) => threadShellsById.get(threadId);
   const liveColumns = (() => {
     if (scopeProjectId !== null) {
@@ -434,7 +429,7 @@ function useBoardPageModel({
       replace: options?.replace === true,
     });
   };
-  const shellState = useAtomValue(environmentShell.stateValueAtom(environmentId));
+  const allProjects = useAtomValue(environmentProjects.environmentProjectsAtom(environmentId));
   const cardsByProject = useAtomValue(boardEnvironment.cardsByProjectAtom(environmentId));
   const labelCatalogue = useAtomValue(boardEnvironment.labelCatalogueAtom(environmentId));
   const moveCard = useAtomCommand(boardEnvironment.moveCard);
@@ -546,7 +541,6 @@ function useBoardPageModel({
       ? mergeExecution.autoMerge
       : false;
 
-  const allProjects = Option.getOrNull(shellState.snapshot)?.projects ?? [];
   // A project's Board colour is its icon colour, read from the live
   // shell snapshot so an icon change in project settings recolours its cards
   // without a reload. Keyed once here and threaded down, not looked up per card.
@@ -731,13 +725,13 @@ function useBoardPageModel({
   })();
   const groupFor = (card: BoardCardShell) => groupVmByCard.get(String(card.cardId)) ?? null;
 
-  const toggleCardThreads = (cardId: string) => {
+  const toggleCardThreads = useStableCallback((cardId: string) => {
     setExpandedThreadCards((current) => {
       const next = new Set(current);
       if (!next.delete(cardId)) next.add(cardId);
       return next;
     });
-  };
+  });
   // A subagent awaiting approval turns its parent's to-do row violet.
   const subagentRequests = useAtomValue(
     environmentThreadShells.pendingSubagentRequestsAtom(environmentId),
@@ -1328,7 +1322,7 @@ function EnvironmentBoard({
   // drag's keyboard analogue. Moves relative to the RENDERED (possibly
   // stalled-filtered) neighbour, anchored into the full column exactly like
   // commitDrop, and commits through the same drop path.
-  const handleCardReorder = (card: BoardCardShell, direction: -1 | 1) => {
+  const handleCardReorder = useStableCallback((card: BoardCardShell, direction: -1 | 1) => {
     const source = findBoardCard(columns, card.cardId);
     if (source === null) return;
     const rendered = (visibleColumns[source.stage] ?? EMPTY_CARDS).map(
@@ -1346,49 +1340,51 @@ function EnvironmentBoard({
     if (anchorIndex < 0) return;
     list.splice(direction > 0 ? anchorIndex + 1 : anchorIndex, 0, card.cardId);
     dispatchDrop(source.stage, list, source);
-  };
+  });
 
-  const handleCardDragStart = (card: BoardCardShell, event: DragEvent<HTMLDivElement>) => {
-    const element = event.currentTarget;
-    const rect = element.getBoundingClientRect();
-    event.dataTransfer.effectAllowed = "move";
-    try {
-      event.dataTransfer.setData("text/plain", card.cardId);
-    } catch {
-      // Some browsers disallow setData here; the drag still works without it.
-    }
-    // A tilted, shadowed clone is the drag image (the prototype's ghost). It
-    // sits off-screen just long enough for the browser to snapshot it.
-    const ghost = element.cloneNode(true) as HTMLElement;
-    ghost.classList.remove("opacity-40");
-    ghost.style.cssText +=
-      `;position:fixed;top:-1000px;left:-1000px;pointer-events:none;opacity:1;width:${rect.width}px;` +
-      "transform:rotate(4deg);box-shadow:0 18px 34px -14px rgb(0 0 0 / 55%)";
-    document.body.appendChild(ghost);
-    ghostRef.current = ghost;
-    event.dataTransfer.setDragImage(ghost, event.clientX - rect.left, event.clientY - rect.top);
-    setTimeout(clearGhost, 0);
+  const handleCardDragStart = useStableCallback(
+    (card: BoardCardShell, event: DragEvent<HTMLDivElement>) => {
+      const element = event.currentTarget;
+      const rect = element.getBoundingClientRect();
+      event.dataTransfer.effectAllowed = "move";
+      try {
+        event.dataTransfer.setData("text/plain", card.cardId);
+      } catch {
+        // Some browsers disallow setData here; the drag still works without it.
+      }
+      // A tilted, shadowed clone is the drag image (the prototype's ghost). It
+      // sits off-screen just long enough for the browser to snapshot it.
+      const ghost = element.cloneNode(true) as HTMLElement;
+      ghost.classList.remove("opacity-40");
+      ghost.style.cssText +=
+        `;position:fixed;top:-1000px;left:-1000px;pointer-events:none;opacity:1;width:${rect.width}px;` +
+        "transform:rotate(4deg);box-shadow:0 18px 34px -14px rgb(0 0 0 / 55%)";
+      document.body.appendChild(ghost);
+      ghostRef.current = ghost;
+      event.dataTransfer.setDragImage(ghost, event.clientX - rect.left, event.clientY - rect.top);
+      setTimeout(clearGhost, 0);
 
-    const source = findBoardCard(columns, card.cardId);
-    const startIndex =
-      source === null
-        ? 0
-        : (columns[source.stage] ?? EMPTY_CARDS).findIndex((c) => c.cardId === card.cardId);
-    const next: BoardDrag = { cardId: card.cardId, height: Math.round(rect.height) };
-    dragRef.current = next;
-    setDrag(next);
-    setDragOver(source === null ? null : { stage: source.stage, index: startIndex });
-    setDragOpenedRail(null);
-  };
+      const source = findBoardCard(columns, card.cardId);
+      const startIndex =
+        source === null
+          ? 0
+          : (columns[source.stage] ?? EMPTY_CARDS).findIndex((c) => c.cardId === card.cardId);
+      const next: BoardDrag = { cardId: card.cardId, height: Math.round(rect.height) };
+      dragRef.current = next;
+      setDrag(next);
+      setDragOver(source === null ? null : { stage: source.stage, index: startIndex });
+      setDragOpenedRail(null);
+    },
+  );
 
-  const handleCardDragEnd = () => {
+  const handleCardDragEnd = useStableCallback(() => {
     clearGhost();
     dragRef.current = null;
     setDrag(null);
     setDragOver(null);
     setDragOpenedRail(null);
     setDragTip(null);
-  };
+  });
 
   // Client-side pre-validation of a drop: a refused column is
   // outlined and never `preventDefault`s, so the browser shows a no-drop
@@ -1452,14 +1448,14 @@ function EnvironmentBoard({
 
   // ── Selection and deep link (?card=…) ───────────────────────────────
   const selectedCardId = search.card ?? null;
-  const handleSelectCard = (card: BoardCardShell) => {
+  const handleSelectCard = useStableCallback((card: BoardCardShell) => {
     // Native drag doesn't fire a click on the source after a drop, so no
     // click-suppression is needed here.
     patchSearch((previous) => {
       const { card: selected, ...rest } = previous;
       return selected === card.cardId ? rest : { ...rest, card: card.cardId };
     });
-  };
+  });
   const handleCloseDetail = () => {
     patchSearch((previous) => {
       const { card: _card, ...rest } = previous;
@@ -1498,7 +1494,7 @@ function EnvironmentBoard({
 
   /** The stack affordance on a split parent's face: clicking it
       drills into that parent's sub-board. */
-  const handleOpenSubBoard = (card: BoardCardShell) => openSubBoard(card.cardId);
+  const handleOpenSubBoard = useStableCallback((card: BoardCardShell) => openSubBoard(card.cardId));
 
   const selectedShell =
     selectedCardId === null ? null : (findBoardCard(columns, selectedCardId)?.card ?? null);
