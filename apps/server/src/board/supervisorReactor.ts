@@ -626,6 +626,9 @@ const clockNowMs = Effect.map(DateTime.now, DateTime.toEpochMillis);
     reset; the grace keeps the board from racing it to the same thread. */
 const USAGE_LIMIT_RESUME_GRACE_MS = 10 * 60_000;
 
+/** How often an event-scoped worktree sweep still re-probes a worktree kept for a reason. */
+const KEPT_WORKTREE_REPROBE_MS = 30 * 60_000;
+
 export class SupervisorReactor extends Context.Service<SupervisorReactor, SupervisorReactorShape>()(
   "t3/board/supervisorReactor",
 ) {}
@@ -7935,18 +7938,22 @@ const make = Effect.gen(function* () {
    */
   // Pending group-archive discards the sweep has already retried this process.
   const sweptDiscards = new Set<BoardCardId>();
+  // When each worktree was last probed: a kept one is still retried on this interval, since
+  // what keeps it (a dirty tree, unpushed or unmerged work) usually clears outside the board.
+  const worktreeProbedAt = new Map<BoardCardId, number>();
   const sweepWorktrees = Effect.fn("board-supervisor-sweepWorktrees")(function* (options: {
     readonly refreshOpenPullRequests: boolean;
     /** Null re-probes every kept worktree (boot, a direct request). Otherwise the pass was
         asked for by these cards' worktree events: a worktree already kept for a reason is
-        re-probed only when it is one of them, since its fetches cost a remote round trip
-        and nothing about it changed (T3O-108). */
+        re-probed only when it is one of them or its last probe is older than
+        `KEPT_WORKTREE_REPROBE_MS`, since its fetches cost a remote round trip (T3O-108). */
     readonly eventCards: ReadonlySet<string> | null;
   }) {
     const settings = yield* boardSettings;
     const board = yield* readBoard;
     forgetSettledProvisions(board);
     const fetchedBases = new Set<string>();
+    const nowMs = yield* clockNowMs;
     for (const card of board.cards) {
       // T3o: a linked pull request settles its card whether or not
       // the card holds a worktree — it may never have had one — so its boot
@@ -7978,10 +7985,12 @@ const make = Effect.gen(function* () {
       if (
         options.eventCards !== null &&
         card.worktree.reclaimBlockedReason !== null &&
-        !options.eventCards.has(card.id)
+        !options.eventCards.has(card.id) &&
+        nowMs - (worktreeProbedAt.get(card.id) ?? 0) < KEPT_WORKTREE_REPROBE_MS
       ) {
         continue;
       }
+      worktreeProbedAt.set(card.id, nowMs);
       if (card.archivedAt !== null) {
         yield* reclaimCardWorktree(card, fetchedBases);
         continue;

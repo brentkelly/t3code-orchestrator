@@ -12,6 +12,7 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
+import * as TestClock from "effect/testing/TestClock";
 
 import {
   BOARD_SEED_STAGE_IDS,
@@ -590,6 +591,17 @@ describe("the cleanup sweep (D3/D4)", () => {
           const cwds = (yield* h.gitCwds).slice(before);
           assert.notInclude(cwds, "/tmp/wt/card-1");
           assert.include(cwds, "/tmp/wt/card-2");
+
+          // A kept worktree is still retried once its last probe is old enough.
+          yield* TestClock.adjust("31 minutes");
+          const later = (yield* h.gitCwds).length;
+          yield* h.pumpDomain({
+            type: "board.card-worktree-ready",
+            sequence: 2,
+            payload: { cardId: kept[1]!.id, card: kept[1]! },
+          } as unknown as HarnessEvent);
+          yield* h.reactor.drainWorktreeSweep;
+          assert.include((yield* h.gitCwds).slice(later), "/tmp/wt/card-1");
         }),
     ),
   );
