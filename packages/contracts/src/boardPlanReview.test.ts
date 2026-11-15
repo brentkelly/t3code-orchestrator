@@ -5,8 +5,12 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  BoardStageId,
   DEFAULT_BOARD_PLAN_REVIEW_PROMPT,
+  boardPlanReviewCreationDefaults,
+  isBoardPlanReviewRunning,
   readBoardPlanReviewReport,
+  resolveBoardStageExecution,
   resolveBoardCardPlanReview,
   resolveBoardPlanReviewSettings,
 } from "./board.ts";
@@ -41,7 +45,10 @@ describe("composePlanReviewInstructions", () => {
     expect(user).toBeGreaterThan(text.indexOf("Plan review is on for this card: up to 1 round "));
     expect(closing).toBeGreaterThan(user);
     expect(text.slice(closing)).toContain("board_propose_plans");
-    expect(text.slice(closing)).toContain("planReview: { roundsRun, converged }");
+    expect(text.slice(closing)).toContain("planReview: { roundsRun, converged, findings }");
+    // The round tool's target wins over the stated rounds.
+    expect(text.slice(closing)).toContain("board_plan_review_round");
+    expect(text.slice(closing)).toContain("continue: false");
   });
 
   it("asks for sign-off with a human in the loop and finishes without asking when unattended", () => {
@@ -111,7 +118,11 @@ describe("plan review resolution", () => {
 
   it("uses the card's own setting before the Settings default", () => {
     const stage = { planReview: { enabledByDefault: true, defaultRounds: 7, prompt: null } };
-    expect(resolveBoardCardPlanReview({}, stage)).toEqual({ enabled: true, rounds: 7 });
+    expect(resolveBoardCardPlanReview({}, stage)).toEqual({
+      enabled: true,
+      rounds: 7,
+      unattended: false,
+    });
     expect(
       resolveBoardCardPlanReview({ planReview: { enabled: false, rounds: 1 } }, stage),
     ).toEqual({ enabled: false, rounds: 1 });
@@ -120,13 +131,82 @@ describe("plan review resolution", () => {
   it("reads the agent's report, tolerating anything malformed", () => {
     expect(
       readBoardPlanReviewReport(JSON.stringify({ planReview: { roundsRun: 2, converged: false } })),
-    ).toEqual({ roundsRun: 2, converged: false });
-    expect(readBoardPlanReviewReport(null)).toEqual({ roundsRun: null, converged: null });
-    expect(readBoardPlanReviewReport("not json")).toEqual({ roundsRun: null, converged: null });
+    ).toEqual({ roundsRun: 2, converged: false, findings: null });
     expect(
       readBoardPlanReviewReport(
-        JSON.stringify({ planReview: { roundsRun: -1, converged: "yes" } }),
+        JSON.stringify({ planReview: { roundsRun: 3, converged: true, findings: 7 } }),
       ),
-    ).toEqual({ roundsRun: null, converged: null });
+    ).toEqual({ roundsRun: 3, converged: true, findings: 7 });
+    const none = { roundsRun: null, converged: null, findings: null };
+    expect(readBoardPlanReviewReport(null)).toEqual(none);
+    expect(readBoardPlanReviewReport("not json")).toEqual(none);
+    expect(
+      readBoardPlanReviewReport(
+        JSON.stringify({ planReview: { roundsRun: -1, converged: "yes", findings: 1.5 } }),
+      ),
+    ).toEqual(none);
+  });
+});
+
+describe("plan review new-card defaults", () => {
+  it("stamps on, 3 rounds, attended when nothing is set, even beside a stored prompt", () => {
+    const stamped = { enabled: true, rounds: 3, unattended: false, source: "default" };
+    expect(boardPlanReviewCreationDefaults(undefined)).toEqual(stamped);
+    expect(
+      boardPlanReviewCreationDefaults({
+        planReview: { enabledByDefault: false, defaultRounds: 2, prompt: "Mine" },
+      }),
+    ).toEqual(stamped);
+  });
+
+  it("reads newCards, not the live-fallback keys", () => {
+    expect(
+      boardPlanReviewCreationDefaults({
+        planReview: {
+          enabledByDefault: true,
+          defaultRounds: 9,
+          prompt: null,
+          newCards: { enabled: false, rounds: 5, unattended: true },
+        },
+      }),
+    ).toEqual({ enabled: false, rounds: 5, unattended: true, source: "default" });
+  });
+
+  it("merges a project's newCards over the board's key by key", () => {
+    const execution = resolveBoardStageExecution(
+      {
+        pipeline: {
+          planning: {
+            kind: "simple",
+            planReview: {
+              enabledByDefault: false,
+              defaultRounds: 2,
+              prompt: null,
+              newCards: { rounds: 4, unattended: true },
+            },
+          },
+        },
+      } as unknown as Parameters<typeof resolveBoardStageExecution>[0],
+      BoardStageId.make("planning"),
+      { overrides: { planning: { planReview: { newCards: { unattended: false } } } } },
+    );
+    expect(execution.kind === "simple" ? execution.planReview?.newCards : null).toEqual({
+      rounds: 4,
+      unattended: false,
+    });
+  });
+});
+
+describe("isBoardPlanReviewRunning", () => {
+  it("is started, not done, on a live step", () => {
+    const started = { status: "running" as const, planReviewStartedAt: "2026-01-01T00:00:00Z" };
+    expect(isBoardPlanReviewRunning(started)).toBe(true);
+    expect(isBoardPlanReviewRunning({ ...started, status: "awaiting-input" })).toBe(true);
+    expect(isBoardPlanReviewRunning({ ...started, planReviewDoneAt: "2026-01-01T01:00:00Z" })).toBe(
+      false,
+    );
+    expect(isBoardPlanReviewRunning({ ...started, status: "succeeded" })).toBe(false);
+    expect(isBoardPlanReviewRunning({ status: "running" })).toBe(false);
+    expect(isBoardPlanReviewRunning(null)).toBe(false);
   });
 });

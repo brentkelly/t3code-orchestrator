@@ -66,6 +66,7 @@ import {
 } from "../operations/boardWorkers.ts";
 import {
   approveBoardPlans,
+  startBoardPlanReview,
   archiveBoardCard,
   createBoardCard,
   createBoardLabel,
@@ -125,6 +126,7 @@ import {
   type PinBoardCardWorkerInput,
   updateBoardLabel,
   type ApproveBoardPlansInput,
+  type StartBoardPlanReviewInput,
   type ArchiveBoardCardInput,
   type CreateBoardCardInput,
   type CreateBoardLabelInput,
@@ -1109,6 +1111,10 @@ export function createBoardEnvironmentAtoms<R, ER>(
     approvePlans: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:approve-plans",
       execute: (input: ApproveBoardPlansInput) => approveBoardPlans(input),
+    }),
+    startPlanReview: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:start-plan-review",
+      execute: (input: StartBoardPlanReviewInput) => startBoardPlanReview(input),
     }),
     createLabel: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:create-label",

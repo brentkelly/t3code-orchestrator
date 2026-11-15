@@ -89,6 +89,7 @@ export type SetBoardProjectResourcesInput = SettingsCommandInput<"board.project.
 export type DismissBoardProjectImportInput = SettingsCommandInput<"board.project.dismiss-import">;
 export type StartBoardStageThreadInput = CommandInput<"board.card.start-stage-thread">;
 export type ApproveBoardPlansInput = CommandInput<"board.plans.approve">;
+export type StartBoardPlanReviewInput = CommandInput<"board.plan-review.start">;
 
 type DispatchTag = typeof BOARD_WS_METHODS.dispatchCommand;
 type CommandEffect = Effect.Effect<
@@ -441,6 +442,19 @@ export const approveBoardPlans: (input: ApproveBoardPlansInput) => CommandEffect
   return yield* dispatch({
     ...input,
     type: "board.plans.approve",
+    commandId: metadata.commandId,
+    createdAt: metadata.createdAt,
+  });
+});
+
+/** Start a card's armed plan review: one turned on after the plan was posted. */
+export const startBoardPlanReview: (input: StartBoardPlanReviewInput) => CommandEffect = Effect.fn(
+  "BoardCommands.startBoardPlanReview",
+)(function* (input) {
+  const metadata = yield* commandMetadata(input);
+  return yield* dispatch({
+    ...input,
+    type: "board.plan-review.start",
     commandId: metadata.commandId,
     createdAt: metadata.createdAt,
   });

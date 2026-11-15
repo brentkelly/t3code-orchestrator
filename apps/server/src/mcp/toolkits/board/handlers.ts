@@ -26,6 +26,7 @@ import {
   resolveBoardCardMergeStrategy,
   resolveBoardStageExecution,
   isBoardTerminalStepStatus,
+  isBoardPlanReviewRunning,
   boardPlanId,
   BoardCardId,
   CommandId,
@@ -68,6 +69,7 @@ import {
   boardCardAncestors,
   sortBoardCardDecisions,
   type BoardCardRecordDecisionsCommand,
+  type BoardPlanReviewRoundStartedCommand,
   boardNewPhaseBrief,
   boardNewPhasePlan,
   type BoardCommand,
@@ -116,6 +118,8 @@ import { applyBoardPlanEdits } from "../../../board/planEdits.ts";
 import {
   boardCompletionReopened,
   planReviewInstructions,
+  planReviewPolicy,
+  planReviewPolicyFingerprint,
   resolveCardPlanReview,
   runningPlanReviewStep,
 } from "../../../board/planReview.ts";
@@ -1044,10 +1048,12 @@ export const boardHandlers = {
     // picks the review up where it was.
     const settings = yield* readBoardSettings;
     const reviewStep = runningPlanReviewStep({ board, card, settings });
-    const planReview =
-      reviewStep === null
-        ? null
-        : planReviewInstructions({ board, card, settings, state: reviewStep });
+    const planReview = (() => {
+      if (reviewStep === null) return null;
+      const review = planReviewInstructions({ board, card, settings, state: reviewStep });
+      if (review === null || reviewStep.planReviewRound === undefined) return review;
+      return { ...review, round: reviewStep.planReviewRound };
+    })();
     // A relayed call hands out paths on the worker, so the
     // card's files go there first — staging at spawn misses later ones.
     const relayed = yield* Effect.serviceOption(BoardRelayInvocation);
@@ -2147,6 +2153,62 @@ export const boardHandlers = {
     return { planId: input.planId, length: edited.body.length };
   }),
 
+  board_plan_review_round: Effect.fn("BoardToolkit.board_plan_review_round")(function* (input) {
+    const deps = yield* boardToolDeps;
+    const board = yield* readBoardState(deps);
+    const card = yield* requireCallerCard(board, deps.scope);
+    const settings = yield* readBoardSettings;
+    if (input.round === undefined && input.finished !== true) {
+      return yield* new BoardToolError({
+        code: "invalid-input",
+        message: "Pass round (the round you are starting) or finished: true.",
+      });
+    }
+    const state = boardCardStepState(board, card.id);
+    const policy = state === null ? null : planReviewPolicy({ board, card, settings, state });
+    // A review already ended (a round past the target) takes the instructed finished: true
+    // as a no-op success rather than refusing it.
+    if (
+      input.finished === true &&
+      state !== null &&
+      policy !== null &&
+      state.planReviewDoneAt !== undefined &&
+      !isBoardTerminalStepStatus(state.status)
+    ) {
+      return {
+        targetRounds: policy.targetRounds,
+        continue: false,
+        unattended: policy.unattended,
+        splitApprovedAfterReview: policy.splitApprovedAfterReview,
+      };
+    }
+    if (state === null || policy === null || !isBoardPlanReviewRunning(state)) {
+      return yield* new BoardToolError({
+        code: "rejected",
+        message:
+          "No plan review is running on your card. Summarise the plan and finish as your step's instructions say.",
+      });
+    }
+    const goOn = input.finished !== true && (input.round ?? 0) <= policy.targetRounds;
+    const command: BoardPlanReviewRoundStartedCommand = {
+      type: "board.plan-review.round-started",
+      commandId: yield* mintCommandId,
+      cardId: card.id,
+      ...(input.round === undefined ? {} : { round: input.round }),
+      ...(input.finished === true ? { finished: true as const } : {}),
+      // This response delivers the policy, so the reactor need not steer it.
+      policySent: planReviewPolicyFingerprint(policy),
+      createdAt: yield* nowIso,
+    };
+    yield* dispatch(deps, command);
+    return {
+      targetRounds: policy.targetRounds,
+      continue: goOn,
+      unattended: policy.unattended,
+      splitApprovedAfterReview: policy.splitApprovedAfterReview,
+    };
+  }),
+
   board_record_decisions: Effect.fn("BoardToolkit.board_record_decisions")(function* (input) {
     const deps = yield* boardToolDeps;
     const board = yield* readBoardState(deps);
@@ -2316,6 +2378,9 @@ export const BoardToolkitHandlersLive = McpToolAccess.toLayer(BoardToolkit, {
   ),
   board_edit_plan: McpToolAccess.writesWithCapability(
     relayable("board_edit_plan", boardHandlers.board_edit_plan),
+  ),
+  board_plan_review_round: McpToolAccess.writesWithCapability(
+    relayable("board_plan_review_round", boardHandlers.board_plan_review_round),
   ),
   board_record_decisions: McpToolAccess.writesWithCapability(
     relayable("board_record_decisions", boardHandlers.board_record_decisions),

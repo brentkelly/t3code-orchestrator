@@ -27,6 +27,7 @@ import * as Duration from "effect/Duration";
 import * as Ref from "effect/Ref";
 import * as TestClock from "effect/testing/TestClock";
 
+import { BoardCommandInvariantError } from "./errors.ts";
 import { ThreadCommandRefusedError, UNKNOWN_THREAD_STATE } from "./ThreadGateway.ts";
 import type {
   BoardThreadState,
@@ -1713,3 +1714,146 @@ it.effect("boot reconcile hands a reopened step its prompt instead of settling i
     );
   }),
 );
+
+// ── Unattended plan review and the Sign-off gate (T3O-104) ─────────────
+
+const unattendedReview = { enabled: true, rounds: 2, unattended: true } as const;
+
+const toolReviewStarted = (state: BoardCardStepState, sequence: number): HarnessEvent =>
+  ({
+    type: "board.plan-review-started",
+    sequence,
+    payload: {
+      cardId: state.cardId,
+      state: { ...state, planReviewStartedAt: NOW, planReviewRounds: 2 },
+    },
+  }) as unknown as HarnessEvent;
+
+/** A card reviewed unattended to completion: started by the tool, then finished. */
+const reviewedUnattended = (h: Harness, id: BoardCardId, card: BoardCard) =>
+  Effect.gen(function* () {
+    yield* h.pumpDomain(cardMoved(card, "sprint", "planning", 1));
+    yield* h.pumpDomain(toolReviewStarted(boardCardStepState(yield* h.board, id)!, 2));
+    yield* h.pumpDomain(stepCompleted(id, "succeeded", 3, PLANNING));
+  });
+
+it.effect("an unattended review with Auto sign-off on approves its single plan", () => {
+  const card = planningCard("reviewed", { planReview: unattendedReview, autoSignOffSetting: true });
+  return withGovernor(
+    {
+      board: { cards: [card], plans: [plan("reviewed", "one", 0)], nextCardNumberByProject: {} },
+      settings,
+    },
+    (h) =>
+      Effect.gen(function* () {
+        const id = BoardCardId.make("reviewed");
+        yield* reviewedUnattended(h, id, card);
+        assert.strictEqual(cardStage(yield* h.board, id), BOARD_SEED_STAGE_IDS.ready);
+      }),
+  );
+});
+
+it.effect("an unattended review's plan waits without sign-off; turning it on approves", () => {
+  const card = planningCard("waiting", { planReview: unattendedReview });
+  return withGovernor(
+    {
+      board: { cards: [card], plans: [plan("waiting", "one", 0)], nextCardNumberByProject: {} },
+      settings,
+    },
+    (h) =>
+      Effect.gen(function* () {
+        const id = BoardCardId.make("waiting");
+        yield* reviewedUnattended(h, id, card);
+        assert.strictEqual(cardStage(yield* h.board, id), BOARD_SEED_STAGE_IDS.planning);
+        assert.ok(
+          autoPlanNotes(yield* h.commands).includes(
+            "Plan review finished. The plan waits for your approval.",
+          ),
+        );
+        yield* setAutomation(h, id, { autoSignOff: true }, 4);
+        assert.strictEqual(cardStage(yield* h.board, id), BOARD_SEED_STAGE_IDS.ready);
+      }),
+  );
+});
+
+it.effect("a refused approval after an unattended review leaves a note on the card", () => {
+  const card = planningCard("refused-review", {
+    planReview: unattendedReview,
+    autoSignOffSetting: true,
+  });
+  return withGovernor(
+    {
+      board: {
+        cards: [card],
+        plans: [plan("refused-review", "one", 0)],
+        nextCardNumberByProject: {},
+      },
+      settings,
+      onDispatch: (command) =>
+        command.type === "board.card.move" && command.cardId === card.id
+          ? (Effect.fail(
+              new BoardCommandInvariantError({
+                commandType: command.type,
+                detail: "Ready is full.",
+              }),
+            ) as unknown as Effect.Effect<void>)
+          : Effect.void,
+    },
+    (h) =>
+      Effect.gen(function* () {
+        const id = BoardCardId.make("refused-review");
+        yield* reviewedUnattended(h, id, card);
+        assert.strictEqual(cardStage(yield* h.board, id), BOARD_SEED_STAGE_IDS.planning);
+        assert.include(
+          autoPlanNotes(yield* h.commands),
+          "Plan review finished, but Auto sign-off could not approve the plan: Ready is full.",
+        );
+      }),
+  );
+});
+
+it.effect("an unattended review never approves a split, even with Auto sign-off on", () => {
+  const card = planningCard("split-review", {
+    planReview: unattendedReview,
+    autoSignOffSetting: true,
+  });
+  return withGovernor(
+    {
+      board: {
+        cards: [card],
+        plans: [plan("split-review", "one", 0), plan("split-review", "two", 1)],
+        nextCardNumberByProject: {},
+      },
+      settings,
+    },
+    (h) =>
+      Effect.gen(function* () {
+        const id = BoardCardId.make("split-review");
+        yield* reviewedUnattended(h, id, card);
+        assert.strictEqual(cardStage(yield* h.board, id), BOARD_SEED_STAGE_IDS.planning);
+      }),
+  );
+});
+
+it.effect("an attended review is never approved by Auto sign-off", () => {
+  const card = planningCard("attended-review", {
+    planReview: { enabled: true, rounds: 2 },
+    autoSignOffSetting: true,
+  });
+  return withGovernor(
+    {
+      board: {
+        cards: [card],
+        plans: [plan("attended-review", "one", 0)],
+        nextCardNumberByProject: {},
+      },
+      settings,
+    },
+    (h) =>
+      Effect.gen(function* () {
+        const id = BoardCardId.make("attended-review");
+        yield* reviewedUnattended(h, id, card);
+        assert.strictEqual(cardStage(yield* h.board, id), BOARD_SEED_STAGE_IDS.planning);
+      }),
+  );
+});

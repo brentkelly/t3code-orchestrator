@@ -197,6 +197,49 @@ const update = (planReview: BoardCardPlanReview | null): BoardCommand => ({
 const types = (events: ReadonlyArray<{ readonly type: string }>) =>
   events.map((event) => event.type);
 
+const succeededCompletion: BoardStepCompletion = {
+  cardId,
+  stepId: "planning",
+  outcome: "succeeded",
+  summary: "Planned.",
+  payload: null,
+  threadId,
+  completedAt: NOW,
+};
+
+const startReview: BoardCommand = {
+  type: "board.plan-review.start",
+  commandId: CommandId.make("cmd-start-review"),
+  cardId,
+  createdAt: LATER,
+};
+
+/** Arms review on the card as `update` would, then reads Start review's decision. */
+const armedThenStarted = (state: BoardCardStepState, rounds = 2) =>
+  Effect.gen(function* () {
+    const model = readModel({ state, completions: [succeededCompletion] });
+    const armed = yield* decide(update({ enabled: true, rounds }), model);
+    assert.deepStrictEqual(types(armed), ["board.card-updated", "board.plan-review-progressed"]);
+    const progressed = armed[1]!;
+    assert.ok(progressed.type === "board.plan-review-progressed");
+    assert.strictEqual(progressed.payload.state.planReviewAwaitingStart, LATER);
+    assert.strictEqual(progressed.payload.state.planReviewStartedAt, undefined);
+    const events = yield* decide(
+      startReview,
+      readModel({
+        card: makeCard({ planReview: { enabled: true, rounds } }),
+        state: { ...state, planReviewAwaitingStart: LATER },
+        completions: [succeededCompletion],
+      }),
+    );
+    assert.deepStrictEqual(types(events), ["board.plan-review-started"]);
+    const startedEvent = events[0]!;
+    assert.ok(startedEvent.type === "board.plan-review-started");
+    assert.strictEqual(startedEvent.payload.turnedOnLate, true);
+    assert.strictEqual(startedEvent.payload.state.planReviewAwaitingStart, undefined);
+    return startedEvent.payload.state;
+  });
+
 it.effect("a proposal with review on starts the review on the live planning step", () =>
   Effect.gen(function* () {
     const events = yield* decide(propose(ON), readModel({ plans: [] }));
@@ -313,28 +356,40 @@ it.effect("completing after the review records how it finished", () =>
     const reported = yield* decide(
       complete({
         planReview: ON,
-        payload: JSON.stringify({ planReview: { roundsRun: 2, converged: true } }),
+        payload: JSON.stringify({ planReview: { roundsRun: 2, converged: true, findings: 4 } }),
       }),
       readModel({ state: stepState(started) }),
     );
-    assert.deepStrictEqual(types(reported), ["board.card-step-completed"]);
-    const event = reported[0]!;
+    // The succeeded completion also ends the review.
+    assert.deepStrictEqual(types(reported), [
+      "board.plan-review-progressed",
+      "board.card-step-completed",
+    ]);
+    const done = reported[0]!;
+    assert.ok(done.type === "board.plan-review-progressed");
+    assert.strictEqual(done.payload.state.planReviewDoneAt, LATER);
+    const event = reported[1]!;
     assert.ok(event.type === "board.card-step-completed");
     assert.deepStrictEqual(event.payload.planReviewFinished, {
       rounds: 3,
       roundsRun: 2,
       converged: true,
+      findings: 4,
     });
 
-    const silent = (yield* decide(
+    // A review the agent already said it finished is not ended twice.
+    const silent = yield* decide(
       complete({ planReview: ON }),
-      readModel({ state: stepState(started) }),
-    ))[0]!;
-    assert.ok(silent.type === "board.card-step-completed");
-    assert.deepStrictEqual(silent.payload.planReviewFinished, {
+      readModel({ state: stepState({ ...started, planReviewDoneAt: NOW }) }),
+    );
+    assert.deepStrictEqual(types(silent), ["board.card-step-completed"]);
+    const silentEvent = silent[0]!;
+    assert.ok(silentEvent.type === "board.card-step-completed");
+    assert.deepStrictEqual(silentEvent.payload.planReviewFinished, {
       rounds: 3,
       roundsRun: null,
       converged: null,
+      findings: null,
     });
 
     // No review ran, so there is nothing to report.
@@ -375,6 +430,7 @@ it.effect("a rounds change while a review runs is recorded, and turning it off s
     assert.deepStrictEqual(change.payload, {
       cardId,
       state: stepState({ ...started, planReviewRounds: 5, updatedAt: LATER }),
+      previousRounds: 3,
     });
     const card = changed[0]!;
     assert.ok(card.type === "board.card-updated");
@@ -395,6 +451,16 @@ it.effect("a rounds change while a review runs is recorded, and turning it off s
 
     // The same rounds are fine.
     assert.deepStrictEqual(types(yield* decide(update({ enabled: true, rounds: 3 }), running)), [
+      "board.card-updated",
+    ]);
+
+    // A done review's target is read by nothing: the change stays on the card alone, so the
+    // policy steer never answers the sign-off wait over it.
+    const done = readModel({
+      card: makeCard({ planReview: { enabled: true, rounds: 3 } }),
+      state: stepState({ ...started, planReviewDoneAt: NOW }),
+    });
+    assert.deepStrictEqual(types(yield* decide(update({ enabled: true, rounds: 5 }), done)), [
       "board.card-updated",
     ]);
 
@@ -474,19 +540,54 @@ it.effect("a new stage entry starts with no review, so re-entering Planning revi
   }),
 );
 
-it.effect("turning review on after the plan was posted starts it on the live step", () =>
+it.effect("turning review on after the plan was posted arms it; Start review starts it", () =>
   Effect.gen(function* () {
-    const events = yield* decide(update({ enabled: true, rounds: 2 }), readModel({}));
-    assert.deepStrictEqual(types(events), ["board.card-updated", "board.plan-review-started"]);
-    const startedEvent = events[1]!;
-    assert.ok(startedEvent.type === "board.plan-review-started");
-    assert.strictEqual(startedEvent.payload.turnedOnLate, true);
-    assert.strictEqual(startedEvent.payload.state.planReviewStartedAt, LATER);
-    assert.strictEqual(startedEvent.payload.state.planReviewRounds, 2);
+    const state = yield* armedThenStarted(stepState());
+    assert.strictEqual(state.planReviewStartedAt, LATER);
+    assert.strictEqual(state.planReviewRounds, 2);
   }),
 );
 
-it.effect("turning review on starts nothing with no plan posted, or on a card already on", () =>
+it.effect("an armed review waits: neither a proposal nor a completion starts it", () =>
+  Effect.gen(function* () {
+    const armed = stepState({ planReviewAwaitingStart: NOW });
+    assert.deepStrictEqual(types(yield* decide(propose(ON), readModel({ state: armed }))), [
+      "board.plans-proposed",
+    ]);
+    assert.deepStrictEqual(
+      types(yield* decide(complete({ planReview: ON }), readModel({ state: armed }))),
+      ["board.card-step-completed"],
+    );
+  }),
+);
+
+it.effect("turning an armed review off disarms it, and Start review is then refused", () =>
+  Effect.gen(function* () {
+    const armed = stepState({ planReviewAwaitingStart: NOW });
+    const events = yield* decide(
+      update({ enabled: false, rounds: 2 }),
+      readModel({ card: makeCard({ planReview: { enabled: true, rounds: 2 } }), state: armed }),
+    );
+    assert.deepStrictEqual(types(events), ["board.card-updated", "board.plan-review-progressed"]);
+    const progressed = events[1]!;
+    assert.ok(progressed.type === "board.plan-review-progressed");
+    assert.strictEqual(progressed.payload.state.planReviewAwaitingStart, undefined);
+    // A reset to the Settings default disarms it too, or Start review would be stuck refused.
+    const reset = yield* decide(
+      update(null),
+      readModel({ card: makeCard({ planReview: { enabled: true, rounds: 2 } }), state: armed }),
+    );
+    assert.deepStrictEqual(types(reset), ["board.card-updated", "board.plan-review-progressed"]);
+    // Nothing armed, or the card's own setting is off: refused.
+    yield* decideFail(startReview, readModel({ card: makeCard({ planReview: ON }) }));
+    yield* decideFail(
+      startReview,
+      readModel({ card: makeCard({ planReview: { enabled: false, rounds: 2 } }), state: armed }),
+    );
+  }),
+);
+
+it.effect("turning review on arms nothing with no plan posted, or on a card already on", () =>
   Effect.gen(function* () {
     assert.deepStrictEqual(
       types(yield* decide(update({ enabled: true, rounds: 2 }), readModel({ plans: [] }))),
@@ -510,31 +611,13 @@ it.effect("turning review on starts nothing with no plan posted, or on a card al
   }),
 );
 
-const succeededCompletion: BoardStepCompletion = {
-  cardId,
-  stepId: "planning",
-  outcome: "succeeded",
-  summary: "Planned.",
-  payload: null,
-  threadId,
-  completedAt: NOW,
-};
-
-it.effect("turned on after planning finished, the settled step reopens with the review", () =>
+it.effect("started after planning finished, the settled step reopens with the review", () =>
   Effect.gen(function* () {
-    const events = yield* decide(
-      update({ enabled: true, rounds: 2 }),
-      readModel({
-        state: stepState({ status: "succeeded", stallCount: 2, lastError: "old" }),
-        completions: [succeededCompletion],
-      }),
+    const started = yield* armedThenStarted(
+      stepState({ status: "succeeded", stallCount: 2, lastError: "old" }),
     );
-    assert.deepStrictEqual(types(events), ["board.card-updated", "board.plan-review-started"]);
-    const startedEvent = events[1]!;
-    assert.ok(startedEvent.type === "board.plan-review-started");
-    assert.strictEqual(startedEvent.payload.turnedOnLate, true);
     assert.deepStrictEqual(
-      startedEvent.payload.state,
+      started,
       stepState({
         status: "running",
         stallCount: 0,
@@ -578,21 +661,16 @@ it.effect("a late turn-on reopens only a succeeded plan step on a card still in 
   }),
 );
 
-it.effect("turned on while the planning step is paused, the step resumes with the review", () =>
+it.effect("started while the planning step is paused, the step resumes with the review", () =>
   Effect.gen(function* () {
-    const events = yield* decide(
-      update({ enabled: true, rounds: 2 }),
-      readModel({ state: stepState({ status: "paused", stallCount: 1, retryAt: LATER }) }),
+    const started = yield* armedThenStarted(
+      stepState({ status: "paused", stallCount: 1, retryAt: LATER }),
     );
-    assert.deepStrictEqual(types(events), ["board.card-updated", "board.plan-review-started"]);
-    const startedEvent = events[1]!;
-    assert.ok(startedEvent.type === "board.plan-review-started");
-    assert.strictEqual(startedEvent.payload.turnedOnLate, true);
-    assert.strictEqual(startedEvent.payload.state.status, "running");
-    assert.strictEqual(startedEvent.payload.state.stallCount, 0);
-    assert.strictEqual(startedEvent.payload.state.retryAt, null);
-    assert.strictEqual(startedEvent.payload.state.lastNudgeAt, LATER);
-    assert.strictEqual(startedEvent.payload.state.planReviewRounds, 2);
+    assert.strictEqual(started.status, "running");
+    assert.strictEqual(started.stallCount, 0);
+    assert.strictEqual(started.retryAt, null);
+    assert.strictEqual(started.lastNudgeAt, LATER);
+    assert.strictEqual(started.planReviewRounds, 2);
   }),
 );
 
@@ -607,14 +685,18 @@ it.effect("the reopened review's completion replaces the pinned one, then pins a
       }),
       readModel({ state: reopened, completions: [earlier] }),
     );
-    assert.deepStrictEqual(types(events), ["board.card-step-completed"]);
-    const event = events[0]!;
+    assert.deepStrictEqual(types(events), [
+      "board.plan-review-progressed",
+      "board.card-step-completed",
+    ]);
+    const event = events[1]!;
     assert.ok(event.type === "board.card-step-completed");
     assert.strictEqual(event.payload.completion.completedAt, LATER);
     assert.deepStrictEqual(event.payload.planReviewFinished, {
       rounds: 2,
       roundsRun: 2,
       converged: false,
+      findings: null,
     });
 
     // A completion recorded after the review started is pinned as ever.
@@ -760,5 +842,187 @@ it.effect("after an Auto-plan reopen the next completion supersedes; without one
     ))[0]!;
     assert.ok(replay.type === "board.card-step-completed");
     assert.strictEqual(replay.payload.completion.completedAt, earlier.completedAt);
+  }),
+);
+
+const roundReport = (report: { readonly round: number } | { readonly finished: true }) =>
+  ({
+    type: "board.plan-review.round-started",
+    commandId: CommandId.make("cmd-round"),
+    cardId,
+    ...report,
+    createdAt: LATER,
+  }) satisfies BoardCommand;
+
+it.effect("a round report records the round; one past the target ends the review", () =>
+  Effect.gen(function* () {
+    const running = readModel({ state: stepState(started) });
+    const first = (yield* decide(roundReport({ round: 1 }), running))[0]!;
+    assert.ok(first.type === "board.plan-review-progressed");
+    assert.strictEqual(first.payload.state.planReviewRound, 1);
+    assert.strictEqual(first.payload.state.planReviewDoneAt, undefined);
+
+    // The human lowered the target to 2 while round 2 ran: round 3 ends it.
+    const lowered = readModel({
+      state: stepState({ ...started, planReviewRounds: 2, planReviewRound: 2 }),
+    });
+    const past = (yield* decide(roundReport({ round: 3 }), lowered))[0]!;
+    assert.ok(past.type === "board.plan-review-progressed");
+    assert.strictEqual(past.payload.state.planReviewDoneAt, LATER);
+
+    const finished = (yield* decide(roundReport({ finished: true }), running))[0]!;
+    assert.ok(finished.type === "board.plan-review-progressed");
+    assert.strictEqual(finished.payload.state.planReviewDoneAt, LATER);
+  }),
+);
+
+it.effect("a round report is refused when no review is running", () =>
+  Effect.gen(function* () {
+    // Never started, already done, or the step settled.
+    yield* decideFail(roundReport({ round: 1 }), readModel({}));
+    yield* decideFail(
+      roundReport({ round: 2 }),
+      readModel({ state: stepState({ ...started, planReviewDoneAt: NOW }) }),
+    );
+    yield* decideFail(
+      roundReport({ round: 1 }),
+      readModel({ state: stepState({ ...started, status: "succeeded" }) }),
+    );
+  }),
+);
+
+it.effect("starting a review clears the last one's round, end and delivered policy", () =>
+  Effect.gen(function* () {
+    const events = yield* decide(
+      propose(ON),
+      readModel({
+        plans: [],
+        state: stepState({
+          planReviewRound: 2,
+          planReviewDoneAt: NOW,
+          planReviewPolicySent: "rounds=2;unattended=false;split=false",
+        }),
+      }),
+    );
+    const startedEvent = events[1]!;
+    assert.ok(startedEvent.type === "board.plan-review-started");
+    assert.strictEqual(startedEvent.payload.state.planReviewRound, undefined);
+    assert.strictEqual(startedEvent.payload.state.planReviewDoneAt, undefined);
+    assert.strictEqual(startedEvent.payload.state.planReviewPolicySent, undefined);
+  }),
+);
+
+it.effect("plan edits during a review round are stamped with that round", () =>
+  Effect.gen(function* () {
+    const inRound = stepState({ ...started, planReviewRound: 2 });
+    const write = (yield* decide(
+      {
+        type: "board.plan.write",
+        commandId: CommandId.make("cmd-write"),
+        cardId,
+        planId: plan.planId,
+        body: "# Revised",
+        createdAt: LATER,
+      },
+      readModel({ state: inRound }),
+    ))[0]!;
+    assert.ok(write.type === "board.plan-written");
+    assert.strictEqual(write.payload.plan.revisedInRound, 2);
+
+    // Outside a running review, nothing is stamped.
+    const outside = (yield* decide(
+      {
+        type: "board.plan.write",
+        commandId: CommandId.make("cmd-write"),
+        cardId,
+        planId: plan.planId,
+        body: "# Revised",
+        createdAt: LATER,
+      },
+      readModel({}),
+    ))[0]!;
+    assert.ok(outside.type === "board.plan-written");
+    assert.strictEqual(outside.payload.plan.revisedInRound, undefined);
+  }),
+);
+
+it.effect("a re-proposal stamps only the plans it changed and keeps the others' stamps", () =>
+  Effect.gen(function* () {
+    const second: BoardPlan = {
+      ...plan,
+      planId: boardPlanId(cardId, "second"),
+      title: "Second",
+      summary: "Another plan",
+      ordinal: 1,
+      revisedInRound: 1,
+    };
+    const command: BoardCommand = {
+      type: "board.plans.propose",
+      commandId: CommandId.make("cmd-propose"),
+      cardId,
+      plans: [
+        { key: "main", title: "Main", summary: "The plan", dependsOn: [], body: "# Changed" },
+        { key: "second", title: "Second", summary: "Another plan", dependsOn: [], body: "# Two" },
+      ],
+      splitRationale: "Two independent halves that each need their own branch and review.",
+      createdAt: LATER,
+    };
+    const events = yield* decideBoardCommandOnModel({
+      command,
+      readModel: readModel({
+        state: stepState({ ...started, planReviewRound: 3 }),
+        plans: [plan, second],
+      }),
+      context: {
+        planBodies: new Map([
+          [String(plan.planId), "# Plan"],
+          [String(second.planId), "# Two"],
+        ]),
+      },
+    }).pipe(
+      Effect.map(boardDecidedEvents),
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+    );
+    const proposed = events[0]!;
+    assert.ok(proposed.type === "board.plans-proposed");
+    assert.deepStrictEqual(
+      proposed.payload.plans.map((entry) => entry.revisedInRound),
+      [3, 1],
+    );
+  }),
+);
+
+it.effect("a created card carries the plan review the server stamped; a heading never does", () =>
+  Effect.gen(function* () {
+    const stamped = { enabled: true, rounds: 3, unattended: false, source: "default" as const };
+    const create = (heading: boolean): BoardCommand => ({
+      type: "board.card.create",
+      commandId: CommandId.make("cmd-create"),
+      cardId: BoardCardId.make(heading ? "card-heading" : "card-new"),
+      projectId,
+      title: "New",
+      ...(heading ? { heading: true } : {}),
+      planReview: stamped,
+      createdAt: LATER,
+    });
+    const model = {
+      ...readModel({}),
+      projects: [{ id: projectId, title: "Project", deletedAt: null }],
+    };
+    const decideWithProjects = (command: BoardCommand) =>
+      decideBoardCommandOnModel({ command, readModel: model }).pipe(
+        Effect.map(boardDecidedEvents),
+        Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+      );
+    const card = (yield* decideWithProjects(create(false))).find(
+      (event) => event.type === "board.card-created",
+    );
+    assert.ok(card?.type === "board.card-created");
+    assert.deepStrictEqual(card.payload.planReview, stamped);
+    const heading = (yield* decideWithProjects(create(true))).find(
+      (event) => event.type === "board.card-created",
+    );
+    assert.ok(heading?.type === "board.card-created");
+    assert.strictEqual(heading.payload.planReview, undefined);
   }),
 );

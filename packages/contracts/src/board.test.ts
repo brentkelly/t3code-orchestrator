@@ -2910,6 +2910,9 @@ describe("automation (T3O-38)", () => {
       const planOff = resolve({ ...child, autoPlanSetting: false }, [outer, inner]);
       expect(planOff.autoSignOff.value).toBe(true);
       expect(boardPlanAutomatedBy(planOff)).toBe(null);
+      // An unattended plan review in Planning automates it too; Auto-plan still names itself.
+      expect(boardPlanAutomatedBy(planOff, { unattendedInPlanning: true })).toBe("review");
+      expect(boardPlanAutomatedBy(inherited, { unattendedInPlanning: true })).toBe("auto-plan");
       expect(inherited.autoPlan.inheritedFrom).toEqual({ id: "inner", key: "INNER" });
       expect(inherited.autoMerge).toMatchObject({ value: true, source: "inherited" });
       const overridden = resolve({ ...child, autoPlanSetting: false, autoMergeSetting: false }, [

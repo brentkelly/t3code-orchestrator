@@ -78,7 +78,11 @@ import { boardScheduleKind } from "./boardSchedule";
 import { boardQueueInfo } from "./boardQueueInfo";
 import { BoardCardCapacityPanelHost } from "./BoardCardCapacityPanel";
 import { boardCardBlocksHint, boardCardPriorityStartedNote } from "./boardCardPriority";
-import { boardCardPlanReviewView, boardPlanStageExecution } from "./boardCardPlanReview";
+import {
+  boardCardPlanReviewView,
+  boardPlanReviewFinishedFromActivity,
+  boardPlanStageExecution,
+} from "./boardCardPlanReview";
 import { projectIconColorOf } from "./projectAccent";
 import { useEnvironment } from "../state/environments";
 import { deriveProviderInstanceEntries } from "../providerInstances";
@@ -113,7 +117,11 @@ import {
 import { BoardPlanningExitConfirmDialog } from "./BoardPlanningExitConfirmDialog";
 import { BoardArchiveGroupDialog } from "./BoardGroupDialogs";
 import { BoardCardAutomation } from "./BoardCardAutomation";
-import { boardCardPlanningFinishedFromDetail } from "./boardCardAutomation";
+import {
+  boardAutomationSourceTag,
+  boardCardPlanningFinishedFromDetail,
+  resolveBoardShellAutomation,
+} from "./boardCardAutomation";
 import {
   boardGroupNote,
   boardShellGroup,
@@ -224,6 +232,7 @@ export function BoardCardDetail({
   const unarchiveCard = useAtomCommand(boardEnvironment.unarchiveCard);
   const deleteCard = useAtomCommand(boardEnvironment.deleteCard);
   const approvePlans = useAtomCommand(boardEnvironment.approvePlans);
+  const startPlanReview = useAtomCommand(boardEnvironment.startPlanReview);
   const linkThread = useAtomCommand(boardEnvironment.linkThread);
   const unlinkThread = useAtomCommand(boardEnvironment.unlinkThread);
   // Moving the card to another project. Its own command rather than a
@@ -1137,6 +1146,9 @@ export function BoardCardDetail({
         environmentId={environmentId}
         group={automationGroup}
         inPlanning={boardStageWithRole(stageState, "plan")?.stageId === card.stage}
+        planReviewUnattended={
+          card.planReview?.enabled === true && card.planReview.unattended === true
+        }
         planningFinished={boardCardPlanningFinishedFromDetail({
           stages: stageState,
           stage: card.stage,
@@ -1257,10 +1269,30 @@ export function BoardCardDetail({
         stages,
         planStageExecution: boardPlanStageExecution(boardSettings, stages, projectExecutionConfig),
         planReviewStarted: detail.planReviewStarted,
+        awaitingStart: detail.planReviewAwaitingStart !== undefined,
+        hasPlan: detail.plans.length > 0,
+        finished: boardPlanReviewFinishedFromActivity(detail.activity),
+        projectTitle: projectName,
+        signOff: (() => {
+          const signOff = resolveBoardShellAutomation({
+            shells: groupShells,
+            stages: stageState,
+            card,
+            boardWideAutoMerge,
+          }).autoSignOff;
+          return { on: signOff.value, tag: boardAutomationSourceTag(signOff) };
+        })(),
       })}
       onSetPlanReview={(planReview) =>
         runCommand(updateCard({ environmentId, input: { cardId: card.id, planReview } }))
       }
+      onStartPlanReview={() =>
+        runCommand(startPlanReview({ environmentId, input: { cardId: card.id } }))
+      }
+      planPostedAt={detail.plans.reduce<string | null>(
+        (latest, plan) => (latest === null || plan.updatedAt > latest ? plan.updatedAt : latest),
+        null,
+      )}
       stages={stages}
       canApproveSplit={canApproveSplit}
       splitGate={splitGate}

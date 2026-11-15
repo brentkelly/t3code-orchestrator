@@ -211,6 +211,31 @@ export function boardProjectOverrideEdit(
   };
 }
 
+/** The new-card plan review keys a project may override on its planning stage. */
+export type BoardPlanReviewOverrideKey = "enabled" | "rounds" | "unattended";
+
+/** One new-card plan review override set (a value) or reset (undefined), keeping the other
+    `planReview` keys; an emptied level drops out, so a full reset leaves no override. */
+export function boardProjectPlanReviewOverrideEdit(
+  full: BoardProjectStageConfig | null,
+  stageId: string,
+  key: BoardPlanReviewOverrideKey,
+  value: boolean | number | undefined,
+): ReturnType<typeof boardProjectOverrideEdit> {
+  const current = full?.overrides[stageId]?.planReview;
+  const newCards: Record<string, unknown> = { ...current?.newCards };
+  if (value === undefined) delete newCards[key];
+  else newCards[key] = value;
+  const { newCards: _newCards, ...rest } = current ?? {};
+  const planReview = Object.keys(newCards).length === 0 ? rest : { ...rest, newCards };
+  return boardProjectOverrideEdit(
+    full,
+    stageId,
+    "planReview",
+    Object.keys(planReview).length === 0 ? undefined : planReview,
+  );
+}
+
 /** Whether a stage is CI, which the CI tab switches. */
 export const isBoardCiStage = (stage: Pick<BoardStageDefinition, "stageId">) =>
   stage.stageId === BOARD_SEED_STAGE_IDS.ci;

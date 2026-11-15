@@ -4,6 +4,7 @@
  * Callers resolve their own project, labels and dependencies first.
  */
 import {
+  EMPTY_BOARD_STATE,
   assignBoardKeyPrefix,
   type BoardActivityActor,
   type BoardCardCreateCommand,
@@ -14,6 +15,7 @@ import * as Effect from "effect/Effect";
 import * as ServerSettings from "../serverSettings.ts";
 import { stampBoardActivityActor } from "./activityActors.ts";
 import type { BoardEngineShape } from "./BoardEngine.ts";
+import { withPlanReviewCreationDefaults } from "./planReview.ts";
 
 /**
  * The key prefix a new card should carry. A project with no stored prefix is assigned one and it
@@ -56,11 +58,17 @@ export const createBoardCard = Effect.fn("BoardCards.create")(function* (input: 
   readonly projectTitle: string;
   readonly create: BoardCardCreateInput;
 }) {
-  const command: BoardCardCreateCommand = {
-    type: "board.card.create",
-    ...input.create,
-    keyPrefix: yield* resolveBoardCardKeyPrefix(input.create.projectId, input.projectTitle),
-  };
+  const settings = yield* ServerSettings.ServerSettingsService;
+  const model = yield* input.engine.getReadModel;
+  const command: BoardCardCreateCommand = withPlanReviewCreationDefaults(
+    {
+      type: "board.card.create",
+      ...input.create,
+      keyPrefix: yield* resolveBoardCardKeyPrefix(input.create.projectId, input.projectTitle),
+    },
+    model.board ?? EMPTY_BOARD_STATE,
+    (yield* settings.getSettings).board,
+  );
   stampBoardActivityActor(command.commandId, input.actor);
   return yield* input.engine.dispatch(command);
 });

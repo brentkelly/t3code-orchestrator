@@ -43,9 +43,9 @@ import {
   boardPlanAutomatedBy,
   boardAutoPlanOffInstruction,
   BOARD_PLAN_REVIEW_LATE_START_LEAD,
-  boardPlanReviewRoundsChangedLead,
   BOARD_PLAN_REVIEW_STOP_INSTRUCTION,
   isBoardCardAutoPlanPending,
+  isBoardCardReviewSignOffPending,
   boardCardAutoBuildDue,
   boardStageBeforeBuild,
   boardCardPlanningFinished,
@@ -293,6 +293,9 @@ import {
   boardCompletionReopened,
   boardCompletionReopenedByAutoPlan,
   planReviewInstructions,
+  planReviewPolicy,
+  planReviewPolicyFingerprint,
+  planReviewPolicyMessage,
   runningPlanReviewStep,
 } from "./planReview.ts";
 import { keepsPlanningThreadOnExit, keptPlanningThreadId } from "./planningThreadKeep.ts";
@@ -1189,12 +1192,22 @@ const make = Effect.gen(function* () {
     }
     if (
       role === "plan" &&
-      (isBoardCardAutoPlanPending(card) || automationIn(board, card).autoPlan.value)
+      (isBoardCardAutoPlanPending(card) ||
+        automationIn(board, card).autoPlan.value ||
+        reviewRunsUnattended(card, boardCardStepState(board, card.id)))
     ) {
       return false;
     }
     return exec.humanInLoop;
   };
+
+  /** A started plan review on the card's plan step runs unattended: nobody answers it. */
+  const reviewRunsUnattended = (card: BoardCard, state: BoardCardStepState | null) =>
+    state !== null &&
+    state.stepId === card.stage &&
+    state.planReviewStartedAt !== undefined &&
+    card.planReview?.enabled === true &&
+    card.planReview.unattended === true;
 
   /** Whether the card already has a live (non-tombstoned) linked thread for a
       stage's step: auto-kickoff is suppressed so a manually adopted thread
@@ -2849,33 +2862,126 @@ const make = Effect.gen(function* () {
     },
   );
 
-  /** A human changed a running plan review's rounds: tell the
-      planning thread the new total. A paused step is not told, as with a
-      stop; it reads the new count when it resumes. */
-  const handlePlanReviewRoundsChanged = Effect.fn("board-supervisor-handlePlanReviewRoundsChanged")(
-    function* (event: Extract<BoardEvent, { type: "board.plan-review-rounds-changed" }>) {
-      const board = yield* readBoard;
-      const card = board.cards.find((candidate) => candidate.id === event.payload.cardId);
-      const state = boardCardStepState(board, event.payload.cardId);
-      if (
-        card === undefined ||
-        state === null ||
-        state.stepId !== event.payload.state.stepId ||
-        state.threadId === null ||
-        state.status === "paused" ||
-        isBoardTerminalStepStatus(state.status)
-      ) {
-        return;
-      }
-      const review = yield* runningPlanReviewFor(card, state);
-      if (review === null) return;
-      yield* sendTurn({
-        threadId: state.threadId,
-        text: `${boardPlanReviewRoundsChangedLead(review.rounds)}\n\n${review.instructions}`,
-        runtimeMode: state.runtimeMode,
+  /** The review policy owed to a card's planning thread: it changed since it was last
+      delivered. Null when nothing is owed, or no review has started on a live plan step. */
+  const owedPlanReviewPolicy = Effect.fnUntraced(function* (cardId: BoardCardId) {
+    const board = yield* readBoard;
+    const settings = yield* boardSettings;
+    const card = board.cards.find((candidate) => candidate.id === cardId);
+    const state = boardCardStepState(board, cardId);
+    if (card === undefined || state === null || state.threadId === null) return null;
+    if (state.status !== "running" && state.status !== "awaiting-input") return null;
+    if (runningPlanReviewStep({ board, card, settings }) === null) return null;
+    const policy = planReviewPolicy({ board, card, settings, state });
+    if (policy === null) return null;
+    const fingerprint = planReviewPolicyFingerprint(policy);
+    if (fingerprint === state.planReviewPolicySent) return null;
+    return { card, state, threadId: state.threadId, policy, fingerprint };
+  });
+
+  const recordPlanReviewPolicySent = Effect.fn("board-supervisor-recordPlanReviewPolicySent")(
+    function* (state: BoardCardStepState, fingerprint: string) {
+      return yield* dispatchOptional({
+        type: "board.plan-review.policy-sent",
+        commandId: yield* commandId("plan-review-policy-sent"),
+        cardId: state.cardId,
+        stepId: state.stepId,
+        policySent: fingerprint,
+        createdAt: yield* nowIso,
       });
     },
   );
+
+  /**
+   * Deliver a changed review policy (target, unattended) to the planning thread once, from the
+   * stored fingerprint, so a change made mid-turn waits for the turn end and survives a restart.
+   * Never over a question about a finding, unless the human just handed the review over to run
+   * unattended; the end-of-review sign-off wait may be answered. True when it went out.
+   */
+  const steerPlanReviewPolicy = Effect.fn("board-supervisor-steerPlanReviewPolicy")(function* (
+    cardId: BoardCardId,
+    options?: { readonly idleOnly?: boolean },
+  ) {
+    const owed = yield* owedPlanReviewPolicy(cardId);
+    if (owed === null) return false;
+    const shell = yield* liveThread(owed.threadId).pipe(Effect.orElseSucceed(() => undefined));
+    const text = planReviewPolicyMessage(owed.policy, owed.state.planReviewPolicySent);
+    if (owed.state.status === "awaiting-input" || shell?.awaitingUserInput === true) {
+      const handedOver =
+        owed.policy.unattended &&
+        !(owed.state.planReviewPolicySent ?? "").includes("unattended=true");
+      if (owed.state.planReviewDoneAt === undefined && !handedOver) return false;
+      const answered = yield* threads
+        .answerPendingInput({
+          commandId: yield* commandId("plan-review-policy-answer"),
+          threadId: owed.threadId,
+          text,
+        })
+        .pipe(
+          Effect.tapError((error) =>
+            Effect.logWarning("board supervisor: answerPendingInput failed", error),
+          ),
+          Effect.orElseSucceed(() => false),
+        );
+      // A step parked by a prose turn end has no request to answer: it gets a turn instead.
+      const delivered =
+        answered ||
+        (shell?.awaitingUserInput !== true &&
+          (yield* optional(
+            "thread.send",
+            threads.send({
+              commandId: yield* commandId("plan-review-policy"),
+              threadId: owed.threadId,
+              text,
+              attachments: [],
+              runtimeMode: owed.state.runtimeMode,
+              interactionMode: "default",
+            }),
+          )));
+      if (!delivered) return false;
+      yield* recordPlanReviewPolicySent(owed.state, owed.fingerprint);
+      if (owed.state.status === "awaiting-input") yield* resumeParkedStep(owed.threadId);
+      return true;
+    }
+    if (owed.state.status !== "running") return false;
+    if (options?.idleOnly === true && (shell === undefined || shell.activeTurnRef != null)) {
+      return false;
+    }
+    // Stamped only once the send lands, so a failed send stays owed for the next turn end.
+    const sent = yield* optional(
+      "thread.send",
+      threads.send({
+        commandId: yield* commandId("plan-review-policy"),
+        threadId: owed.threadId,
+        text,
+        attachments: [],
+        runtimeMode: owed.state.runtimeMode,
+        interactionMode: "default",
+      }),
+    );
+    if (!sent) return false;
+    yield* recordPlanReviewPolicySent(owed.state, owed.fingerprint);
+    return true;
+  });
+
+  /** A review started: its instructions (tool result or late-start turn) carry the policy, so
+      record it as delivered, and an unattended review stops waiting on the human. */
+  const handlePlanReviewStarted = Effect.fn("board-supervisor-handlePlanReviewStarted")(function* (
+    event: Extract<BoardEvent, { type: "board.plan-review-started" }>,
+  ) {
+    const board = yield* readBoard;
+    const settings = yield* boardSettings;
+    const card = board.cards.find((candidate) => candidate.id === event.payload.cardId);
+    const state = boardCardStepState(board, event.payload.cardId);
+    if (card !== undefined && state !== null && state.stepId === event.payload.state.stepId) {
+      const policy = planReviewPolicy({ board, card, settings, state });
+      if (policy !== null && state.planReviewPolicySent === undefined) {
+        yield* recordPlanReviewPolicySent(state, planReviewPolicyFingerprint(policy));
+      }
+      yield* reconcileStanceOverride(card, state);
+    }
+    yield* handlePlanReviewStartedLate(event);
+  });
 
   /** Whether the Code review stage's open-as-draft setting is on. */
   const draftPullRequestsOn = Effect.fnUntraced(function* (card: BoardCard) {
@@ -8432,6 +8538,7 @@ const make = Effect.gen(function* () {
       // it is already awaiting-input.
       if (found.state.status === "running") {
         if (yield* answerReopenedQuestion(found.card, found.state)) return;
+        if (yield* steerPlanReviewPolicy(found.card.id)) return;
         yield* parkStepForInput({ card: found.card, state: found.state, reason: "question" });
       }
       return;
@@ -8466,6 +8573,7 @@ const make = Effect.gen(function* () {
       return;
     }
     if (yield* deliverReopenedAutoPlan(found.card, found.state)) return;
+    if (yield* steerPlanReviewPolicy(found.card.id)) return;
     // The one free turn-ending a human's turn bought: spent here only, since the timeout sweep also
     // reaches `recoverStep` and must still catch a hung agent. One ending, then supervision
     // resumes; an open-ended suppression could never be cleared.
@@ -8871,10 +8979,17 @@ const make = Effect.gen(function* () {
    */
   const approvePlannedCard = Effect.fn("board-supervisor-approvePlannedCard")(function* (
     card: BoardCard,
+    /** What automated the planning: Auto-plan, or an unattended plan review. */
+    by: "auto-plan" | "review" = "auto-plan",
   ) {
     const board = yield* readBoard;
     const resolved = automationIn(board, card);
     const plans = boardCardPlans(board, card.id);
+    // Callers pass "review" only for a single waiting plan (`isBoardCardReviewSignOffPending`).
+    if (by === "review" && !resolved.autoSignOff.value) {
+      yield* autoPlanNote(card.id, "Plan review finished. The plan waits for your approval.");
+      return;
+    }
     if (plans.length === 0) {
       yield* endAutoPlan(
         card.id,
@@ -8905,7 +9020,13 @@ const make = Effect.gen(function* () {
       createdAt: yield* nowIso,
     });
     if (toReady !== null) {
-      yield* endAutoPlan(card.id, `Auto-plan could not approve the plan: ${toReady}`);
+      // A review-driven card has no auto-plan run to end, so the note is written directly.
+      yield* by === "review"
+        ? autoPlanNote(
+            card.id,
+            `Plan review finished, but Auto sign-off could not approve the plan: ${toReady}`,
+          )
+        : endAutoPlan(card.id, `Auto-plan could not approve the plan: ${toReady}`);
       return;
     }
     const buildStage = boardStageWithRole(board, "build");
@@ -9216,6 +9337,16 @@ const make = Effect.gen(function* () {
           yield* stopAutoPlanRun(card);
           return "stopped" as const;
         }
+        // Auto sign-off turned on for a finished unattended review whose single plan waits.
+        if (
+          !pending &&
+          resolved.autoSignOff.value &&
+          isBoardCardReviewSignOffPending(board, card)
+        ) {
+          yield* approvePlannedCard(card, "review");
+          const after = yield* readCard(card.id);
+          return after !== null && after.stage !== card.stage ? ("approved" as const) : null;
+        }
         // Auto sign-off turned on for a finished run whose single plan waits for approval.
         if (pending && finished && resolved.autoSignOff.value) {
           if (
@@ -9473,8 +9604,12 @@ const make = Effect.gen(function* () {
         // not move it.
         if (stageRole === "plan") {
           const planned = yield* readCard(card.id);
-          if (planned !== null && isBoardCardAutoPlanPending(planned)) {
-            yield* approvePlannedCard(planned);
+          const reviewed =
+            planned !== null &&
+            !isBoardCardAutoPlanPending(planned) &&
+            isBoardCardReviewSignOffPending(yield* readBoard, planned);
+          if (planned !== null && (isBoardCardAutoPlanPending(planned) || reviewed)) {
+            yield* approvePlannedCard(planned, reviewed ? "review" : "auto-plan");
             yield* releaseFinishedThreads;
             yield* schedule();
             return;
@@ -9516,6 +9651,7 @@ const make = Effect.gen(function* () {
       return;
     }
     if (yield* answerReopenedQuestion(watched.card, watched.state)) return;
+    if (yield* steerPlanReviewPolicy(watched.card.id)) return;
     yield* parkStepForInput({ card: watched.card, state: watched.state, reason: "question" });
   });
 
@@ -9874,6 +10010,7 @@ const make = Effect.gen(function* () {
    */
   const stanceOverride = (
     board: BoardState,
+    settings: BoardSettings,
     card: BoardCard,
     state: BoardCardStepState,
   ): boolean | null => {
@@ -9881,6 +10018,22 @@ const make = Effect.gen(function* () {
     const stage = boardStageById(board, card.stage);
     const role = stage === null ? null : effectiveBoardStageRole(stage);
     if (role === "plan" && isBoardCardAutoPlanPending(card)) return false;
+    if (role === "plan" && reviewRunsUnattended(card, state)) return false;
+    // Handed back from an unattended review the policy steer has not told yet: the stance the
+    // plan step would have held without the review.
+    if (
+      role === "plan" &&
+      state.planReviewStartedAt !== undefined &&
+      !state.humanInLoop &&
+      (state.planReviewPolicySent ?? "").includes("unattended=true")
+    ) {
+      const exec = resolveBoardStageExecution(
+        settings,
+        card.stage,
+        boardProjectStageConfig(board, card.projectId),
+      );
+      return card.humanInLoop ?? resolveHumanInLoop(board, settings, card, exec);
+    }
     if (role === "build" && automationIn(board, card).autoBuild.value) return false;
     return card.humanInLoop;
   };
@@ -9889,6 +10042,15 @@ const make = Effect.gen(function* () {
   // has a live thread (a queued or pending step only needs the frozen stance updated). Only an
   // explicit toggle differing from the frozen stance reacts, so unrelated edits never flip a run.
   const handleCardUpdated = Effect.fn("board-supervisor-handleCardUpdated")(function* (
+    event: Extract<BoardEvent, { type: "board.card-updated" }>,
+  ) {
+    yield* applyCardUpdate(event);
+    // T3o: a plan review policy change (rounds, unattended) reaches an idle planning thread
+    // now, a busy one at its turn end (T3O-104).
+    yield* steerPlanReviewPolicy(event.payload.cardId, { idleOnly: true });
+  });
+
+  const applyCardUpdate = Effect.fn("board-supervisor-applyCardUpdate")(function* (
     event: Extract<BoardEvent, { type: "board.card-updated" }>,
   ) {
     yield* applyRegroup(event.payload.card, {
@@ -9970,12 +10132,24 @@ const make = Effect.gen(function* () {
     }
     // The card's explicit override wins at every stage, or a toggle on a review or planning step
     // changes the card while the step stays supervised the old way.
-    const desired = stanceOverride(board, card, state) ?? state.humanInLoop;
+    const desired = stanceOverride(board, yield* boardSettings, card, state) ?? state.humanInLoop;
     if (desired === state.humanInLoop) return;
     // A paused step is not told: the turn would resume it through `resumeParkedStep` and overturn
     // the human's Stop. The stance still lands on the row below. Awaiting-input and stalled steps
     // are told, and resuming them is intended.
-    if (state.threadId !== null && state.status !== "paused") {
+    const owedPolicy =
+      state.planReviewStartedAt !== undefined && state.stepId === card.stage
+        ? yield* owedPlanReviewPolicy(card.id)
+        : null;
+    // The review's own Unattended flip rides the policy steer's message; any other flip (the
+    // card's own override) gets the stance turn.
+    const reviewDriven =
+      owedPolicy !== null &&
+      owedPolicy.policy.unattended === !desired &&
+      !(owedPolicy.state.planReviewPolicySent ?? "").includes(
+        `unattended=${owedPolicy.policy.unattended};`,
+      );
+    if (state.threadId !== null && state.status !== "paused" && !reviewDriven) {
       const text = desired
         ? `Switching to human-in-the-loop: ask me anything you need directly, and it is fine to end a turn waiting on my answer. Call board_complete_step when the work is done.`
         : isReviewDecidingStep(state)
@@ -10911,7 +11085,7 @@ const make = Effect.gen(function* () {
     card: BoardCard,
     state: BoardCardStepState,
   ) {
-    const desired = stanceOverride(yield* readBoard, card, state);
+    const desired = stanceOverride(yield* readBoard, yield* boardSettings, card, state);
     if (desired === null || desired === state.humanInLoop) return;
     yield* dispatchOptional({
       type: "board.card.retune-step",
@@ -10937,6 +11111,7 @@ const make = Effect.gen(function* () {
     // PubSub, not a durable replay, so an edit committed just before a kill is never redelivered.
     // A field comparison per step, dispatching only on disagreement; idempotent, and sends no turn.
     yield* reconcileStanceOverride(card, state);
+    yield* steerPlanReviewPolicy(card.id, { idleOnly: true });
     const hasSucceeded = pinnedSuccess(board, card.id, state);
     const shell = state.threadId === null ? undefined : yield* liveThread(state.threadId);
     const threadAlive = shell !== undefined && shell.alive;
@@ -11421,9 +11596,11 @@ const make = Effect.gen(function* () {
       case "board.plan-review-stopped":
         return handlePlanReviewStopped(event);
       case "board.plan-review-started":
-        return handlePlanReviewStartedLate(event);
+        return handlePlanReviewStarted(event);
+      // A rounds change sends nothing mid-turn: the agent reads the target at its next round,
+      // and an idle thread is told once.
       case "board.plan-review-rounds-changed":
-        return handlePlanReviewRoundsChanged(event);
+        return steerPlanReviewPolicy(event.payload.cardId, { idleOnly: true }).pipe(Effect.asVoid);
       case "board.card-step-awaiting-input":
       case "board.card-step-paused":
       case "board.card-step-settled":
@@ -11784,6 +11961,10 @@ const make = Effect.gen(function* () {
     const nowMs = Date.parse(now);
     const paused = yield* workerPausedNow;
     for (const state of board.stepStates ?? []) {
+      // A review policy still owed reaches an idle planning thread, attended or not.
+      if (state.planReviewStartedAt !== undefined && state.status === "running") {
+        if (yield* steerPlanReviewPolicy(state.cardId, { idleOnly: true })) continue;
+      }
       if (state.status !== "running" || state.humanInLoop) continue;
       // A step on a worker out of reach is not timed: nothing it
       // does can be seen, and silence from it is not evidence of anything.
@@ -12034,11 +12215,11 @@ const make = Effect.gen(function* () {
           // PR links follow (T3O-75). One per PR change or spawn.
           event.type !== "board.card-pull-request-recorded" &&
           event.type !== "board.card-thread-linked" &&
-          // A human turned a running plan review off, or turned one
-          // on after the plan was posted; Changed its rounds.
+          // A plan review started (its policy is recorded as delivered), stopped, or had its
+          // target changed. A few per review.
           event.type !== "board.plan-review-stopped" &&
           event.type !== "board.plan-review-rounds-changed" &&
-          !(event.type === "board.plan-review-started" && event.payload.turnedOnLate === true)
+          event.type !== "board.plan-review-started"
         ) {
           return Effect.void;
         }
