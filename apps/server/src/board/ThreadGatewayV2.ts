@@ -1177,8 +1177,24 @@ const makeThreadGatewayV2 = Effect.gen(function* () {
     ),
     // The timeout sweep's life sign: the thread's own update time moves with
     // every message, turn item and run change the engine records.
+    // One row, not a shell read: the 30 s timeout sweep asks this of every overdue step.
     lastSignalAt: (threadId) =>
-      shellOf(threadId).pipe(Effect.map((shell) => isoOrNull(shell?.updatedAt))),
+      sql<{ readonly updatedAt: string | null }>`
+        SELECT json_extract(payload_json, '$.updatedAt') AS "updatedAt"
+        FROM orchestration_v2_projection_threads
+        WHERE thread_id = ${threadId} AND deleted_at IS NULL
+      `.pipe(
+        NodeSqliteClient.readOnly,
+        Effect.map((rows) => {
+          const updatedAt = rows[0]?.updatedAt;
+          if (updatedAt == null) return null;
+          return Option.match(DateTime.make(updatedAt), {
+            onNone: () => null,
+            onSome: DateTime.formatIso,
+          });
+        }),
+        Effect.mapError(readError("lastSignalAt")),
+      ),
     // A turn requested but not yet running: the latest run is still being
     // prepared, queued behind another, or waiting for its provider to start.
     // A restart continuation upstream has yet to start reads the same way, from the cut run's end.

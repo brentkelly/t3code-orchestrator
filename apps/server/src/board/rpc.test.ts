@@ -19,6 +19,7 @@ import { assert, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 
 import type { AuthenticatedSession } from "../auth/EnvironmentAuth.ts";
@@ -255,6 +256,85 @@ it.layer(makeBoardRpcTestLayer("t3o-board-rpc-test-"))("board.subscribeCard", (i
       // The re-emitted frame carries the post-change aggregate and body.
       assert.strictEqual(updated?.detail.card.briefRef, "brief");
       assert.strictEqual(updated?.detail.brief, "The brief body.");
+    }),
+  );
+
+  it.effect("re-emits only for related cards, and never an unchanged frame", () =>
+    Effect.gen(function* () {
+      const engine = yield* boardStackEngine;
+      yield* seedCard;
+      const create = (id: BoardCardId, title: string, orderKey: string) =>
+        engine.dispatch({
+          type: "board.card.create",
+          commandId: CommandId.make(`cmd-rel-create-${id}`),
+          cardId: id,
+          projectId,
+          title,
+          orderKey,
+          createdAt: t0,
+        });
+      const subject = BoardCardId.make("card-rel-subject");
+      const dependency = BoardCardId.make("card-rel-dependency");
+      const unrelated = BoardCardId.make("card-rel-unrelated");
+      yield* create(dependency, "Dependency", "a");
+      yield* create(unrelated, "Unrelated", "b");
+      yield* create(subject, "Subject", "c");
+      yield* engine.dispatch({
+        type: "board.card.update",
+        commandId: CommandId.make("cmd-rel-depends"),
+        cardId: subject,
+        dependsOn: [dependency],
+        createdAt: t0,
+      });
+      const handlers = yield* makeHandlers([AuthOrchestrationReadScope]);
+
+      const frames = yield* Queue.unbounded<BoardCardDetailStreamItem>();
+      yield* Effect.forkScoped(
+        handlers["board.subscribeCard"]({ cardId: subject }).pipe(
+          Stream.runForEach((item) => Queue.offer(frames, item)),
+          Effect.scoped,
+        ),
+      );
+      const initial = yield* Queue.take(frames);
+      // A related card changing nothing the detail shows: a re-read, but no frame.
+      yield* engine.dispatch({
+        type: "board.card.reorder",
+        commandId: CommandId.make("cmd-rel-reorder-dependency"),
+        cardId: dependency,
+        orderKey: "d",
+        createdAt: t0,
+      });
+      // An unrelated card: no frame.
+      yield* engine.dispatch({
+        type: "board.card.update",
+        commandId: CommandId.make("cmd-rel-unrelated-title"),
+        cardId: unrelated,
+        title: "Unrelated renamed",
+        createdAt: t0,
+      });
+      yield* engine.dispatch({
+        type: "board.card.update",
+        commandId: CommandId.make("cmd-rel-dependency-title"),
+        cardId: dependency,
+        title: "Dependency renamed",
+        createdAt: t0,
+      });
+      // Taken before the next dispatch, so the frames cannot coalesce. Had the
+      // reorder or the unrelated rename emitted, that frame would arrive here.
+      const dependencyFrame = yield* Queue.take(frames);
+      yield* engine.dispatch({
+        type: "board.card.update",
+        commandId: CommandId.make("cmd-rel-subject-brief"),
+        cardId: subject,
+        brief: "Subject brief.",
+        createdAt: t0,
+      });
+
+      const subjectFrame = yield* Queue.take(frames);
+      assert.strictEqual(initial.detail.dependencies[0]?.title, "Dependency");
+      assert.strictEqual(dependencyFrame.detail.dependencies[0]?.title, "Dependency renamed");
+      assert.strictEqual(dependencyFrame.detail.brief, null);
+      assert.strictEqual(subjectFrame.detail.brief, "Subject brief.");
     }),
   );
 });

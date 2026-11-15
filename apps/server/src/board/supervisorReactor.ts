@@ -177,7 +177,9 @@ import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as FiberSet from "effect/FiberSet";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -214,8 +216,10 @@ import {
   ThreadReadError,
   UNKNOWN_THREAD_STATE,
   type BoardProject,
+  type BoardThreadState,
   type ThreadCommandError,
   type ThreadSignal,
+  type UnknownThreadState,
 } from "./ThreadGateway.ts";
 import type { BoardCommand } from "./decider.ts";
 import { syncCardThreadPullRequests } from "./cardThreadPullRequests.ts";
@@ -423,6 +427,8 @@ interface PlacementPass {
   readonly grants: Map<BoardWorkerId, BoardResourceProfile>;
   /** Cards offered earlier in this queue pass; null outside one, where every hold counts. */
   readonly ahead: Set<string> | null;
+  /** Warm workers per repository, computed once a pass rather than once per queued card. */
+  readonly warm?: Map<string, ReadonlyMap<BoardWorkerId, number>>;
 }
 const CI_CLAIM = { providerInstanceId: null, force: false, noHolds: true } as const;
 const freshPlacementPass = (): PlacementPass => ({ grants: new Map(), ahead: null });
@@ -639,7 +645,23 @@ type SupervisorInput =
   // online, an instance appeared — which may start a held card.
   | { readonly source: "workers" }
   // A CI pass finished on its own fiber; what follows is decided here.
-  | { readonly source: "ci"; readonly finished: BoardCiPassFinished };
+  | { readonly source: "ci"; readonly finished: BoardCiPassFinished }
+  // T3o: a forge-checks step's read came back from its own fiber (T3O-108).
+  | {
+      readonly source: "forge-probe";
+      readonly cardId: BoardCardId;
+      readonly runId: string;
+      readonly probe: ForgeProbe;
+    };
+
+/** How long one forge-checks read may take before it counts as a failed read. */
+const FORGE_PROBE_TIMEOUT = Duration.minutes(2);
+
+/** One forge read of a pull request's merge state, or why it could not be read. */
+interface ForgeProbe {
+  readonly state: BoardMergeState | null;
+  readonly failure: string | undefined;
+}
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
@@ -787,10 +809,53 @@ const make = Effect.gen(function* () {
     Effect.map(([projects, model]): BoardWorld => ({ projects, board: model.board })),
   );
 
+  // T3o: one thread-state read per thread per sweep tick (T3O-108). Set only while a tick's
+  // timeout and capacity sweeps run, and read only by their checks: a tick-scoped memo needs no
+  // invalidation, and every other path keeps reading fresh.
+  let tickThreadStates: Map<
+    string,
+    Effect.Effect<BoardThreadState | UnknownThreadState | null, ThreadReadError>
+  > | null = null;
+  const withTickThreadStates = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    Effect.suspend(() => {
+      if (tickThreadStates !== null) return effect;
+      const memo = new Map<
+        string,
+        Effect.Effect<BoardThreadState | UnknownThreadState | null, ThreadReadError>
+      >();
+      tickThreadStates = memo;
+      return effect.pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (tickThreadStates === memo) tickThreadStates = null;
+          }),
+        ),
+      );
+    });
+  /** `threads.threadState`, read once per tick while a sweep tick runs. */
+  const sweepThreadState = Effect.fnUntraced(function* (threadId: ThreadId) {
+    const memo = tickThreadStates;
+    if (memo === null) return yield* threads.threadState(threadId);
+    let read = memo.get(String(threadId));
+    if (read === undefined) {
+      read = yield* Effect.cached(threads.threadState(threadId));
+      memo.set(String(threadId), read);
+    }
+    return yield* read;
+  });
+
   /** A thread the board can still act on — present and not deleted — or
-      undefined. */
-  const liveThread = (threadId: ThreadId) =>
-    threads.threadState(threadId).pipe(
+      undefined. `read` is the sweep tick's shared read where a sweep check asks. */
+  const liveThread = (
+    threadId: ThreadId,
+    read: (
+      threadId: ThreadId,
+    ) => Effect.Effect<
+      BoardThreadState | UnknownThreadState | null,
+      ThreadReadError
+    > = threads.threadState,
+  ) =>
+    read(threadId).pipe(
       Effect.flatMap((state) =>
         // T3o: a thread on a worker the board cannot reach is neither
         // gone nor alive, so no decision may be taken on it: surfaced as a
@@ -1708,23 +1773,31 @@ const make = Effect.gen(function* () {
         }),
       );
     }
-    const keys = new Map<ProjectId, string | null>();
-    for (const candidate of board.cards) {
-      if (!keys.has(candidate.projectId)) {
-        keys.set(candidate.projectId, yield* projectRepositoryKey(candidate.projectId));
+    // Which builds count depends only on the repository, so the pass computes it once per one.
+    const warmKey =
+      repositoryKey === null ? `project\0${card.projectId}` : `repo\0${repositoryKey}`;
+    let warm = pass.warm?.get(warmKey);
+    if (warm === undefined) {
+      const keys = new Map<ProjectId, string | null>();
+      for (const candidate of board.cards) {
+        if (!keys.has(candidate.projectId)) {
+          keys.set(candidate.projectId, yield* projectRepositoryKey(candidate.projectId));
+        }
       }
+      const now = Date.parse(yield* nowIso);
+      warm = warmWorkers({
+        builds: boardBuildHistory({
+          board,
+          buildStageId: boardStageWithRole(board, "build")?.stageId ?? null,
+          sameRepository: (projectId) =>
+            projectId === card.projectId ||
+            (repositoryKey !== null && keys.get(projectId) === repositoryKey),
+          now,
+        }),
+        now,
+      });
+      pass.warm?.set(warmKey, warm);
     }
-    const now = Date.parse(yield* nowIso);
-    const warm = warmWorkers({
-      builds: boardBuildHistory({
-        board,
-        buildStageId: boardStageWithRole(board, "build")?.stageId ?? null,
-        sameRepository: (projectId) =>
-          projectId === card.projectId ||
-          (repositoryKey !== null && keys.get(projectId) === repositoryKey),
-      }),
-      now,
-    });
     const project = yield* threads
       .project(card.projectId)
       .pipe(Effect.catchCause(() => Effect.succeed(null)));
@@ -2322,12 +2395,33 @@ const make = Effect.gen(function* () {
       service.beingRemoved ??
       Effect.succeed(new Set<BoardWorkerId>() as ReadonlySet<BoardWorkerId>),
   });
-  /** The board project's repository key, which names its checkout on a worker. */
-  const projectRepositoryKey = (projectId: ProjectId) =>
-    threads.project(projectId).pipe(
-      Effect.map((project) => boardRepositoryGroupingKey(project?.repositoryIdentity)),
-      Effect.catchCause(() => Effect.succeed(null)),
-    );
+  let repositoryKeyMemo: Map<string, string | null> | null = null;
+  /** Runs `effect` as one scheduling pass for `projectRepositoryKey`; a nested pass joins it. */
+  const withRepositoryKeyMemo = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    Effect.suspend(() => {
+      if (repositoryKeyMemo !== null) return effect;
+      const memo = new Map<string, string | null>();
+      repositoryKeyMemo = memo;
+      return effect.pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (repositoryKeyMemo === memo) repositoryKeyMemo = null;
+          }),
+        ),
+      );
+    });
+  /** The board project's repository key, which names its checkout on a worker. Read once per
+      project while a scheduling pass runs (T3O-108); a pass-scoped memo needs no invalidation. */
+  const projectRepositoryKey = (projectId: ProjectId): Effect.Effect<string | null> =>
+    Effect.suspend(() => {
+      const memo = repositoryKeyMemo;
+      if (memo?.has(projectId) === true) return Effect.succeed(memo.get(projectId) ?? null);
+      return threads.project(projectId).pipe(
+        Effect.map((project) => boardRepositoryGroupingKey(project?.repositoryIdentity)),
+        Effect.catchCause(() => Effect.succeed(null)),
+        Effect.tap((key) => Effect.sync(() => memo?.set(projectId, key))),
+      );
+    });
   /** T3o: capacity claims, grows and the phase rule, when the board has capacity (T3O-86). */
   const capacityAdmission = Option.map(capacityClient, (client) =>
     makeBoardCapacityAdmission({
@@ -2340,7 +2434,7 @@ const make = Effect.gen(function* () {
       awaitingPermission: (state) =>
         state.threadId === null
           ? Effect.succeed(false)
-          : threads.threadState(state.threadId).pipe(
+          : sweepThreadState(state.threadId).pipe(
               Effect.map(
                 (thread) =>
                   thread !== null && thread !== "unknown" && thread.awaitingPermission === true,
@@ -3536,7 +3630,8 @@ const make = Effect.gen(function* () {
   // immediately (no slot, no worktree). Build-mode steps waiting for a slot,
   // whose worktree is ready, are ordered by the queue rule (stage desc →
   // started before unstarted → card priority → drag order) and offered to the governor greedily.
-  const schedule = Effect.fn("board-supervisor-schedule")(function* () {
+  const schedule = () => withRepositoryKeyMemo(schedulePass());
+  const schedulePass = Effect.fn("board-supervisor-schedule")(function* () {
     // Queued CI passes go first: whatever freed a slot (a step settling, a
     // pass ending) runs this pass, and CI cards are later-stage than any step.
     // T3o: a parked or finished card's room reaches the queue now (T3O-86).
@@ -3656,7 +3751,7 @@ const make = Effect.gen(function* () {
     const rest = ordered.filter(({ entry }) => entry?.state.forceStart !== true);
     // T3o: cards are placed in queue order; holds keep a later card off a worker held for an
     // earlier one (T3O-87). Each grant this pass is subtracted from the worker's last snapshot.
-    const pass: PlacementPass = { grants: new Map(), ahead: new Set() };
+    const pass: PlacementPass = { grants: new Map(), ahead: new Set(), warm: new Map() };
     for (const { entry } of [...forced, ...rest]) {
       if (entry === undefined) continue;
       yield* offerBuildCandidate({ ...entry, pass });
@@ -4438,10 +4533,9 @@ const make = Effect.gen(function* () {
       );
       return;
     }
-    const detail = yield* boardQueries
-      .boardCardDetail(card.id)
-      .pipe(Effect.catchCause(() => Effect.succeed(null)));
-    const passes = detail?.ciPasses ?? [];
+    const passes = yield* boardQueries
+      .boardCardCiPasses(card.id)
+      .pipe(Effect.catchCause(() => Effect.succeed([])));
     const latestEntry = passes.reduce((highest, pass) => Math.max(highest, pass.entry), 0);
     // A human's fresh retry is a new entry, so the passes group by it.
     const entry =
@@ -4638,10 +4732,10 @@ const make = Effect.gen(function* () {
         rows: boardCiPassStepsFromSnapshot(known.steps),
       };
     }
-    const detail = yield* boardQueries
-      .boardCardDetail(cardId)
-      .pipe(Effect.catchCause(() => Effect.succeed(null)));
-    const pass = detail?.ciPasses.find((candidate) => candidate.runId === runId);
+    const passes = yield* boardQueries
+      .boardCardCiPasses(cardId)
+      .pipe(Effect.catchCause(() => Effect.succeed([])));
+    const pass = passes.find((candidate) => candidate.runId === runId);
     if (pass?.snapshot == null) return { steps: null, ordinal: 1, rows: [] };
     rememberCiSnapshot(cardId, runId, pass.snapshot, pass.ordinal);
     return { steps: pass.snapshot, ordinal: pass.ordinal, rows: pass.steps };
@@ -4758,8 +4852,16 @@ const make = Effect.gen(function* () {
       readied: boolean;
       errors: number;
       lastKey: string;
+      /** A forge read is out: one at a time per card, so a slow forge cannot stack polls. */
+      probing?: boolean;
     }
   >();
+
+  /** Forge reads out on their own fibers, so `drainCi` can wait for their answers. */
+  const forgeProbesInFlight = new Set<Deferred.Deferred<void>>();
+  const awaitForgeProbes: Effect.Effect<void> = Effect.suspend(() =>
+    Effect.forEach([...forgeProbesInFlight], Deferred.await, { discard: true }),
+  );
 
   const startCiForgeStep: (
     card: BoardCard,
@@ -4805,10 +4907,10 @@ const make = Effect.gen(function* () {
     cardId: BoardCardId,
     runId: string,
   ) {
-    const detail = yield* boardQueries
-      .boardCardDetail(cardId)
-      .pipe(Effect.catchCause(() => Effect.succeed(null)));
-    const pass = detail?.ciPasses.find((candidate) => candidate.runId === runId);
+    const passes = yield* boardQueries
+      .boardCardCiPasses(cardId)
+      .pipe(Effect.catchCause(() => Effect.succeed([])));
+    const pass = passes.find((candidate) => candidate.runId === runId);
     if (pass === undefined) return null;
     const failures: BoardCiFailure[] = [];
     for (const [index, step] of pass.steps.entries()) {
@@ -5132,16 +5234,16 @@ const make = Effect.gen(function* () {
   );
 
   /**
-   * Read one card's forge checks and act on them. A draft pull request is marked ready first,
-   * since draft-gated workflows never run. No pull request, an unreadable forge, or five failed
-   * reads in a row hold the card.
+   * Start reading one card's forge checks. A draft pull request is marked ready first, since
+   * draft-gated workflows never run. The read itself runs on its own fiber, off the serial
+   * queue (T3O-108), and its answer comes back through the queue to `settleCiForgeProbe`.
    */
   const pollCiForgeStep: (cardId: BoardCardId) => Effect.Effect<void> = Effect.fn(
     "board-supervisor-pollCiForgeStep",
   )(
     function* (cardId: BoardCardId) {
       const entry = forgeSteps.get(String(cardId));
-      if (entry === undefined) return;
+      if (entry === undefined || entry.probing === true) return;
       const card = yield* readCard(cardId);
       if (card === null || !isCiPassLive(card, entry.runId)) {
         forgeSteps.delete(String(cardId));
@@ -5171,7 +5273,69 @@ const make = Effect.gen(function* () {
         entry.readied = true;
         yield* markCardPullRequestReady(card, { forMerge: true });
       }
-      const probe = yield* probeMergeState(card);
+      entry.probing = true;
+      const done = yield* Deferred.make<void>();
+      forgeProbesInFlight.add(done);
+      const runId = entry.runId;
+      yield* probeMergeState(card).pipe(
+        // A forge that never answers counts as a failed read, so the step's own limits still apply.
+        Effect.timeoutOrElse({
+          duration: FORGE_PROBE_TIMEOUT,
+          orElse: () =>
+            Effect.succeed<ForgeProbe>({
+              state: null,
+              failure: "the forge did not answer within 2 minutes",
+            }),
+        }),
+        Effect.flatMap((probe) => worker.enqueue({ source: "forge-probe", cardId, runId, probe })),
+        Effect.onExit((exit) =>
+          Effect.sync(() => {
+            if (exit._tag === "Failure") entry.probing = false;
+          }),
+        ),
+        Effect.ensuring(
+          Effect.suspend(() => {
+            forgeProbesInFlight.delete(done);
+            return Deferred.succeed(done, undefined);
+          }),
+        ),
+        Effect.ignoreCause,
+        FiberSet.run(forgeProbeFibers, { startImmediately: false }),
+      );
+    },
+    Effect.catchCause((cause) =>
+      Effect.logWarning("board supervisor: forge check poll failed", {
+        cause: Cause.pretty(cause),
+      }),
+    ),
+  );
+
+  /**
+   * Act on one forge read, back on the serial queue. No pull request, an unreadable forge, or
+   * five failed reads in a row hold the card. A read for a pass that has moved on is dropped.
+   */
+  const settleCiForgeProbe = Effect.fn("board-supervisor-settleCiForgeProbe")(
+    function* (cardId: BoardCardId, runId: string, probe: ForgeProbe) {
+      const entry = forgeSteps.get(String(cardId));
+      if (entry === undefined || entry.runId !== runId) return;
+      entry.probing = false;
+      const card = yield* readCard(cardId);
+      if (card === null || !isCiPassLive(card, entry.runId)) {
+        forgeSteps.delete(String(cardId));
+        return;
+      }
+      const { rows, steps } = yield* ciPassSnapshot(card.id, entry.runId);
+      const step = steps?.[entry.index];
+      const row = ciStepRow(card, rows, entry.index);
+      if (
+        steps === null ||
+        step === undefined ||
+        step.kind !== "forge-checks" ||
+        row === undefined
+      ) {
+        forgeSteps.delete(String(cardId));
+        return;
+      }
       if (probe.state === null) {
         entry.errors += 1;
         if (entry.errors >= 5) {
@@ -7574,18 +7738,20 @@ const make = Effect.gen(function* () {
       const listed = yield* workspace
         .listBoardWorktrees({})
         .pipe(Effect.catchCause(() => Effect.succeed({ worktrees: [] })));
+      const boardHere = placedHere(board);
+      // Asked at most once per workspace, and only when an orphan has no owner to name it.
+      let defaultBranch: string | undefined;
       for (const registered of listed.worktrees) {
         const candidate = { path: registered.path, branch: registered.branch };
-        if (!isOrphanWorktree(placedHere(board), candidate)) continue;
-        const owner = placedHere(board).cards.find(
-          (card) => card.worktree?.branch === registered.branch,
-        );
-        const baseRefName =
-          owner?.worktree?.baseRefName ??
-          (yield* workspace.remoteDefaultBranch({}).pipe(
+        if (!isOrphanWorktree(boardHere, candidate)) continue;
+        const owner = boardHere.cards.find((card) => card.worktree?.branch === registered.branch);
+        if (owner?.worktree?.baseRefName === undefined && defaultBranch === undefined) {
+          defaultBranch = yield* workspace.remoteDefaultBranch({}).pipe(
             Effect.map((result) => result.branch),
             Effect.orElseSucceed(() => "main"),
-          ));
+          );
+        }
+        const baseRefName = owner?.worktree?.baseRefName ?? defaultBranch ?? "main";
         const outcome = yield* workspace
           .reclaimWorktree(
             {
@@ -7638,6 +7804,11 @@ const make = Effect.gen(function* () {
   const sweptDiscards = new Set<BoardCardId>();
   const sweepWorktrees = Effect.fn("board-supervisor-sweepWorktrees")(function* (options: {
     readonly refreshOpenPullRequests: boolean;
+    /** Null re-probes every kept worktree (boot, a direct request). Otherwise the pass was
+        asked for by these cards' worktree events: a worktree already kept for a reason is
+        re-probed only when it is one of them, since its fetches cost a remote round trip
+        and nothing about it changed (T3O-108). */
+    readonly eventCards: ReadonlySet<string> | null;
   }) {
     const settings = yield* boardSettings;
     const board = yield* readBoard;
@@ -7671,6 +7842,13 @@ const make = Effect.gen(function* () {
         continue;
       }
       if (card.worktree === null || card.worktree.status !== "ready") continue;
+      if (
+        options.eventCards !== null &&
+        card.worktree.reclaimBlockedReason !== null &&
+        !options.eventCards.has(card.id)
+      ) {
+        continue;
+      }
       if (card.archivedAt !== null) {
         yield* reclaimCardWorktree(card, fetchedBases);
         continue;
@@ -7812,12 +7990,16 @@ const make = Effect.gen(function* () {
   // a pass starts, so a trigger landing mid-pass queues a follow-up that sees its effect.
   let sweepQueued = false;
   let sweepRefreshQueued = false;
+  // T3o: the cards whose worktree events asked for the queued pass, or null for a full pass.
+  let sweepEventCards: Set<string> | null = new Set();
   const worktreeSweepWorker = yield* makeDrainableWorker(() =>
     Effect.suspend(() => {
       const refreshOpenPullRequests = sweepRefreshQueued;
+      const eventCards = sweepEventCards;
       sweepQueued = false;
       sweepRefreshQueued = false;
-      return sweepWorktrees({ refreshOpenPullRequests });
+      sweepEventCards = new Set();
+      return sweepWorktrees({ refreshOpenPullRequests, eventCards });
     }).pipe(
       Effect.catchCauseIf(
         (cause) => !Cause.hasInterruptsOnly(cause),
@@ -7828,9 +8010,15 @@ const make = Effect.gen(function* () {
       ),
     ),
   );
-  const requestWorktreeSweep = (options?: { readonly refreshOpenPullRequests?: boolean }) =>
+  const requestWorktreeSweep = (options?: {
+    readonly refreshOpenPullRequests?: boolean;
+    /** The card whose worktree event asks; absent asks for a full pass. */
+    readonly eventCardId?: BoardCardId;
+  }) =>
     Effect.suspend(() => {
       if (options?.refreshOpenPullRequests === true) sweepRefreshQueued = true;
+      if (options?.eventCardId === undefined) sweepEventCards = null;
+      else sweepEventCards?.add(options.eventCardId);
       if (sweepQueued) return Effect.void;
       sweepQueued = true;
       return worktreeSweepWorker.enqueue(undefined);
@@ -11528,7 +11716,7 @@ const make = Effect.gen(function* () {
       waits inside a live run with no question signal to park the step) or, read only when it has
       neither, a subagent's approval. Review-deciding questions are the board's own to answer. */
   const threadAwaitingHuman = (state: Pick<BoardCardStepState, "stepId">, threadId: ThreadId) =>
-    liveThread(threadId).pipe(
+    liveThread(threadId, sweepThreadState).pipe(
       Effect.flatMap((shell) =>
         shell === undefined
           ? Effect.succeed(false)
@@ -11543,7 +11731,9 @@ const make = Effect.gen(function* () {
   /** The thread's shell when it is between turns, needs no human and has
       background work — the same reading the card's "Waiting" label makes. */
   const threadWaitingOnBackground = (threadId: ThreadId) =>
-    liveThread(threadId).pipe(Effect.map((shell) => shell?.waitingOnBackground ?? false));
+    liveThread(threadId, sweepThreadState).pipe(
+      Effect.map((shell) => shell?.waitingOnBackground ?? false),
+    );
 
   /**
    * Supervise a step waiting on its own background work; true means the timeout logic must not
@@ -11569,7 +11759,7 @@ const make = Effect.gen(function* () {
       beginBackgroundWait(state.threadId, input.now);
       return true;
     }
-    const shell = yield* liveThread(state.threadId);
+    const shell = yield* liveThread(state.threadId, sweepThreadState);
     if (shell === undefined || !shell.waitingOnBackground) {
       // A live turn (a check-in being answered) is supervised the ordinary
       // way and keeps the wait; background work that is gone ends it.
@@ -12032,6 +12222,7 @@ const make = Effect.gen(function* () {
       }
     }
   }).pipe(
+    withRepositoryKeyMemo,
     Effect.catchCause((cause) =>
       Effect.logWarning("board supervisor: hold refresh failed", { cause: Cause.pretty(cause) }),
     ),
@@ -12048,6 +12239,7 @@ const make = Effect.gen(function* () {
     yield* requestReadiness;
     yield* schedule();
   }).pipe(
+    withRepositoryKeyMemo,
     Effect.catchCause((cause) =>
       Effect.logWarning("board supervisor: capacity sweep failed", { cause: Cause.pretty(cause) }),
     ),
@@ -12135,9 +12327,9 @@ const make = Effect.gen(function* () {
       // Checked last, so only overdue steps pay.
       if (yield* supersededByPendingTurn(state)) continue;
       // A thread on a permission prompt or a secret request is waiting on a human and emits
-      // nothing; nudging it would replace the violet wait with a stall. Read last, so only overdue
-      // steps pay. The subagent half repeats this sweep's earlier read on purpose: it closes the
-      // gap if a child just asked.
+      // nothing; nudging it would replace the violet wait with a stall. Only overdue steps reach
+      // this. Its thread half reuses the state this tick already read; the subagent half reads
+      // afresh on purpose, closing the gap if a child just asked.
       if (state.threadId !== null && (yield* threadAwaitingHuman(state, state.threadId))) {
         permissionHeldAt.set(String(state.threadId), now);
         continue;
@@ -12198,6 +12390,8 @@ const make = Effect.gen(function* () {
         return reconcile;
       case "ci":
         return handleCiPassFinished(input.finished);
+      case "forge-probe":
+        return settleCiForgeProbe(input.cardId, input.runId, input.probe);
       case "workers":
         // A worker back online is reconciled before anything is
         // scheduled onto it.
@@ -12224,6 +12418,8 @@ const make = Effect.gen(function* () {
           Effect.andThen(sweepAutoArchives),
           // T3o: worker capacity's phase rule, settling and sync, then the upgrade (T3O-86).
           Effect.andThen(sweepCapacity),
+          // T3o: the timeout and capacity sweeps share one thread read per thread (T3O-108).
+          withTickThreadStates,
         );
     }
   };
@@ -12247,6 +12443,8 @@ const make = Effect.gen(function* () {
     );
 
   const worker = yield* makeDrainableWorker(processInputSafely);
+  // Made after the worker, so shutdown interrupts a forge read still out before the worker closes.
+  const forgeProbeFibers = yield* FiberSet.make<void>();
   // Coalesced: one capacity pass waits in the queue at most, whatever the snapshot rate.
   const enqueueCapacityPass = Effect.suspend(() => {
     if (capacityPassQueued) return Effect.void;
@@ -12267,7 +12465,7 @@ const make = Effect.gen(function* () {
           event.type === "board.card-worktree-ready" ||
           event.type === "board.card-worktree-reclaimed"
         ) {
-          return requestWorktreeSweep();
+          return requestWorktreeSweep({ eventCardId: event.payload.cardId });
         }
         // T3o: a human's Retry or Cancel on a card's setup (T3O-86).
         if (event.type === "board.card-resources-recorded") {
@@ -12450,6 +12648,15 @@ const make = Effect.gen(function* () {
       Effect.andThen(sweepOrphanedCiPasses),
       // T3o: and worker capacity's phase rule and sync (T3O-86).
       Effect.andThen(sweepCapacity),
+      withTickThreadStates,
+      // A forge read answers through the queue: the sweep waits for any it started to land.
+      Effect.andThen(
+        Effect.suspend(() =>
+          forgeProbesInFlight.size === 0
+            ? Effect.void
+            : awaitForgeProbes.pipe(Effect.andThen(worker.drain)),
+        ),
+      ),
     ),
     refreshHolds,
     readyWorkerCapacity: (projectId) =>
@@ -12470,8 +12677,13 @@ const make = Effect.gen(function* () {
     // is running. Never used by `drain`: a long pass would block it.
     drainCi: Effect.suspend(function drainCi(): Effect.Effect<void> {
       return ciPasses.awaitIdle.pipe(
+        Effect.andThen(awaitForgeProbes),
         Effect.andThen(worker.drain),
-        Effect.andThen(Effect.suspend(() => (ciPasses.busy() ? drainCi() : Effect.void))),
+        Effect.andThen(
+          Effect.suspend(() =>
+            ciPasses.busy() || forgeProbesInFlight.size > 0 ? drainCi() : Effect.void,
+          ),
+        ),
       );
     }),
     retryCi: (cardId, action = "retry") =>
@@ -12496,7 +12708,7 @@ const make = Effect.gen(function* () {
           }).pipe(Effect.as({ outcome: "failed" } as const)),
         ),
       ),
-    sweepWorktrees: requestWorktreeSweep,
+    sweepWorktrees: (options) => requestWorktreeSweep(options),
     // The main worker first: boot reconcile and event handlers are what
     // request passes, so a pass may not be queued until they have run.
     drainWorktreeSweep: worker.drain.pipe(

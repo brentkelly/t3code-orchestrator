@@ -517,6 +517,8 @@ export type Harness = {
       remote-only base was MATERIALISED has nowhere else to read it:
       `git branch develop origin/develop` leaves no trace on the card. */
   readonly gitInvocations: Effect.Effect<ReadonlyArray<ReadonlyArray<string>>>;
+  /** The working directory of each `git` run, in the same order as `gitInvocations`. */
+  readonly gitCwds: Effect.Effect<ReadonlyArray<string | undefined>>;
   /** The threads this server's own capacity counts as the board's, as the reactor told it. */
   readonly localBoardThreads: Effect.Effect<ReadonlySet<string>>;
 };
@@ -631,6 +633,8 @@ export function withGovernor(
         whose checks CHANGE between two probes — a failed check a CI fix's
         push turned into a pending one. Takes precedence over `mergeState`. */
     readonly mergeStateOf?: () => BoardMergeState;
+    /** Awaited before each merge-state read answers: a forge that is slow, or never answers. */
+    readonly mergeStateGate?: Effect.Effect<void>;
     /**
      * What a mark-ready request answers, per call and in order; the last entry repeats once the
      * script runs out. A string is a failure with that detail. Absent answers `not-draft`.
@@ -819,14 +823,11 @@ export function withGovernor(
     const boardQueriesStub = {
       // The reactor's todo signal + boot sweep have something to call;
       // `boardThreadTodo` is fixture-driven, the rest are inert.
-      boardCardDetail: (cardId: BoardCardId) =>
-        Effect.succeed(
-          input.ciPassesUnreadable === true
-            ? null
-            : {
-                ciPasses: [...ciPassRows.values()].filter((pass) => pass.cardId === cardId),
-              },
-        ),
+      // No `boardCardDetail`: the supervisor reads CI passes alone, never the whole detail.
+      boardCardCiPasses: (cardId: BoardCardId) =>
+        input.ciPassesUnreadable === true
+          ? Effect.die("CI pass rows unreadable")
+          : Effect.succeed([...ciPassRows.values()].filter((pass) => pass.cardId === cardId)),
       boardCardActivity: () => Effect.succeed([]),
       boardCardBrief: () => Effect.succeed(null),
       boardPlanBody: () => Effect.succeed(null),
@@ -904,6 +905,7 @@ export function withGovernor(
     // stub — the two things a base-materialisation assertion needs and the card
     // does not record.
     const gitInvocationLog: Array<ReadonlyArray<string>> = [];
+    const gitCwdLog: Array<string | undefined> = [];
     const createdBranches = new Set<string>();
     const gitStub = {
       // Branch cleanup's first call. Its absence used to make
@@ -933,8 +935,9 @@ export function withGovernor(
                 refName: request.branch ?? request.refName ?? "board/wt",
               },
             }),
-      execute: (request: { readonly args?: ReadonlyArray<string> }) => {
+      execute: (request: { readonly args?: ReadonlyArray<string>; readonly cwd?: string }) => {
         gitInvocationLog.push(request.args ?? []);
+        gitCwdLog.push(request.cwd);
         if (input.notAGitRepo === true) {
           return Effect.succeed({
             stdout: "",
@@ -1173,6 +1176,7 @@ export function withGovernor(
         ),
       mergeState: (request) =>
         Ref.update(mergeStateProbes, (probes) => [...probes, { number: request.number }]).pipe(
+          Effect.andThen(input.mergeStateGate ?? Effect.void),
           Effect.andThen(() => {
             const configured = input.mergeStateOf?.() ?? input.mergeState;
             return configured === undefined
@@ -1348,6 +1352,7 @@ export function withGovernor(
           setBoardSettings: (settings) => void (boardSettings = settings),
           setWorktreeUndurable: (undurable) => void (worktreeUndurable = undurable),
           gitInvocations: Effect.sync(() => [...gitInvocationLog]),
+          gitCwds: Effect.sync(() => [...gitCwdLog]),
           localBoardThreads: Effect.suspend(() => localBoardThreads),
         });
       }).pipe(

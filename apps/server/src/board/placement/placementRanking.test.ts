@@ -171,6 +171,7 @@ describe("placement ranking (T3O-87)", () => {
       stepId: string,
       outcome: BoardStepCompletion["outcome"],
       threadId: string,
+      completedAt = "2026-06-01T11:00:00.000Z",
     ): BoardStepCompletion => ({
       cardId: BoardCardId.make(cardId),
       stepId,
@@ -178,7 +179,7 @@ describe("placement ranking (T3O-87)", () => {
       summary: "Done.",
       payload: null,
       threadId: ThreadId.make(threadId),
-      completedAt: "2026-06-01T11:00:00.000Z",
+      completedAt,
     });
     const card = (id: string, projectId: string, threadId: string, workerId?: BoardWorkerId) =>
       ({
@@ -194,9 +195,11 @@ describe("placement ranking (T3O-87)", () => {
           },
         ],
       }) as unknown as BoardCard;
+    const asked: Array<string> = [];
     const history = boardBuildHistory({
       board: {
         cards: [
+          card("stale", "stale", "t-stale", W2),
           card("built", "repo", "t-built", W1),
           card("reviewed", "repo", "t-reviewed", W2),
           card("failed", "repo", "t-failed", W3),
@@ -211,12 +214,19 @@ describe("placement ranking (T3O-87)", () => {
           completion("here", "building", "succeeded", "t-here"),
           // Its thread link is gone: where it ran is unknown, so it warms nothing.
           completion("built", "building", "succeeded", "t-unlinked"),
+          // Outside the warm window: never looked up at all.
+          completion("stale", "building", "succeeded", "t-stale", "2026-05-30T11:00:00.000Z"),
         ],
       },
       buildStageId: "building",
-      sameRepository: (projectId) => projectId === ProjectId.make("repo"),
+      sameRepository: (projectId) => {
+        asked.push(projectId);
+        return projectId === ProjectId.make("repo");
+      },
+      now: NOW,
     });
     expect(history.map((build) => build.workerId)).toEqual([W1, BOARD_LOCAL_WORKER_ID]);
+    expect(asked).not.toContain(ProjectId.make("stale"));
   });
 
   it("a pin restricts the candidates to the pinned worker", () => {

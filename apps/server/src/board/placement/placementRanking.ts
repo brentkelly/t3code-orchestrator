@@ -383,12 +383,18 @@ export function boardBuildHistory(input: {
   readonly board: Pick<BoardState, "cards" | "stepCompletions">;
   readonly buildStageId: string | null;
   readonly sameRepository: (projectId: BoardCard["projectId"]) => boolean;
+  /** Only builds `warmWorkers` would count at this time: older ones are never looked up. */
+  readonly now: number;
 }): ReadonlyArray<{ readonly workerId: BoardWorkerId; readonly at: number }> {
   if (input.buildStageId === null) return [];
   const builds: Array<{ readonly workerId: BoardWorkerId; readonly at: number }> = [];
+  let cardsById: ReadonlyMap<string, BoardCard> | undefined;
   for (const completion of input.board.stepCompletions ?? []) {
     if (completion.stepId !== input.buildStageId || completion.outcome !== "succeeded") continue;
-    const card = input.board.cards.find((candidate) => candidate.id === completion.cardId);
+    const at = Date.parse(completion.completedAt);
+    if (Number.isNaN(at) || input.now - at > PLACEMENT_WARM_WINDOW_MS || at > input.now) continue;
+    cardsById ??= new Map(input.board.cards.map((card) => [card.id, card]));
+    const card = cardsById.get(completion.cardId);
     if (card === undefined || !input.sameRepository(card.projectId)) continue;
     const link =
       completion.threadId === null
@@ -396,8 +402,6 @@ export function boardBuildHistory(input: {
         : card.threadLinks.find((candidate) => candidate.threadId === completion.threadId);
     // Where an unlinked build ran is unknown: it warms no worker.
     if (link === undefined) continue;
-    const at = Date.parse(completion.completedAt);
-    if (Number.isNaN(at)) continue;
     builds.push({ workerId: boardThreadLinkWorkerId(link), at });
   }
   return builds;

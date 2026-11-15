@@ -69,6 +69,8 @@ const decodeOutcome = Schema.decodeUnknownEffect(OutcomeJson);
     happens while the worker still waits on the call, which it gives up on
     within a minute. */
 const RELAY_CALL_RETENTION_MS = 24 * 60 * 60 * 1000;
+/** Comfortably above the busy-thread count a capacity reading asks about. */
+const RELAYED_CENTRAL_MEMO_LIMIT = 1024;
 
 export const BoardRelayStoreLive = Layer.effect(
   BoardRelayStore,
@@ -79,6 +81,16 @@ export const BoardRelayStoreLive = Layer.effect(
       <A, E, R>(effect: Effect.Effect<A, E, R>) =>
         effect.pipe(Effect.mapError((cause) => new BoardRelayStoreError({ operation, cause })));
     const nowIso = DateTime.now.pipe(Effect.map(DateTime.formatIso));
+    // The capacity reading asks this for every busy thread on every reading; only the two
+    // writers below change it, and each keeps the memo in step.
+    const centralByThread = new Map<string, EnvironmentId | null>();
+    // Bumped by every write, so a read that raced one never stores what it saw before it.
+    let writes = 0;
+    const invalidate = (threadId: string) =>
+      Effect.sync(() => {
+        writes += 1;
+        centralByThread.delete(threadId);
+      });
 
     return {
       recordRelayedThread: (threadId, centralEnvironmentId) =>
@@ -92,19 +104,38 @@ export const BoardRelayStoreLive = Layer.effect(
             `,
           ),
           Effect.asVoid,
+          Effect.ensuring(invalidate(threadId)),
           failed("recordRelayedThread"),
         ),
       relayedThreadCentral: (threadId) =>
-        sql<{ readonly central: string }>`
-          SELECT central_environment_id AS "central"
-          FROM board_relayed_threads WHERE thread_id = ${threadId}
-        `.pipe(
-          Effect.map((rows) => (rows[0]?.central ?? null) as EnvironmentId | null),
-          failed("relayedThreadCentral"),
-        ),
+        Effect.suspend(() => {
+          if (centralByThread.has(threadId)) {
+            return Effect.succeed(centralByThread.get(threadId) ?? null);
+          }
+          const seen = writes;
+          return sql<{ readonly central: string }>`
+            SELECT central_environment_id AS "central"
+            FROM board_relayed_threads WHERE thread_id = ${threadId}
+          `.pipe(
+            Effect.map((rows) => (rows[0]?.central ?? null) as EnvironmentId | null),
+            Effect.tap((central) =>
+              Effect.sync(() => {
+                if (writes !== seen) return;
+                // Most answers are null (threads never relayed); drop the oldest past the cap.
+                if (centralByThread.size >= RELAYED_CENTRAL_MEMO_LIMIT) {
+                  const oldest = centralByThread.keys().next();
+                  if (oldest.done !== true) centralByThread.delete(oldest.value);
+                }
+                centralByThread.set(threadId, central);
+              }),
+            ),
+            failed("relayedThreadCentral"),
+          );
+        }),
       forgetRelayedThread: (threadId) =>
         sql`DELETE FROM board_relayed_threads WHERE thread_id = ${threadId}`.pipe(
           Effect.asVoid,
+          Effect.ensuring(invalidate(threadId)),
           failed("forgetRelayedThread"),
         ),
       signalCursor: (workerId) =>

@@ -1200,6 +1200,84 @@ it.effect("a forge-checks step waits on the pull request's checks, then passes",
   }),
 );
 
+it.effect("a forge read that never returns holds up no other supervisor input", () =>
+  Effect.gen(function* () {
+    const { runner } = yield* scriptedRunner([{ result: "passed", failedIndex: null }]);
+    const subject = card("forge-slow", review, { pullRequest: prOpen as never });
+    let state = mergeStateWith({ passed: 1, pending: 1, failed: 0 });
+    let stuck = false;
+    const asked = yield* Deferred.make<void>();
+    const answer = yield* Deferred.make<void>();
+    yield* withGovernor(
+      {
+        board: boardWith([subject], mixedConfig([SCRIPT_A, FORGE])),
+        settings,
+        pullRequest: foundPr,
+        mergeStateOf: () => state,
+        mergeStateGate: Effect.suspend(() =>
+          stuck
+            ? Deferred.succeed(asked, undefined).pipe(Effect.andThen(Deferred.await(answer)))
+            : Effect.void,
+        ),
+      },
+      (h) =>
+        Effect.gen(function* () {
+          yield* enterCiAndRun(h, subject, 1);
+          assert.strictEqual(cardStage(yield* h.board, subject.id), ci);
+          // The next tick's read hangs on the forge.
+          stuck = true;
+          state = mergeStateWith({ passed: 2, pending: 0, failed: 0 });
+          yield* TestClock.adjust("30 seconds");
+          yield* Deferred.await(asked);
+          // The queue still runs: another card's event is handled meanwhile.
+          yield* h.pumpDomain(cardMoved(card("bystander", review), review, merge, 99));
+          assert.strictEqual(cardStage(yield* h.board, subject.id), ci);
+          // The read answers, and its verdict still lands.
+          yield* Deferred.succeed(answer, undefined);
+          yield* h.reactor.drainCi;
+          assert.strictEqual(cardStage(yield* h.board, subject.id), merge);
+        }),
+    ).pipe(Effect.provideService(BoardCiRunner, runner));
+  }),
+);
+
+it.effect("a forge read that never returns times out, so the next poll reads again", () =>
+  Effect.gen(function* () {
+    const { runner } = yield* scriptedRunner([{ result: "passed", failedIndex: null }]);
+    const subject = card("forge-hung", review, { pullRequest: prOpen as never });
+    let stuck = false;
+    const asked = yield* Deferred.make<void>();
+    yield* withGovernor(
+      {
+        board: boardWith([subject], mixedConfig([SCRIPT_A, FORGE])),
+        settings,
+        pullRequest: foundPr,
+        mergeStateOf: () => mergeStateWith({ passed: 1, pending: 1, failed: 0 }),
+        mergeStateGate: Effect.suspend(() =>
+          stuck
+            ? Deferred.succeed(asked, undefined).pipe(Effect.andThen(Effect.never))
+            : Effect.void,
+        ),
+      },
+      (h) =>
+        Effect.gen(function* () {
+          yield* enterCiAndRun(h, subject, 1);
+          stuck = true;
+          yield* TestClock.adjust("30 seconds");
+          yield* Deferred.await(asked);
+          const hung = (yield* h.mergeStateProbes).length;
+          // Polls while the read is out do not stack another.
+          yield* TestClock.adjust("90 seconds");
+          assert.strictEqual((yield* h.mergeStateProbes).length, hung);
+          // Past the read's bound it counts as failed, and the next poll reads again.
+          yield* TestClock.adjust("1 minute");
+          assert.isAbove((yield* h.mergeStateProbes).length, hung);
+          assert.strictEqual(cardStage(yield* h.board, subject.id), ci);
+        }),
+    ).pipe(Effect.provideService(BoardCiRunner, runner));
+  }),
+);
+
 it.effect("a failing forge check (matched by its filter) fails the pass", () =>
   Effect.gen(function* () {
     const { runner } = yield* scriptedRunner([{ result: "passed", failedIndex: null }]);

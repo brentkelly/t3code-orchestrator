@@ -75,6 +75,7 @@ import {
   type BoardProjectConfigServiceShape,
 } from "./projectConfig/BoardProjectConfigService.ts";
 import { BoardQueries } from "./BoardQueries.ts";
+import { boardCardDetailWakes } from "./cardDetailRelations.ts";
 import type { BoardQueriesShape } from "./projection.ts";
 import { subscribeBoard } from "./boardSubscription.ts";
 import { BoardThreadTail } from "./boardThreadTail.ts";
@@ -131,7 +132,11 @@ export const boardRpcHandlers = Effect.fn("boardRpc.handlers")(function* (
   // Built once per connection, so the actor-name caches live as long as it does.
   const workspaces = yield* BoardWorkspaces;
   const threads = yield* ThreadGateway;
-  const stampActor = boardActorStamp({ threads, boardQueries, workspaces });
+  const stampActor = boardActorStamp({
+    threads,
+    readModel: boardEngine.getReadModel,
+    workspaces,
+  });
   const projectActorName = boardProjectActorName({ threads, workspaces });
   // The subscription's services, provided here so the handler's stream needs
   // only the RPC scope.
@@ -257,7 +262,9 @@ function makeBoardRpcHandlers(
   const readDetail = (
     cardId: BoardCardId,
   ): Effect.Effect<BoardCardDetail | null, BoardSubscribeCardError> =>
-    boardQueries.boardCardDetail(cardId).pipe(
+    Effect.flatMap(boardEngine.getReadModel, (model) =>
+      boardQueries.boardCardDetail(cardId, model.board),
+    ).pipe(
       Effect.mapError(
         (cause) =>
           new BoardSubscribeCardError({
@@ -265,6 +272,13 @@ function makeBoardRpcHandlers(
             cause,
           }),
       ),
+    );
+
+  /** A card off the in-memory board, archived included; null when it does not exist. */
+  const readCard = (cardId: BoardCardId) =>
+    Effect.map(
+      boardEngine.getReadModel,
+      (model) => model.board?.cards.find((card) => card.id === cardId) ?? null,
     );
 
   /** The RPC promises `BoardCardAttachmentError` and nothing else: a storage
@@ -543,17 +557,8 @@ function makeBoardRpcHandlers(
         Effect.gen(function* () {
           const config = yield* ServerConfig.ServerConfig;
           const crypto = yield* SecureRandom.SecureRandom;
-          const detail = yield* readDetail(input.cardId).pipe(
-            Effect.mapError(
-              (cause) =>
-                new BoardCardAttachmentError({
-                  code: "internal",
-                  message: cause.message,
-                  cause,
-                }),
-            ),
-          );
-          if (detail === null) {
+          const card = yield* readCard(input.cardId);
+          if (card === null) {
             return yield* new BoardCardAttachmentError({
               code: "rejected",
               message: `Card ${input.cardId} was not found.`,
@@ -563,7 +568,7 @@ function makeBoardRpcHandlers(
           const attachment = yield* claimBoardCardAttachment({
             stateDir: config.stateDir,
             attachmentsDir: config.attachmentsDir,
-            card: detail.card,
+            card,
             pendingAttachmentId: input.pendingAttachmentId,
             attachmentId: BoardCardAttachmentId.make(yield* crypto.uuidV4()),
             name: input.name,
@@ -629,20 +634,11 @@ function makeBoardRpcHandlers(
         Effect.gen(function* () {
           const config = yield* ServerConfig.ServerConfig;
           const crypto = yield* SecureRandom.SecureRandom;
-          const detail = yield* readDetail(input.cardId).pipe(
-            Effect.mapError(
-              (cause) =>
-                new BoardCardAttachmentError({
-                  code: "internal",
-                  message: cause.message,
-                  cause,
-                }),
-            ),
-          );
-          const attachment = detail?.card.attachments.find(
+          const card = yield* readCard(input.cardId);
+          const attachment = card?.attachments.find(
             (candidate) => candidate.id === input.attachmentId,
           );
-          if (detail === null || attachment === undefined) {
+          if (attachment === undefined) {
             return yield* new BoardCardAttachmentError({
               code: "rejected",
               message: `Attachment ${input.attachmentId} is not on card ${input.cardId}.`,
@@ -684,7 +680,24 @@ function makeBoardRpcHandlers(
             readBoardCiLog(
               {
                 readDetail,
-                subscribeChanges: boardEngine.subscribeBoardEvents,
+                readSettleState: (cardId) =>
+                  Effect.all([readCard(cardId), boardQueries.boardCardCiPasses(cardId)]).pipe(
+                    Effect.map(([card, ciPasses]) => (card === null ? null : { card, ciPasses })),
+                    Effect.mapError(
+                      (cause) =>
+                        new BoardSubscribeCardError({
+                          message: `Failed to load board card ${cardId}.`,
+                          cause,
+                        }),
+                    ),
+                  ),
+                subscribeChanges: boardEngine.subscribeBoardEvents.pipe(
+                  Effect.map(
+                    Stream.map((event) =>
+                      event.aggregateKind === "card" ? (event.aggregateId as BoardCardId) : null,
+                    ),
+                  ),
+                ),
                 worker: services.ciLogWorker,
               },
               input,
@@ -694,24 +707,33 @@ function makeBoardRpcHandlers(
       ),
 
     /**
-     * One subscription per open card: emits the full detail on subscribe and re-emits it on
-     * every board event, disposed with the stream's scope. One card's detail is small enough
-     * that re-emitting it whole beats an event grammar and a client-side merge.
+     * One subscription per open card: emits the full detail on subscribe and re-emits it
+     * when an event touches the card or one its detail embeds, disposed with the stream's
+     * scope. One card's detail is small enough that re-emitting it whole beats an event
+     * grammar and a client-side merge; a re-read identical to the last frame is not sent.
      */
     [BOARD_WS_METHODS.subscribeCard]: (input: BoardSubscribeCardInput) =>
       Stream.unwrap(
         authorized(
           BOARD_WS_METHODS.subscribeCard,
           Effect.gen(function* () {
+            // The last frame sent: its encoding drops identical re-reads, and its related
+            // cards keep an edge removed since then waking this viewer.
+            let lastSent: { readonly detail: BoardCardDetail; readonly encoded: string } | null =
+              null;
             // Attach live delivery BEFORE the initial read, so an event committed during
             // it triggers a re-read. The payload-free buffer slides at capacity 1, so a burst
             // during a re-read collapses into one wake-up and one frame of the latest state.
             const liveBuffer = yield* Queue.sliding<void>(1);
             yield* Effect.forkScoped(
-              // Wake on ANY board event: the detail embeds dependencies and dependents
-              // whose stage and archive state change under events on other cards' ids.
               boardEngine.liveBoardEvents.pipe(
-                Stream.runForEach(() => Queue.offer(liveBuffer, undefined)),
+                Stream.runForEach((event) =>
+                  Effect.flatMap(boardEngine.getReadModel, (model) =>
+                    boardCardDetailWakes(event, model.board, input.cardId, lastSent?.detail ?? null)
+                      ? Queue.offer(liveBuffer, undefined)
+                      : Effect.void,
+                  ),
+                ),
               ),
               { startImmediately: true },
             );
@@ -731,17 +753,21 @@ function makeBoardRpcHandlers(
                 message: `Board card ${input.cardId} does not exist.`,
               });
             }
+            const emit = (detail: BoardCardDetail) => {
+              const encoded = JSON.stringify(detail);
+              if (lastSent?.encoded === encoded) return Stream.empty;
+              lastSent = { detail, encoded };
+              return Stream.make(detailItem(detail));
+            };
 
             return Stream.concat(
-              Stream.make(detailItem(initial)),
+              emit(initial),
               Stream.fromQueue(liveBuffer).pipe(
                 Stream.mapEffect(() => readDetail(input.cardId)),
                 // Null mid-stream: the card was deleted under an open viewer (an
                 // archived card still resolves). Drop the frame rather than close the
                 // stream, so other viewers keep the last frame.
-                Stream.flatMap((detail) =>
-                  detail === null ? Stream.empty : Stream.make(detailItem(detail)),
-                ),
+                Stream.flatMap((detail) => (detail === null ? Stream.empty : emit(detail))),
               ),
             );
           }),
@@ -760,26 +786,18 @@ function makeBoardRpcHandlers(
  */
 export function boardActorStamp(deps: {
   readonly threads: Pick<ThreadGatewayShape, "project">;
-  readonly boardQueries: BoardQueriesShape;
+  readonly readModel: BoardEngineShape["getReadModel"];
   readonly workspaces: Pick<BoardWorkspacesShape, "localProject" | "forCard">;
 }): (command: BoardCommand) => Effect.Effect<void> {
-  const projectByCard = new Map<string, ProjectId>();
   const projectName = boardProjectActorName(deps);
 
+  // The card's project off the in-memory board: before the command is decided, so a
+  // `board.card.set-project` still reads as the project the human acted in.
   const resolveName = Effect.fn("board-activity-actor-name")(function* (cardId: BoardCardId) {
-    let projectId = projectByCard.get(String(cardId));
-    if (projectId === undefined) {
-      const detail = yield* deps.boardQueries
-        .boardCardDetail(cardId)
-        .pipe(Effect.catchCause(() => Effect.succeed(null)));
-      if (detail === null) return BOARD_HUMAN_ACTOR_FALLBACK_NAME;
-      // Cacheable until the card MOVES project, which the stamp
-      // below invalidates — it is the same call path, so the eviction cannot
-      // be missed.
-      projectId = detail.card.projectId;
-      projectByCard.set(String(cardId), projectId);
-    }
-    return yield* projectName(projectId, cardId);
+    const model = yield* deps.readModel;
+    const card = model.board?.cards.find((candidate) => candidate.id === cardId);
+    if (card === undefined) return BOARD_HUMAN_ACTOR_FALLBACK_NAME;
+    return yield* projectName(card.projectId, cardId);
   });
 
   return (command) =>
@@ -787,10 +805,6 @@ export function boardActorStamp(deps: {
       const cardId = (command as { readonly cardId?: BoardCardId }).cardId;
       if (cardId === undefined) return;
       stampBoardActivityActor(command.commandId, boardHumanActor(yield* resolveName(cardId)));
-      // A project change invalidates the cached card->project mapping. Evicted AFTER the stamp:
-      // the command is not decided yet, so this row keeps the old project's identity and the
-      // next command resolves against the new one.
-      if (command.type === "board.card.set-project") projectByCard.delete(String(cardId));
     }).pipe(Effect.ignoreCause);
 }
 
