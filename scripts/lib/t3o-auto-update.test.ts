@@ -24,6 +24,16 @@ describe("auto-update decision", () => {
     expect(decide({ status: { pid: 1 } }).kind).toBe("idle");
   });
 
+  it("forgets the last attempt only once a live server flags nothing", () => {
+    const lastAttemptAt = now - 1;
+    const clear = { pid: 1, boards: [flagged.boards[1]] };
+    expect(decide({ status: clear, lastAttemptAt })).toMatchObject({ forgetAttempt: true });
+    expect(decide({ status: clear, serverAlive: false, lastAttemptAt })).toMatchObject({
+      forgetAttempt: false,
+    });
+    expect(decide({ status: null, lastAttemptAt })).toMatchObject({ forgetAttempt: false });
+  });
+
   it("waits out the retry window after an attempt that left the flag set", () => {
     expect(decide({ lastAttemptAt: now - AUTO_UPDATE_RETRY_MS + 1 })).toMatchObject({
       kind: "wait",

@@ -382,6 +382,20 @@ describe("worker tunnel", () => {
     expect(log.states.at(-1)?.updateRequired).toMatch(/tunnel protocol/);
   });
 
+  it("a worker newer than its board is refused but not flagged for an update", async () => {
+    const local = await startLocalServer("worker-loopback");
+    const board = await startBoard({});
+    const log = statusLog();
+    startWorker({
+      boardUrl: board.url,
+      localPort: local.port,
+      tunnelProtocol: T3O_TUNNEL_PROTOCOL_VERSION + 1,
+      onStatus: log.onStatus,
+    });
+    const parked = await log.when((status) => status.state === "needs-update");
+    expect(parked.updateRequired).toBeNull();
+  });
+
   it("refuses a hello naming another worker than the credential's", async () => {
     const local = await startLocalServer("worker-loopback");
     const board = await startBoard({ credentials: new Map([[CREDENTIAL, "env-other"]]) });

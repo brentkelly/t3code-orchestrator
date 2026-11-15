@@ -335,10 +335,14 @@ export class TunnelWorker {
                 return;
               case "needs-update": {
                 const reason = `The board speaks tunnel protocol ${message.tunnelProtocol ?? "?"}, this worker ${this.tunnelProtocol}. Update T3o on the older side.`;
+                // The board refuses a mismatch either way; only a newer board means this side is old.
+                const boardNewer =
+                  message.tunnelProtocol === undefined ||
+                  message.tunnelProtocol > this.tunnelProtocol;
                 this.setStatus({
                   state: "needs-update",
                   lastError: reason,
-                  updateRequired: reason,
+                  updateRequired: boardNewer ? reason : null,
                 });
                 // Keep dialling, slowly: updating the board brings this worker back by itself.
                 parkedForUpdate = true;

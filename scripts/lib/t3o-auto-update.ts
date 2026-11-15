@@ -11,7 +11,12 @@ export const AUTO_UPDATE_STATE_FILE = "t3o-auto-update.json";
 export const AUTO_UPDATE_RETRY_MS = 30 * 60_000;
 
 export type AutoUpdateDecision =
-  | { readonly kind: "idle"; readonly reason: string }
+  | {
+      readonly kind: "idle";
+      readonly reason: string;
+      /** A live server flags nothing: an earlier attempt worked, so its retry window no longer applies. */
+      readonly forgetAttempt: boolean;
+    }
   | { readonly kind: "wait"; readonly reasons: ReadonlyArray<string>; readonly retryAt: string }
   | { readonly kind: "update"; readonly reasons: ReadonlyArray<string> };
 
@@ -37,13 +42,23 @@ export function decideAutoUpdate(input: {
   readonly now: number;
 }): AutoUpdateDecision {
   if (input.status === null) {
-    return { kind: "idle", reason: "no worker status yet: the server hasn't reported." };
+    return {
+      kind: "idle",
+      reason: "no worker status yet: the server hasn't reported.",
+      forgetAttempt: false,
+    };
   }
   if (!input.serverAlive) {
-    return { kind: "idle", reason: "the T3o server isn't running, so its status is stale." };
+    return {
+      kind: "idle",
+      reason: "the T3o server isn't running, so its status is stale.",
+      forgetAttempt: false,
+    };
   }
   const reasons = updateReasons(input.status);
-  if (reasons.length === 0) return { kind: "idle", reason: "no board needs an update." };
+  if (reasons.length === 0) {
+    return { kind: "idle", reason: "no board needs an update.", forgetAttempt: true };
+  }
   if (input.lastAttemptAt !== null && input.now - input.lastAttemptAt < AUTO_UPDATE_RETRY_MS) {
     const retryAt = new Date(input.lastAttemptAt + AUTO_UPDATE_RETRY_MS).toISOString();
     return { kind: "wait", reasons, retryAt };

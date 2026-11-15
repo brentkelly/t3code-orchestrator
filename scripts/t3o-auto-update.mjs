@@ -48,7 +48,11 @@ function fail(message) {
 }
 
 const log = (message) => console.log(`[t3o-auto-update] ${message}`);
-const sudoWorks = () => NodeChildProcess.spawnSync("sudo", ["-n", "true"]).status === 0;
+// `-k` ignores sudo's credential cache, so a password typed moments ago doesn't pass the probe.
+const sudoWorks = () => NodeChildProcess.spawnSync("sudo", ["-k", "-n", "true"]).status === 0;
+if (!/^[A-Za-z0-9@._-]+$/.test(values.unit)) {
+  fail(`--unit must be a systemd unit name without .service, got ${JSON.stringify(values.unit)}`);
+}
 const timerName = `${values.unit}-auto-update`;
 const timerDir = "/etc/systemd/system";
 
@@ -89,7 +93,13 @@ try {
   );
 }
 
+/** One ExecStart word, quoted for systemd: `%` starts a specifier there. */
+const unitWord = (word) =>
+  `"${word.replaceAll("\\", "\\\\").replaceAll('"', '\\"').replaceAll("%", "%%")}"`;
+
 if (values.install) {
+  // Probe before the sudo calls below refresh the credential cache.
+  const passwordlessSudo = sudoWorks();
   const service = [
     "[Unit]",
     `Description=T3o worker auto-update (${values.unit}.service)`,
@@ -99,9 +109,9 @@ if (values.install) {
     "[Service]",
     "Type=oneshot",
     `User=${NodeOS.userInfo().username}`,
-    `WorkingDirectory=${repoRoot}`,
+    `WorkingDirectory=${repoRoot.replaceAll("%", "%%")}`,
     `Environment="PATH=${NodePath.dirname(process.execPath)}:/usr/local/bin:/usr/bin:/bin"`,
-    `ExecStart=${process.execPath} ${NodePath.join(repoRoot, "scripts/t3o-auto-update.mjs")} --unit ${values.unit}`,
+    `ExecStart=${[process.execPath, NodePath.join(repoRoot, "scripts/t3o-auto-update.mjs"), "--unit", values.unit].map(unitWord).join(" ")}`,
   ];
   const timer = [
     "[Unit]",
@@ -119,7 +129,7 @@ if (values.install) {
   run("sudo", ["systemctl", "daemon-reload"]);
   run("sudo", ["systemctl", "enable", "--now", `${timerName}.timer`]);
   log(`Installed ${timerName}.timer. Its runs log to \`journalctl -u ${timerName}\`.`);
-  if (!sudoWorks()) {
+  if (!passwordlessSudo) {
     log(
       `Warning: ${NodeOS.userInfo().username} can't sudo without a password, and an update reinstalls the service with sudo. Allow it, or the timer's updates will fail.`,
     );
@@ -155,18 +165,21 @@ const decision = decideAutoUpdate({
   now: Date.now(),
 });
 
+const interactive = values.check || process.stdout.isTTY;
 if (decision.kind === "idle") {
-  // The timer runs this every two minutes: an idle tick writes nothing to the journal.
-  if (values.check || process.stdout.isTTY) log(`Up to date: ${decision.reason}`);
+  if (decision.forgetAttempt) NodeFS.rmSync(statePath, { force: true });
+  // The timer runs this every two minutes: idle and wait ticks write nothing to the journal.
+  if (interactive) log(`Up to date: ${decision.reason}`);
   process.exit(0);
 }
 const reasons = decision.reasons.map((reason) => `  ${reason}`).join("\n");
 if (values.check || decision.kind === "wait") {
-  log(
-    decision.kind === "wait"
-      ? `An update is needed, but the last attempt didn't clear it; retrying after ${decision.retryAt}:\n${reasons}`
-      : `An update is needed:\n${reasons}`,
-  );
+  if (interactive)
+    log(
+      decision.kind === "wait"
+        ? `An update is needed, but the last attempt didn't clear it; retrying after ${decision.retryAt}:\n${reasons}`
+        : `An update is needed:\n${reasons}`,
+    );
   process.exit(values.check ? 10 : 0);
 }
 
