@@ -162,6 +162,19 @@ export interface BoardThreadRecord {
   readonly settlementDecided: boolean;
 }
 
+/** Whether the release sweep still has anything to ask a thread about. */
+export const isOpenThreadRecord = (record: BoardThreadRecord): boolean =>
+  !record.deleted && !record.archived && !record.settlementDecided;
+
+/** The release sweep's read. A thread in neither set is finished: deleted, archived, settled
+    or never existed. */
+export interface BoardOpenThreads {
+  /** Live, unarchived, with no settlement decided. */
+  readonly open: ReadonlySet<ThreadId>;
+  /** On a worker that could not be asked; nothing is known about them. */
+  readonly unanswered: ReadonlySet<ThreadId>;
+}
+
 /** A thread whose cwd is a given worktree — what retiring the worktree stops. */
 export interface BoardWorktreeThread {
   readonly threadId: ThreadId;
@@ -370,6 +383,11 @@ export interface ThreadGatewayShape {
   readonly threadRecords: (
     threadIds: ReadonlyArray<ThreadId>,
   ) => Effect.Effect<ReadonlyMap<ThreadId, BoardThreadRecord>, ThreadReadError>;
+  /** Of these threads, the ones still open to a settle. The filter runs where the threads
+      live, so the cost follows the open threads, not every thread the board ever released. */
+  readonly openThreadIds: (
+    threadIds: ReadonlyArray<ThreadId>,
+  ) => Effect.Effect<BoardOpenThreads, ThreadReadError>;
   /** Threads whose cwd is this worktree. */
   readonly threadsInWorktree: (
     worktreePath: string,

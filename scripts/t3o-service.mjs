@@ -14,6 +14,7 @@ import * as NodeUtil from "node:util";
 
 import { selectCliRuntimeExternalDependencies } from "./lib/cli-external-packages.ts";
 import { applyPnpmPatches, readPatchedDependencies } from "./lib/pnpm-patches.ts";
+import { publishDist } from "./lib/t3o-publish-dist.ts";
 import { gitconfigAdvice, installGitShims, uninstallGitShims } from "./lib/t3o-git-shims.ts";
 import {
   INSIDE_UNIT_MESSAGE,
@@ -430,7 +431,7 @@ function unhealthy(reason) {
 function publishBuild() {
   console.log(`[t3o-service] Syncing build to ${appDir}...`);
   NodeFS.mkdirSync(appDir, { recursive: true });
-  run("rsync", ["-a", "--delete", `${distDir}/`, `${NodePath.join(appDir, "dist")}/`]);
+  publishDist(distDir, NodePath.join(appDir, "dist"));
   syncRuntimeDependencies();
 }
 
