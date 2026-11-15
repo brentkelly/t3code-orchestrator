@@ -119,6 +119,7 @@ function makeGateway(
   } = {},
 ) {
   const calls: string[] = [];
+  const configReads: string[] = [];
   const layer = BoardPullRequestGateway.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -135,9 +136,12 @@ function makeGateway(
         }),
         Layer.mock(GitVcsDriver.GitVcsDriver)({
           readConfigValue: (cwd, key) =>
-            Effect.succeed(
-              cwd === "/repo" && key === "remote.origin.url" ? (options.originUrl ?? null) : null,
-            ),
+            Effect.sync(() => {
+              configReads.push(`${cwd}:${key}`);
+              return cwd === "/repo" && key === "remote.origin.url"
+                ? (options.originUrl ?? null)
+                : null;
+            }),
         }),
         Layer.succeed(
           ThreadGateway,
@@ -210,7 +214,7 @@ function makeGateway(
       ),
     ),
   );
-  return { calls, layer };
+  return { calls, configReads, layer };
 }
 
 describe("BoardPullRequestGateway.find", () => {
@@ -273,6 +277,18 @@ describe("BoardPullRequestGateway.get", () => {
         "invalidate:brentkelly/t3code-orchestrator:110",
         "summary:brentkelly/t3code-orchestrator:110:allowStale=false",
       ]);
+    }).pipe(Effect.provide(layer));
+  });
+});
+
+describe("BoardPullRequestGateway origin", () => {
+  it.effect("reads a checkout's origin once across forge calls", () => {
+    const { configReads, layer } = makeGateway();
+    return Effect.gen(function* () {
+      const gateway = yield* BoardPullRequestGateway.BoardPullRequestGateway;
+      yield* gateway.merge({ projectId: PROJECT, number: 110, method: "squash" });
+      yield* gateway.merge({ projectId: PROJECT, number: 111, method: "squash" });
+      assert.deepStrictEqual(configReads, ["/repo:remote.origin.url"]);
     }).pipe(Effect.provide(layer));
   });
 });

@@ -631,6 +631,8 @@ export function withGovernor(
         whose checks CHANGE between two probes — a failed check a CI fix's
         push turned into a pending one. Takes precedence over `mergeState`. */
     readonly mergeStateOf?: () => BoardMergeState;
+    /** Awaited before each merge-state read answers: a forge that is slow, or never answers. */
+    readonly mergeStateGate?: Effect.Effect<void>;
     /**
      * What a mark-ready request answers, per call and in order; the last entry repeats once the
      * script runs out. A string is a failure with that detail. Absent answers `not-draft`.
@@ -1170,6 +1172,7 @@ export function withGovernor(
         ),
       mergeState: (request) =>
         Ref.update(mergeStateProbes, (probes) => [...probes, { number: request.number }]).pipe(
+          Effect.andThen(input.mergeStateGate ?? Effect.void),
           Effect.andThen(() => {
             const configured = input.mergeStateOf?.() ?? input.mergeState;
             return configured === undefined

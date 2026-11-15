@@ -177,6 +177,7 @@ import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -643,7 +644,20 @@ type SupervisorInput =
   // online, an instance appeared — which may start a held card.
   | { readonly source: "workers" }
   // A CI pass finished on its own fiber; what follows is decided here.
-  | { readonly source: "ci"; readonly finished: BoardCiPassFinished };
+  | { readonly source: "ci"; readonly finished: BoardCiPassFinished }
+  // T3o: a forge-checks step's read came back from its own fiber (T3O-108).
+  | {
+      readonly source: "forge-probe";
+      readonly cardId: BoardCardId;
+      readonly runId: string;
+      readonly probe: ForgeProbe;
+    };
+
+/** One forge read of a pull request's merge state, or why it could not be read. */
+interface ForgeProbe {
+  readonly state: BoardMergeState | null;
+  readonly failure: string | undefined;
+}
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
@@ -4834,8 +4848,16 @@ const make = Effect.gen(function* () {
       readied: boolean;
       errors: number;
       lastKey: string;
+      /** A forge read is out: one at a time per card, so a slow forge cannot stack polls. */
+      probing?: boolean;
     }
   >();
+
+  /** Forge reads out on their own fibers, so `drainCi` can wait for their answers. */
+  const forgeProbesInFlight = new Set<Deferred.Deferred<void>>();
+  const awaitForgeProbes: Effect.Effect<void> = Effect.suspend(() =>
+    Effect.forEach([...forgeProbesInFlight], Deferred.await, { discard: true }),
+  );
 
   const startCiForgeStep: (
     card: BoardCard,
@@ -5208,16 +5230,16 @@ const make = Effect.gen(function* () {
   );
 
   /**
-   * Read one card's forge checks and act on them. A draft pull request is marked ready first,
-   * since draft-gated workflows never run. No pull request, an unreadable forge, or five failed
-   * reads in a row hold the card.
+   * Start reading one card's forge checks. A draft pull request is marked ready first, since
+   * draft-gated workflows never run. The read itself runs on its own fiber, off the serial
+   * queue (T3O-108), and its answer comes back through the queue to `settleCiForgeProbe`.
    */
   const pollCiForgeStep: (cardId: BoardCardId) => Effect.Effect<void> = Effect.fn(
     "board-supervisor-pollCiForgeStep",
   )(
     function* (cardId: BoardCardId) {
       const entry = forgeSteps.get(String(cardId));
-      if (entry === undefined) return;
+      if (entry === undefined || entry.probing === true) return;
       const card = yield* readCard(cardId);
       if (card === null || !isCiPassLive(card, entry.runId)) {
         forgeSteps.delete(String(cardId));
@@ -5247,7 +5269,60 @@ const make = Effect.gen(function* () {
         entry.readied = true;
         yield* markCardPullRequestReady(card, { forMerge: true });
       }
-      const probe = yield* probeMergeState(card);
+      entry.probing = true;
+      const done = yield* Deferred.make<void>();
+      forgeProbesInFlight.add(done);
+      const runId = entry.runId;
+      yield* probeMergeState(card).pipe(
+        Effect.flatMap((probe) => worker.enqueue({ source: "forge-probe", cardId, runId, probe })),
+        Effect.onExit((exit) =>
+          Effect.sync(() => {
+            if (exit._tag === "Failure") entry.probing = false;
+          }),
+        ),
+        Effect.ensuring(
+          Effect.suspend(() => {
+            forgeProbesInFlight.delete(done);
+            return Deferred.succeed(done, undefined);
+          }),
+        ),
+        Effect.ignoreCause,
+        Effect.forkDetach,
+      );
+    },
+    Effect.catchCause((cause) =>
+      Effect.logWarning("board supervisor: forge check poll failed", {
+        cause: Cause.pretty(cause),
+      }),
+    ),
+  );
+
+  /**
+   * Act on one forge read, back on the serial queue. No pull request, an unreadable forge, or
+   * five failed reads in a row hold the card. A read for a pass that has moved on is dropped.
+   */
+  const settleCiForgeProbe = Effect.fn("board-supervisor-settleCiForgeProbe")(
+    function* (cardId: BoardCardId, runId: string, probe: ForgeProbe) {
+      const entry = forgeSteps.get(String(cardId));
+      if (entry === undefined || entry.runId !== runId) return;
+      entry.probing = false;
+      const card = yield* readCard(cardId);
+      if (card === null || !isCiPassLive(card, entry.runId)) {
+        forgeSteps.delete(String(cardId));
+        return;
+      }
+      const { rows, steps } = yield* ciPassSnapshot(card.id, entry.runId);
+      const step = steps?.[entry.index];
+      const row = ciStepRow(card, rows, entry.index);
+      if (
+        steps === null ||
+        step === undefined ||
+        step.kind !== "forge-checks" ||
+        row === undefined
+      ) {
+        forgeSteps.delete(String(cardId));
+        return;
+      }
       if (probe.state === null) {
         entry.errors += 1;
         if (entry.errors >= 5) {
@@ -12280,6 +12355,8 @@ const make = Effect.gen(function* () {
         return reconcile;
       case "ci":
         return handleCiPassFinished(input.finished);
+      case "forge-probe":
+        return settleCiForgeProbe(input.cardId, input.runId, input.probe);
       case "workers":
         // A worker back online is reconciled before anything is
         // scheduled onto it.
@@ -12530,7 +12607,10 @@ const make = Effect.gen(function* () {
     reconcile,
     // Forge-check CI steps poll on the sweep too.
     sweep: sweepTimeouts.pipe(
+      // A forge read answers through the queue: the sweep waits for it to land.
       Effect.andThen(sweepCiForgeSteps),
+      Effect.andThen(awaitForgeProbes),
+      Effect.andThen(worker.drain),
       Effect.andThen(sweepOrphanedCiPasses),
       // T3o: and worker capacity's phase rule and sync (T3O-86).
       Effect.andThen(sweepCapacity),
@@ -12555,8 +12635,13 @@ const make = Effect.gen(function* () {
     // is running. Never used by `drain`: a long pass would block it.
     drainCi: Effect.suspend(function drainCi(): Effect.Effect<void> {
       return ciPasses.awaitIdle.pipe(
+        Effect.andThen(awaitForgeProbes),
         Effect.andThen(worker.drain),
-        Effect.andThen(Effect.suspend(() => (ciPasses.busy() ? drainCi() : Effect.void))),
+        Effect.andThen(
+          Effect.suspend(() =>
+            ciPasses.busy() || forgeProbesInFlight.size > 0 ? drainCi() : Effect.void,
+          ),
+        ),
       );
     }),
     retryCi: (cardId, action = "retry") =>
