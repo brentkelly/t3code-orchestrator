@@ -5,11 +5,8 @@
  */
 import { presentThreadShell } from "@t3tools/client-runtime/state/models";
 import {
-  boardCardLinkedThreadIds,
   type BoardCardThreadShells,
-  EMPTY_BOARD_CARD_THREAD_SHELLS,
   indexLiveCardThreadIds,
-  projectBoardCardThreadShells,
 } from "@t3tools/client-runtime/state/shell";
 import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
 import { threadKey } from "@t3tools/client-runtime/state/entities";
@@ -66,27 +63,21 @@ interface WatchedThreads {
 
 /** What the notifier reads of the shell; equal across pushes that change no card-linked thread,
     so streaming on unrelated threads does not wake it. */
-const watchedThreadsAtom = Atom.family((environmentId: EnvironmentId) => {
-  let previous: BoardCardThreadShells = EMPTY_BOARD_CARD_THREAD_SHELLS;
-  return Atom.make((get): WatchedThreads => {
-    const board = get(boardEnvironment.boardAtom(environmentId));
+const watchedThreadsAtom = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make((get): WatchedThreads => {
     const shell = get(environmentShell.stateValueAtom(environmentId));
-    const live = shell.status === "live" && Option.isSome(shell.snapshot);
-    previous = projectBoardCardThreadShells({
-      linkedThreadIds:
-        board === null ? new Set() : boardCardLinkedThreadIds(board.cards, board.cardThreads),
-      threads: Option.match(shell.snapshot, { onNone: () => [], onSome: (value) => value.threads }),
-      previous,
-    });
-    return { live, threads: previous };
+    return {
+      live: shell.status === "live" && Option.isSome(shell.snapshot),
+      threads: get(boardEnvironment.cardThreadShellsAtom(environmentId)),
+    };
   }).pipe(
     Atom.withEquality(
       (left: WatchedThreads, right: WatchedThreads) =>
         left.live === right.live && left.threads === right.threads,
     ),
     Atom.withLabel(`t3o-board-notifier-threads:${environmentId}`),
-  );
-});
+  ),
+);
 
 const upstreamAlertsOn = (settings: ClientSettings) =>
   settings.notificationMode !== "off" || settings.inAppNotificationsEnabled;

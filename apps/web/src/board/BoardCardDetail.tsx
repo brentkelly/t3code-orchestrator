@@ -74,7 +74,6 @@ import { getTriggerDisplayModelName } from "../components/chat/providerIconUtils
 import { boardEnvironment } from "../state/board";
 import {
   cardThreadIdsMissingFromShell,
-  OFF_SHELL_THREAD_STATE,
   useBoardCardOffShellThreads,
   useBoardCardShellThreads,
 } from "./boardCardThreadRows";
@@ -509,12 +508,11 @@ export function BoardCardDetail({
     (link) => {
       const thread = cardShellThreads.get(link.threadId);
       const offShellTitle = offShellThreads.titles.get(link.threadId);
+      // The titles read carries no run state, so an off-shell thread's state stays unknown.
       const source =
-        thread !== undefined
-          ? boardThreadStateSourceWithSubagents(thread, subagentRequests)
-          : offShellTitle !== undefined
-            ? OFF_SHELL_THREAD_STATE
-            : undefined;
+        thread === undefined
+          ? undefined
+          : boardThreadStateSourceWithSubagents(thread, subagentRequests);
       const { threadState, awaitingInput } = deriveBoardCardThreadState(source);
       const worker = boardThreadWorker({
         workerId: link.workerId,

@@ -13,7 +13,6 @@ import {
 import { threadFamilyRead } from "@t3tools/client-runtime/state/threads";
 import type {
   BoardCardThreadLink,
-  BoardThreadStateSource,
   EnvironmentId,
   OrchestrationV2ThreadShell,
   ThreadId,
@@ -140,21 +139,23 @@ export interface BoardCardOffShellThreads {
 
 const NO_OFF_SHELL_TITLES: ReadonlyMap<ThreadId, string> = new Map();
 
-/** A thread the shell left out has settled: the shell keeps every thread with a live run. */
-export const OFF_SHELL_THREAD_STATE: BoardThreadStateSource = {
-  hasPendingUserInput: false,
-  hasPendingApprovals: false,
-  session: { status: "ready" },
-  backgroundLiveness: null,
-};
+/** Whether the shell holds its first snapshot. Until then every thread is missing from it,
+    live ones included, so absence says nothing. */
+const shellLoadedAtom = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make((get) =>
+    Option.isSome(get(environmentShell.stateValueAtom(environmentId)).snapshot),
+  ).pipe(Atom.withLabel(`t3o:board:shell-loaded:${environmentId}`)),
+);
 
-/** The titles of `threadIds` the shell left out, in one read however many there are. */
+/** The titles of `threadIds` the shell left out, in one read however many there are, once the
+    shell has loaded; loading until then. */
 export function useBoardCardOffShellThreads(
   environmentId: EnvironmentId,
   threadIds: ReadonlyArray<ThreadId>,
 ): BoardCardOffShellThreads {
+  const shellLoaded = useAtomValue(shellLoadedAtom(environmentId));
   const read = useEnvironmentQuery(
-    threadIds.length === 0
+    !shellLoaded || threadIds.length === 0
       ? null
       : orchestrationEnvironment.threadTitles({ environmentId, input: { threadIds } }),
   );
@@ -162,5 +163,5 @@ export function useBoardCardOffShellThreads(
     read.data === null
       ? NO_OFF_SHELL_TITLES
       : new Map(Object.entries(read.data) as Array<[ThreadId, string]>);
-  return { titles, loading: read.isPending };
+  return { titles, loading: !shellLoaded || read.isPending };
 }
