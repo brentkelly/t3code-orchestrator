@@ -317,10 +317,10 @@ export function boardCardIsDone(
     create dialog, so it lives in `BoardCardFields`. */
 export type BoardDetailDependency = BoardDependencyEntry;
 
-/** The rail's shared tail, in both layouts: labels, dependencies and
-    activity, then Automation and the Stage ladder, collapsed by default with
-    their summaries on the header, then provenance. Dependencies and Activity
-    sit here even on a Backlog card, so the brief has the main column. */
+/** The rail's shared tail, in both layouts: labels, dependencies, activity,
+    Automation, Priority, Resources and the Stage ladder (collapsibles closed,
+    summaries on the header), then provenance. Dependencies and Activity sit
+    here even on a Backlog card, so the brief has the main column. */
 function RailSections({
   props,
   group,
@@ -381,6 +381,7 @@ function RailSections({
           />
         </div>
       )}
+      {props.capacityPanel ?? null}
       {group === null ? (
         <BoardCollapsibleSection
           className="border-t border-border p-3.5"
@@ -678,7 +679,7 @@ export interface BoardCardDetailViewProps {
   /** Write this card's own merge strategy; null returns it to the default.
       Absent hides the control. */
   readonly onSetMergeStrategy?: ((next: BoardMergeStrategy | null) => void) | undefined;
-  /** T3o: the card's size and setup, under its title in both layouts (T3O-86). */
+  /** T3o: the card's size and setup, a collapsed Resources section in the rail (T3O-86). */
   readonly capacityPanel?: React.ReactNode;
   /** Write the card's priority. Absent hides the row and the chip: a group has none. */
   readonly onSetPriority?: ((next: BoardCardPriority) => void) | undefined;
@@ -3158,7 +3159,6 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
       </div>
 
       <TitleBody done={done} onSave={props.onSaveTitle} title={card.title} />
-      {props.capacityPanel ?? null}
 
       {/* One insertion above the layout split covers both forms. Only
           the wide one offers `View thread`: the narrow layout has no thread

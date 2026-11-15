@@ -1,7 +1,11 @@
 import type { BoardCardResources, BoardCardSetupResult } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { boardCardCapacityView, boardCardSetupView } from "./boardCardCapacity";
+import {
+  boardCardCapacityView,
+  boardCardResourcesSummary,
+  boardCardSetupView,
+} from "./boardCardCapacity";
 
 const baseline = {
   baseline: { cpuCores: 12, ramGiB: 16, diskGB: 45, setAtUpgrade: false },
@@ -127,5 +131,36 @@ describe("boardCardSetupView", () => {
     expect(boardCardSetupView({ setup: failed, workerLabel: "b", stepFailed: true }).face).toBe(
       "Setup failed · 3/4",
     );
+  });
+});
+
+describe("boardCardResourcesSummary", () => {
+  const size = { cpu: "M", ram: "L", disk: "S" } as const;
+  const quiet = { face: null, faceTone: null };
+  it.each([
+    ["the size when nothing needs a look", { size, tooBig: null }, quiet, "M · L · S", null],
+    [
+      "Too big ahead of setup",
+      { size, tooBig: "CPU XL needs 18 cores" },
+      { face: "Preparing · 1/4", faceTone: "running" as const },
+      "Too big",
+      "blocked",
+    ],
+    [
+      "a failed setup in amber",
+      { size, tooBig: null },
+      { face: "Setup failed · 3/4", faceTone: "blocked" as const },
+      "Setup failed · 3/4",
+      "blocked",
+    ],
+    [
+      "setup in progress in blue",
+      { size, tooBig: null },
+      { face: "Preparing · 2/4", faceTone: "running" as const },
+      "Preparing · 2/4",
+      "running",
+    ],
+  ])("shows %s", (_name, capacity, setup, text, tone) => {
+    expect(boardCardResourcesSummary(capacity, setup)).toEqual({ text, tone });
   });
 });

@@ -1,7 +1,8 @@
 /**
- * T3o: a card's size and setup in its detail (T3O-86): an S/M/L/XL control per dimension
- * with the reservation it makes, the planner's reason and Reset, the Too-big note, and the
- * setup's stages with Retry, Cancel and its log. The lines come from `boardCardCapacity.ts`.
+ * T3o: a card's size and setup, in a collapsed Resources section of its detail's rail
+ * (T3O-86, T3O-100): an S/M/L/XL control per dimension with the reservation it makes, the
+ * planner's reason and Reset, the Too-big note, and the setup's stages with Retry, Cancel and
+ * its log. The lines come from `boardCardCapacity.ts`.
  */
 import {
   boardCardEffectiveWorkerId,
@@ -26,10 +27,12 @@ import { boardEnvironment } from "../state/board";
 import { useAtomCommand } from "../state/use-atom-command";
 import {
   boardCardCapacityView,
+  boardCardResourcesSummary,
   boardCardSetupView,
   type BoardCardCapacityView,
   type BoardCardSetupView,
 } from "./boardCardCapacity";
+import { BoardCollapsibleSection } from "./BoardCardFields";
 import { boardWorkerLabel } from "./workers/cardWorker";
 
 const DIMENSION_LABELS = { cpu: "CPU", ram: "RAM", disk: "Disk" } as const;
@@ -70,20 +73,20 @@ function BoardCardCapacityPanel(props: {
   readonly projectId: string;
   readonly onSetSize: (size: BoardCardSize | null) => void;
   readonly onSetupAction: (action: "retry" | "cancel") => void;
-  /** The log's text, "" when it has none, or null when it couldn't be read. */
-  readonly onReadSetupLog: () => Promise<string | null>;
+  readonly setupOpen: boolean;
+  readonly onToggleSetup: () => void;
+  /** The fetched log's text, or null until "Open full log" is pressed. */
+  readonly log: string | null;
+  readonly onOpenLog: () => void;
 }) {
-  const { capacity, setup } = props;
-  const [setupOpen, setSetupOpen] = useState(false);
-  const [log, setLog] = useState<string | null>(null);
-  const showSetupDetail = setup.collapsed === null || setupOpen;
+  const { capacity, setup, log } = props;
+  const showSetupDetail = setup.collapsed === null || props.setupOpen;
   return (
-    <section className="flex flex-col gap-2.5 border-b border-border px-5 py-3 text-board-12-5">
-      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-        <span className="font-medium text-foreground">Resources</span>
-        <span className="text-muted-foreground">Reserves {capacity.reservation}</span>
-        <span className="text-muted-foreground">
-          · baseline {capacity.baseline}{" "}
+    <div className="flex flex-col gap-2.5 text-board-12">
+      <div className="flex flex-col gap-0.5 text-muted-foreground">
+        <span>Reserves {capacity.reservation}</span>
+        <span>
+          Baseline {capacity.baseline} ·{" "}
           <Link
             className="underline"
             params={{ projectId: props.projectId, tab: "resources" }}
@@ -99,7 +102,7 @@ function BoardCardCapacityPanel(props: {
             <span className="text-muted-foreground">{DIMENSION_LABELS[dimension]}</span>
             <ToggleGroup
               aria-label={`${DIMENSION_LABELS[dimension]} size`}
-              className="w-full max-w-64 *:flex-1"
+              className="w-full *:flex-1"
               onValueChange={(next) => {
                 const letter = next[0] as BoardCardSizeLetter | undefined;
                 if (letter === undefined || letter === capacity.size[dimension]) return;
@@ -141,7 +144,7 @@ function BoardCardCapacityPanel(props: {
           ) : (
             <button
               className="self-start text-muted-foreground hover:text-foreground"
-              onClick={() => setSetupOpen((open) => !open)}
+              onClick={props.onToggleSetup}
               type="button"
             >
               {setup.collapsed}
@@ -164,15 +167,7 @@ function BoardCardCapacityPanel(props: {
                     Cancel setup
                   </Button>
                 ) : null}
-                <Button
-                  onClick={() => {
-                    void props
-                      .onReadSetupLog()
-                      .then((text) => setLog(text ?? "Couldn't read the log from the worker."));
-                  }}
-                  size="xs"
-                  variant="ghost-muted"
-                >
+                <Button onClick={props.onOpenLog} size="xs" variant="ghost-muted">
                   Open full log
                 </Button>
               </div>
@@ -185,7 +180,7 @@ function BoardCardCapacityPanel(props: {
           ) : null}
         </div>
       )}
-    </section>
+    </div>
   );
 }
 
@@ -224,20 +219,49 @@ export function BoardCardCapacityPanelHost(props: {
     workerLabel,
     stepFailed: props.stepFailed,
   });
+  const summary = boardCardResourcesSummary(capacity, setup);
+  // Held here, not in the panel: collapsing Resources unmounts the panel.
+  const [setupOpen, setSetupOpen] = useState(false);
+  const [log, setLog] = useState<string | null>(null);
   return (
-    <BoardCardCapacityPanel
-      capacity={capacity}
-      onReadSetupLog={() =>
-        capacityAction({ environmentId, input: { action: "setupLog", cardId: card.id } }).then(
-          (result) => (result._tag === "Success" ? (result.value ?? "") : null),
-        )
+    <BoardCollapsibleSection
+      className="border-t border-border p-3.5"
+      summary={
+        <span
+          className={cn(
+            summary.tone === "blocked" && "text-warning-foreground",
+            summary.tone === "running" && "text-info-foreground",
+          )}
+        >
+          {summary.text}
+        </span>
       }
-      onSetSize={(size) => void updateCard({ environmentId, input: { cardId: card.id, size } })}
-      onSetupAction={(action) =>
-        void setupAction({ environmentId, input: { cardId: card.id, action } })
-      }
-      projectId={card.projectId}
-      setup={setup}
-    />
+      title="Resources"
+    >
+      <BoardCardCapacityPanel
+        capacity={capacity}
+        log={log}
+        onOpenLog={() => {
+          void capacityAction({
+            environmentId,
+            input: { action: "setupLog", cardId: card.id },
+          }).then((result) =>
+            setLog(
+              result._tag === "Success"
+                ? (result.value ?? "")
+                : "Couldn't read the log from the worker.",
+            ),
+          );
+        }}
+        onSetSize={(size) => void updateCard({ environmentId, input: { cardId: card.id, size } })}
+        onSetupAction={(action) =>
+          void setupAction({ environmentId, input: { cardId: card.id, action } })
+        }
+        onToggleSetup={() => setSetupOpen((open) => !open)}
+        projectId={card.projectId}
+        setup={setup}
+        setupOpen={setupOpen}
+      />
+    </BoardCollapsibleSection>
   );
 }

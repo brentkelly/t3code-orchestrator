@@ -202,9 +202,9 @@ A card reserves its project's **baseline** on its worker: what one normal card o
 needs in CPU, RAM and disk. Set it in **Settings → Board → Projects → <project> → Resources**, or
 in the `resources` block of the project's `t3o.json`. Each card has a size per dimension — S, M, L
 or XL — that scales the baseline (M is the baseline itself). The planner suggests a size with its
-plan; change it in the card's details, where **Reset to planner** goes back to the suggestion. A
-new size applies the next time the card is placed: a card that already has a worktree keeps the
-size it was granted.
+plan; change it under **Resources** in the card's sidebar, where **Reset to planner** goes back to
+the suggestion. A new size applies the next time the card is placed: a card that already has a
+worktree keeps the size it was granted.
 
 A card bigger than its worker's whole capacity says **Too big** and can't be placed there. Lower
 its size or the project's baseline, or pin it to a bigger worker. The Resources tab warns about
