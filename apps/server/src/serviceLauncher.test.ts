@@ -490,8 +490,23 @@ if (context.update?.status === "pending") {
         INSERT INTO events (payload) SELECT 'before the update ' || i FROM n;
       `);
         seed.close();
+        // T3o: a second database rides along with the online backup and rolls back with it.
+        const boardsPath = path.join(root, "userdata", "boards.sqlite");
+        const boards = new NodeSqlite.DatabaseSync(boardsPath);
+        boards.exec(`
+        PRAGMA journal_mode = ${journalMode};
+        CREATE TABLE cards (id INTEGER PRIMARY KEY, title TEXT NOT NULL);
+        INSERT INTO cards (title) VALUES ('before the update');
+      `);
+        boards.close();
 
-        const encoded = JSON.stringify({ root, databasePath, observationsPath, journalMode });
+        const encoded = JSON.stringify({
+          root,
+          databasePath,
+          boardsPath,
+          observationsPath,
+          journalMode,
+        });
         const childSource = `
 import { readdirSync, writeFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
@@ -504,6 +519,9 @@ if (context.update?.status === "pending") {
   const trial = new DatabaseSync(context.update.dbPath);
   trial.exec("PRAGMA journal_mode = " + paths.journalMode + "; INSERT INTO events (payload) VALUES ('trial');");
   trial.close();
+  const trialBoards = new DatabaseSync(paths.boardsPath);
+  trialBoards.exec("INSERT INTO cards (title) VALUES ('trial');");
+  trialBoards.close();
   process.exit(1);
 } else if (context.update === undefined) {
   const db = new DatabaseSync(paths.databasePath);
@@ -566,8 +584,22 @@ if (context.update?.status === "pending") {
         // Only the online copy holds no -shm: the offline fallback copies the one the server left.
         assert.deepEqual(
           JSON.parse(yield* fs.readFileString(`${observationsPath}.trial`)),
-          journalMode === "wal" ? ["state.sqlite", "state.sqlite-wal"] : ["state.sqlite"],
+          journalMode === "wal"
+            ? ["boards.sqlite", "state.sqlite", "state.sqlite-wal"]
+            : ["boards.sqlite", "state.sqlite"],
         );
+        const restoredBoards = new NodeSqlite.DatabaseSync(boardsPath);
+        try {
+          assert.deepEqual(
+            restoredBoards
+              .prepare("SELECT title FROM cards")
+              .all()
+              .map((row) => row.title),
+            ["before the update"],
+          );
+        } finally {
+          restoredBoards.close();
+        }
         const restored = new NodeSqlite.DatabaseSync(databasePath);
         try {
           assert.equal(restored.prepare("PRAGMA integrity_check").get()?.integrity_check, "ok");
