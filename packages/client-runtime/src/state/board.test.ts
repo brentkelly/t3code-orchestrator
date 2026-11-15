@@ -18,9 +18,13 @@ import {
   type BoardCardShell,
   type BoardLabel,
   type BoardShellSnapshot,
+  EnvironmentId,
   type OrchestrationV2ThreadShell,
   RuntimeRequestId,
 } from "@t3tools/contracts";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import { Atom, AtomRegistry } from "effect/reactivity";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -37,9 +41,14 @@ import {
   mergeBoardStageColumns,
   planBoardCardReorder,
   type BoardStageColumns,
+  createBoardEnvironmentAtoms,
+  EMPTY_BOARD_CARD_THREAD_SHELLS,
+  projectBoardCardThreadShells,
+  reuseBoardColumns,
   withBoardThreadFields,
 } from "./board.ts";
 import { v2Now, v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
+import { EMPTY_SHELL_STATE, type EnvironmentShellState } from "./shell.ts";
 
 const NOW = "2026-01-01T00:00:00.000Z";
 /** A fixed clock for the queue derivation: the schedule filter needs
@@ -929,6 +938,8 @@ describe("board shell reducer", () => {
 });
 
 describe("withBoardThreadFields", () => {
+  const byId = (...threads: ReadonlyArray<OrchestrationV2ThreadShell>) =>
+    new Map(threads.map((thread) => [thread.id, thread]));
   const userInputRequest = {
     id: RuntimeRequestId.make("request-1"),
     kind: "user_input" as const,
@@ -948,24 +959,26 @@ describe("withBoardThreadFields", () => {
     expect(linked.activeThreadId).toBe(threadId);
     expect(linked.threadState).toBe("none");
 
-    const next = withBoardThreadFields(snapshot({ cards: [linked] }), [
-      threadShell({ pendingRuntimeRequest: userInputRequest }),
-    ]);
+    const next = withBoardThreadFields(
+      snapshot({ cards: [linked] }),
+      byId(threadShell({ pendingRuntimeRequest: userInputRequest })),
+    );
     expect(next.cards[0]?.threadState).toBe("waiting");
     expect(next.cards[0]?.awaitingInput).toBe(true);
   });
 
   it("derives the background wait both ways (T3O-20)", () => {
-    const waiting = withBoardThreadFields(snapshot({ cards: [linked] }), [
-      threadShell({ pendingBackgroundTasks: [monitorTask] }),
-    ]);
+    const waiting = withBoardThreadFields(
+      snapshot({ cards: [linked] }),
+      byId(threadShell({ pendingBackgroundTasks: [monitorTask] })),
+    );
     expect(waiting.cards[0]?.waitingOnBackground).toBe(true);
 
     // The provider woke the agent: mid-turn is no longer a wait, and the key
     // goes away rather than resting at false, matching the server's shell.
     const woken = withBoardThreadFields(
       snapshot({ cards: [{ ...linked, waitingOnBackground: true }] }),
-      [threadShell({ pendingBackgroundTasks: [monitorTask], activityRunStatus: "running" })],
+      byId(threadShell({ pendingBackgroundTasks: [monitorTask], activityRunStatus: "running" })),
     );
     expect(woken.cards[0]).not.toHaveProperty("waitingOnBackground");
   });
@@ -976,7 +989,7 @@ describe("withBoardThreadFields", () => {
       pendingBackgroundTasks: [{ taskId: "delegate-1", kind: "subagent" as const }],
     });
     const board = snapshot({ cards: [linked] });
-    const waiting = withBoardThreadFields(board, [parent], new Map([[threadId, "approval"]]));
+    const waiting = withBoardThreadFields(board, byId(parent), new Map([[threadId, "approval"]]));
     expect(waiting.cards[0]).toMatchObject({
       threadState: "waiting",
       awaitingInput: false,
@@ -985,23 +998,204 @@ describe("withBoardThreadFields", () => {
     expect(waiting.cards[0]).not.toHaveProperty("waitingOnBackground");
 
     // The coordinator answers a child's question, so it does not wait on a human.
-    const asking = withBoardThreadFields(board, [parent], new Map([[threadId, "user_input"]]));
+    const asking = withBoardThreadFields(board, byId(parent), new Map([[threadId, "user_input"]]));
     expect(asking.cards[0]?.threadState).toBe("working");
     expect(asking.cards[0]?.waitingOnBackground).toBe(true);
 
     // Answered: the map clears and the key goes away with it.
-    const answered = withBoardThreadFields({ ...board, cards: waiting.cards }, [parent], new Map());
+    const answered = withBoardThreadFields(
+      { ...board, cards: waiting.cards },
+      byId(parent),
+      new Map(),
+    );
     expect(answered.cards[0]).not.toHaveProperty("awaitingSubagent");
     expect(answered.cards[0]?.threadState).toBe("working");
   });
 
   it("leaves a card with no live link at rest, and the board itself untouched", () => {
     const board = snapshot({ cards: [cardShell("card-1")] });
-    const next = withBoardThreadFields(board, [
-      threadShell({ pendingRuntimeRequest: userInputRequest }),
-    ]);
+    const next = withBoardThreadFields(
+      board,
+      byId(threadShell({ pendingRuntimeRequest: userInputRequest })),
+    );
     expect(next).toBe(board);
     expect(next.cards[0]?.threadState).toBe("none");
+  });
+});
+
+describe("projectBoardCardThreadShells", () => {
+  const otherId = ThreadId.make("thread-other");
+  const linkedIds = new Set([threadId]);
+
+  it("keeps only card-linked threads, and its identity across unrelated pushes", () => {
+    const first = projectBoardCardThreadShells({
+      linkedThreadIds: linkedIds,
+      threads: [threadShell(), threadShell({ id: otherId })],
+      previous: EMPTY_BOARD_CARD_THREAD_SHELLS,
+    });
+    expect([...first.keys()]).toEqual([threadId]);
+
+    // An unlinked thread streams, and the linked one changes only fields the board ignores.
+    const next = projectBoardCardThreadShells({
+      linkedThreadIds: linkedIds,
+      threads: [
+        threadShell({ itemCount: 9, updatedAt: v2Now }),
+        threadShell({ id: otherId, activityRunStatus: "running", title: "Busy" }),
+      ],
+      previous: first,
+    });
+    expect(next).toBe(first);
+  });
+
+  it("re-projects a linked thread whose board fields change, reusing the rest", () => {
+    const secondId = ThreadId.make("thread-2");
+    const ids = new Set([threadId, secondId]);
+    const first = projectBoardCardThreadShells({
+      linkedThreadIds: ids,
+      threads: [threadShell(), threadShell({ id: secondId })],
+      previous: EMPTY_BOARD_CARD_THREAD_SHELLS,
+    });
+    const next = projectBoardCardThreadShells({
+      linkedThreadIds: ids,
+      threads: [threadShell({ activityRunStatus: "running" }), threadShell({ id: secondId })],
+      previous: first,
+    });
+    expect(next).not.toBe(first);
+    expect(next.get(threadId)?.activityRunStatus).toBe("running");
+    expect(next.get(secondId)).toBe(first.get(secondId));
+  });
+
+  it("compares re-decoded nested values by value", () => {
+    const request = { id: RuntimeRequestId.make("request-1"), kind: "user_input" as const };
+    const first = projectBoardCardThreadShells({
+      linkedThreadIds: linkedIds,
+      threads: [threadShell({ pendingRuntimeRequest: { ...request, createdAt: v2Now } })],
+      previous: EMPTY_BOARD_CARD_THREAD_SHELLS,
+    });
+    const next = projectBoardCardThreadShells({
+      linkedThreadIds: linkedIds,
+      threads: [threadShell({ pendingRuntimeRequest: { ...request, createdAt: v2Now } })],
+      previous: first,
+    });
+    expect(next).toBe(first);
+  });
+});
+
+describe("reuseBoardColumns", () => {
+  it("keeps the array of a column whose cards did not change", () => {
+    const backlog = [cardShell("card-1"), cardShell("card-2")];
+    const sprint = [cardShell("card-3", { stage: BOARD_SEED_STAGE_IDS.sprint })];
+    const previous = new Map([[projectId, { backlog, sprint }]]);
+    const renamed = cardShell("card-3", { stage: BOARD_SEED_STAGE_IDS.sprint, title: "New" });
+    const next = reuseBoardColumns(
+      previous,
+      new Map([[projectId, { backlog: [...backlog], sprint: [renamed] }]]),
+    );
+    expect(next.get(projectId)?.backlog).toBe(backlog);
+    expect(next.get(projectId)?.sprint).toEqual([renamed]);
+  });
+});
+
+describe("boardAtom", () => {
+  const environmentId = EnvironmentId.make("environment-1");
+  const setup = () => {
+    const shellAtom = Atom.make<EnvironmentShellState>(EMPTY_SHELL_STATE);
+    const boardSnapshotAtom = Atom.make<BoardShellSnapshot | null>(null);
+    const subagentRequests = Atom.make(new Map());
+    const atoms = createBoardEnvironmentAtoms(Atom.runtime(Layer.empty) as never, {
+      shellStateValueAtom: () => shellAtom,
+      boardSnapshotValueAtom: () => boardSnapshotAtom,
+      pendingSubagentRequestsAtom: () => subagentRequests,
+    });
+    const registry = AtomRegistry.make();
+    const pushThreads = (threads: ReadonlyArray<OrchestrationV2ThreadShell>) =>
+      registry.set(shellAtom, {
+        ...EMPTY_SHELL_STATE,
+        status: "live",
+        snapshot: Option.some({ projects: [], threads } as never),
+      });
+    return { atoms, registry, boardSnapshotAtom, pushThreads };
+  };
+
+  it("returns the identical board while only unrelated threads change", () => {
+    const { atoms, registry, boardSnapshotAtom, pushThreads } = setup();
+    const linked = cardShell("card-1", {
+      threadLinks: [{ threadId, role: "build", linkedAt: NOW, tombstonedAt: null }],
+    });
+    registry.set(boardSnapshotAtom, snapshot({ cards: [linked] }));
+    const other = ThreadId.make("thread-other");
+    // Running, so the overlay rebuilds the card every time it is computed.
+    const running = { activityRunStatus: "running" as const };
+    pushThreads([threadShell(running), threadShell({ id: other })]);
+    const seen: Array<BoardShellSnapshot | null> = [];
+    const unsubscribe = registry.subscribe(
+      atoms.boardAtom(environmentId),
+      (board) => seen.push(board),
+      { immediate: true },
+    );
+    const first = registry.get(atoms.boardAtom(environmentId));
+
+    expect(first?.cards[0]?.threadState).toBe("working");
+
+    pushThreads([
+      threadShell({ ...running, itemCount: 4 }),
+      threadShell({ id: other, status: "running" }),
+    ]);
+    pushThreads([
+      threadShell({ ...running, itemCount: 5 }),
+      threadShell({ id: other, title: "Renamed" }),
+    ]);
+    expect(registry.get(atoms.boardAtom(environmentId))).toBe(first);
+    expect(seen).toHaveLength(1);
+
+    // The linked thread finishing its turn does move its card.
+    pushThreads([threadShell(), threadShell({ id: other })]);
+    expect(registry.get(atoms.boardAtom(environmentId))?.cards[0]?.threadState).toBe("stopped");
+    expect(seen).toHaveLength(2);
+    unsubscribe();
+  });
+
+  it("keeps the card-thread index across deltas that leave the links alone", () => {
+    const { atoms, registry, boardSnapshotAtom } = setup();
+    const board = snapshot({
+      cards: [cardShell("card-1")],
+      cardThreads: [{ cardId: BoardCardId.make("card-1"), threadId }],
+    });
+    registry.set(boardSnapshotAtom, board);
+    const unsubscribe = registry.subscribe(atoms.cardThreadsByCardAtom(environmentId), () => {});
+    const first = registry.get(atoms.cardThreadsByCardAtom(environmentId));
+    registry.set(boardSnapshotAtom, { ...board, cards: [cardShell("card-1", { title: "New" })] });
+    expect(registry.get(atoms.cardThreadsByCardAtom(environmentId))).toBe(first);
+    unsubscribe();
+  });
+
+  it("keeps a card's link list when only another card's links change", () => {
+    const { atoms, registry, boardSnapshotAtom } = setup();
+    const card1 = BoardCardId.make("card-1");
+    const card2 = BoardCardId.make("card-2");
+    const board = snapshot({
+      cards: [cardShell("card-1"), cardShell("card-2")],
+      cardThreads: [
+        { cardId: card1, threadId },
+        { cardId: card2, threadId: ThreadId.make("thread-2") },
+      ],
+    });
+    registry.set(boardSnapshotAtom, board);
+    const unsubscribe = registry.subscribe(atoms.cardThreadsByCardAtom(environmentId), () => {});
+    const first = registry.get(atoms.cardThreadsByCardAtom(environmentId));
+    registry.set(
+      boardSnapshotAtom,
+      applyBoardShellStreamEvent(board, {
+        kind: "card-threads",
+        sequence: 2,
+        cardId: card2,
+        threads: [{ cardId: card2, threadId: ThreadId.make("thread-2"), todoTotal: 3 }],
+      }),
+    );
+    const next = registry.get(atoms.cardThreadsByCardAtom(environmentId));
+    expect(next.get(card1)).toBe(first.get(card1));
+    expect(next.get(card2)).not.toBe(first.get(card2));
+    unsubscribe();
   });
 });
 

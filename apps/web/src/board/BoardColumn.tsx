@@ -25,6 +25,7 @@ import { BoardHint } from "./BoardHint";
 import { DraggableBoardCard, type BoardCardTodoContext } from "./BoardCardItem";
 import type { BoardQueueInfo } from "./boardQueueInfo";
 import type { BoardGroupCardVm } from "./boardGroups";
+import { boardColumnShownCards } from "./boardColumnCap";
 import { BoardPartialStageIcon } from "./BoardPartialStageIcon";
 import type { BoardStageCoverage } from "./boardProjectPipelines";
 
@@ -124,6 +125,9 @@ export interface BoardColumnProps extends BoardColumnDragProps {
       per card, so the column adds no state of its own. */
   readonly todosFor: (cardId: string) => BoardCardTodoContext;
   readonly onSetCollapsed: (stage: BoardStageId, collapsed: boolean) => void;
+  /** Whether this viewer asked a long column to show every card (`boardColumnShownCards`). */
+  readonly showAll?: boolean | undefined;
+  readonly onSetShowAll?: ((stage: BoardStageId, showAll: boolean) => void) | undefined;
   readonly onSelectCard: (card: BoardCardShell) => void;
   /** Opens the create dialog onto this column's stage. */
   readonly onRequestCreate: (stage: BoardStageId) => void;
@@ -233,6 +237,8 @@ function ExpandedColumn(props: BoardColumnProps) {
     dragOverIndex,
     dragHeight,
     onSetCollapsed,
+    showAll,
+    onSetShowAll,
     onSelectCard,
     onRequestCreate,
     onCardDragStart,
@@ -248,11 +254,17 @@ function ExpandedColumn(props: BoardColumnProps) {
   // Cards may be created only into Backlog, Sprint or Planning; the
   // add affordance is absent from the other five columns entirely.
   const canAdd = addProjects.length > 0;
+  const { shown, toggle } = boardColumnShownCards({
+    cards,
+    showAll: showAll === true,
+    keepVisible: [selectedCardId, draggedCardId],
+  });
 
   // The placeholder gap: clamp the target index, and suppress it when it lands
   // on the dragged card's own slot (dropping back where it started is a no-op).
-  const own = draggedCardId === null ? -1 : cards.findIndex((c) => c.cardId === draggedCardId);
-  const at = dragOverIndex === null ? null : Math.max(0, Math.min(cards.length, dragOverIndex));
+  // Indices count the mounted cards, as the page's drop math does.
+  const own = draggedCardId === null ? -1 : shown.findIndex((c) => c.cardId === draggedCardId);
+  const at = dragOverIndex === null ? null : Math.max(0, Math.min(shown.length, dragOverIndex));
   const refused = draggedCardId !== null && dropRefusal != null;
   const showPlaceholder = !refused && at !== null && !(own >= 0 && (at === own || at === own + 1));
   const isOver = draggedCardId !== null && dragOverIndex !== null && !refused;
@@ -361,7 +373,7 @@ function ExpandedColumn(props: BoardColumnProps) {
           </div>
         ) : (
           <>
-            {cards.map((card, index) => (
+            {shown.map((card, index) => (
               <Fragment key={card.cardId}>
                 {showPlaceholder && at === index ? placeholder : null}
                 <DraggableBoardCard
@@ -386,15 +398,22 @@ function ExpandedColumn(props: BoardColumnProps) {
                   worktreeKeptReason={worktreeKeptFor(card)}
                   stageGone={stageGoneFor?.(card) ?? null}
                   todos={todosFor(card.cardId)}
-                  onOpenSubBoard={
-                    onOpenSubBoard === undefined ? undefined : () => onOpenSubBoard(card)
-                  }
+                  onOpenSubBoard={onOpenSubBoard}
                   group={groupFor?.(card) ?? null}
                   costSlot={costSlotFor?.(card) ?? null}
                 />
               </Fragment>
             ))}
-            {showPlaceholder && at === cards.length ? placeholder : null}
+            {showPlaceholder && at === shown.length ? placeholder : null}
+            {toggle === null ? null : (
+              <button
+                className="self-start px-1 text-board-11 text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                onClick={() => onSetShowAll?.(stage, toggle === "show-all")}
+                type="button"
+              >
+                {toggle === "show-all" ? `Show all ${cards.length}` : "Show fewer"}
+              </button>
+            )}
           </>
         )}
       </div>

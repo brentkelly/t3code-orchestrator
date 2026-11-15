@@ -111,6 +111,10 @@ interface BoardUiStore extends BoardUiState {
       not a preference. */
   queryByBoard: Partial<Record<string, string>>;
   setBoardQuery: (boardKey: string, query: string) => void;
+  /** Long columns this viewer opened past the cap, keyed like `collapsedByStage`.
+      Transient: a per-session convenience. */
+  showAllByStage: Partial<Record<string, true>>;
+  setColumnShowAll: (stageKey: string, showAll: boolean) => void;
   /** What the mounted board offers the command palette: drill into
       the selected group, go up a level. Transient, and empty off the board,
       so the palette never subscribes to the board itself. */
@@ -188,6 +192,13 @@ export const useBoardUiStore = create<BoardUiStore>()(
           state.detailSummaryCardId === cardId ? state : { detailSummaryCardId: cardId },
         ),
       queryByBoard: {},
+      showAllByStage: {},
+      setColumnShowAll: (stageKey, showAll) =>
+        set((state) => {
+          if ((state.showAllByStage[stageKey] === true) === showAll) return state;
+          const { [stageKey]: _previous, ...rest } = state.showAllByStage;
+          return { showAllByStage: showAll ? { ...rest, [stageKey]: true } : rest };
+        }),
       paletteActions: [],
       setPaletteActions: (actions) =>
         set((state) =>

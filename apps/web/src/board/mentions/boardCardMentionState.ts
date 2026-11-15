@@ -11,13 +11,12 @@ import type {
   ProjectId,
   ThreadId,
 } from "@t3tools/contracts";
-import { Option } from "effect";
 import { Atom } from "effect/reactivity";
 import { useContext } from "react";
 
 import { boardEnvironment } from "~/state/board";
 import { useThreadShell } from "~/state/entities";
-import { environmentShell } from "~/state/shell";
+import { environmentProjects } from "~/state/projects";
 import { projectIconColorOf } from "../projectAccent";
 import { useBoardEnvironmentId } from "../useBoardEnvironmentId";
 import { BoardCardMentionProjectContext } from "./boardCardMentionProject";
@@ -45,15 +44,12 @@ const EMPTY_CANDIDATES: ReadonlyArray<MentionCandidate> = [];
 const emptyCandidatesAtom = Atom.make<ReadonlyArray<MentionCandidate>>(EMPTY_CANDIDATES);
 const emptySummaryAtom = Atom.make<BoardCardMentionSummary | null>(null);
 
+/** The projects alone: the shell's thread pushes would recompute every mention. */
 function projectsOf(
   get: Atom.AtomContext,
   environmentId: EnvironmentId,
 ): ReadonlyArray<OrchestrationProjectShell> {
-  const shell = get(environmentShell.stateValueAtom(environmentId));
-  return Option.match(shell.snapshot, {
-    onNone: () => [],
-    onSome: (snapshot) => snapshot.projects,
-  });
+  return get(environmentProjects.environmentProjectsAtom(environmentId));
 }
 
 const candidatesAtom = Atom.family((environmentId: EnvironmentId) =>

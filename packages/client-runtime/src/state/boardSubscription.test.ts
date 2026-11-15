@@ -30,8 +30,8 @@ import {
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import * as RpcSession from "../rpc/session.ts";
-import { applyBoardShellStreamItem } from "./boardReducer.ts";
-import { applyBoardShellStreamItems, makeEnvironmentBoardState } from "./boardSubscription.ts";
+import { applyBoardShellStreamItem, applyBoardShellStreamItems } from "./boardReducer.ts";
+import { makeEnvironmentBoardState } from "./boardSubscription.ts";
 
 const NOW = "2026-01-01T00:00:00.000Z";
 
@@ -107,6 +107,54 @@ describe("applyBoardShellStreamItem", () => {
     const next = applyBoardShellStreamItem(SNAPSHOT, { kind: "workers", sequence: 3, state });
     expect(next?.workers).toBe(state);
     expect(next?.snapshotSequence).toBe(10);
+  });
+
+  it("folds a resync batch to the same board as applying it item by item", () => {
+    const cardIds = Array.from({ length: 6 }, (_, index) => BoardCardId.make(`card-${index}`));
+    const held: BoardShellSnapshot = {
+      ...SNAPSHOT,
+      cards: cardIds.map((cardId) => ({ cardId }) as BoardCardShell),
+      cardThreads: cardIds.map((cardId) => ({ cardId, threadId: ThreadId.make(`old-${cardId}`) })),
+    };
+    const usage = (tokens: number) => ({ tokens, costUsd: 0, costKnown: true, providers: [] });
+    const threads = (cardId: BoardCardId, ...ids: string[]): BoardShellStreamItem => ({
+      kind: "card-threads",
+      sequence: 3,
+      cardId,
+      threads: ids.map((id) => ({ cardId, threadId: ThreadId.make(id) })),
+    });
+    const usageOf = (cardId: BoardCardId, value: number | null): BoardShellStreamItem => ({
+      kind: "card-usage",
+      sequence: 3,
+      cardId,
+      usage: value === null ? null : usage(value),
+    });
+    const [a, b, c, d, e] = cardIds as [
+      BoardCardId,
+      BoardCardId,
+      BoardCardId,
+      BoardCardId,
+      BoardCardId,
+    ];
+    const batch: ReadonlyArray<BoardShellStreamItem> = [
+      threads(a, "a-1", "a-2"),
+      usageOf(a, 5),
+      threads(b),
+      usageOf(c, 7),
+      threads(a, "a-3"),
+      usageOf(c, null),
+      threads(d, "d-1"),
+      // A guarded delta splits the run: the items after it fold over its result.
+      labelUpserted(11, "Defect"),
+      usageOf(e, 9),
+      threads(e, "e-1"),
+      threads(BoardCardId.make("card-gone"), "x-1"),
+      usageOf(BoardCardId.make("card-gone"), 1),
+      threads(d, "d-2"),
+    ];
+    const oneByOne = batch.reduce<BoardShellSnapshot | null>(applyBoardShellStreamItem, held);
+    expect(applyBoardShellStreamItems(held, batch)).toEqual(oneByOne);
+    expect(applyBoardShellStreamItems(null, batch)).toBeNull();
   });
 
   it("replaces whatever it held with a new snapshot", () => {

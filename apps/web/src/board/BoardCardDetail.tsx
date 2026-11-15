@@ -63,6 +63,8 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { useAtomValue } from "@effect/atom-react";
 import * as Option from "effect/Option";
+import { Atom } from "effect/reactivity";
+import { EMPTY_SHELL_STATE } from "@t3tools/client-runtime/state/shell";
 import { useEffect, useState } from "react";
 
 import { Dialog } from "../components/ui/dialog";
@@ -70,7 +72,11 @@ import { randomUUID } from "../lib/utils";
 import { getCustomModelOptionsByInstance, resolveAppModelSelectionState } from "../modelSelection";
 import { getTriggerDisplayModelName } from "../components/chat/providerIconUtils";
 import { boardEnvironment } from "../state/board";
-import { cardThreadIdsMissingFromShell, useBoardCardThreadRows } from "./boardCardThreadRows";
+import {
+  cardThreadIdsMissingFromShell,
+  useBoardCardOffShellThreads,
+  useBoardCardShellThreads,
+} from "./boardCardThreadRows";
 import { boardThreadWorker, threadWorkerRanOn } from "./workers/threadWorker";
 import { boardAttachmentLimits } from "./boardAttachmentUpload";
 import { boardConflictFix } from "./boardConflictFix";
@@ -87,6 +93,7 @@ import { projectIconColorOf } from "./projectAccent";
 import { useEnvironment } from "../state/environments";
 import { deriveProviderInstanceEntries } from "../providerInstances";
 import { usePaginatedBranches } from "../state/queries";
+import { environmentProjects } from "../state/projects";
 import { environmentShell } from "../state/shell";
 import { environmentThreadShells, threadEnvironment } from "../state/threads";
 import {
@@ -183,6 +190,9 @@ function LoadingModal({
 }
 
 const EMPTY_SHELL_CARDS: ReadonlyArray<BoardCardShell> = [];
+const CLOSED_ADOPT_SHELL_ATOM = Atom.make(EMPTY_SHELL_STATE).pipe(
+  Atom.withLabel("t3o:board:adopt-picker-closed"),
+);
 
 export function BoardCardDetail({
   environmentId,
@@ -220,7 +230,8 @@ export function BoardCardDetail({
     pipelineCardProjectId === null ? null : (projectStageConfigs[pipelineCardProjectId] ?? null);
   // The board's workers, for the queue's reason.
   const workersState = useAtomValue(boardEnvironment.workersAtom(environmentId));
-  const shellState = useAtomValue(environmentShell.stateValueAtom(environmentId));
+  // Projects alone: the shell's thread pushes would re-render the open card.
+  const projects = useAtomValue(environmentProjects.environmentProjectsAtom(environmentId));
 
   const updateCard = useAtomCommand(boardEnvironment.updateCard);
   const moveCard = useAtomCommand(boardEnvironment.moveCard);
@@ -316,7 +327,6 @@ export function BoardCardDetail({
   const [checkingWorktree, setCheckingWorktree] = useState(false);
   const [removingWorktree, setRemovingWorktree] = useState(false);
 
-  const snapshot = Option.getOrNull(shellState.snapshot);
   // The board rides its own subscription, cards' thread state derived.
   const board = useAtomValue(boardEnvironment.boardAtom(environmentId));
   // Refresh trigger: the card detail opening. One of the moments the answer
@@ -413,9 +423,7 @@ export function BoardCardDetail({
   // inherits cross-project edges, so the picker must be able to make them too.
 
   const shells = board?.cards ?? [];
-  const projectById = new Map(
-    (snapshot?.projects ?? []).map((project) => [String(project.id), project]),
-  );
+  const projectById = new Map(projects.map((project) => [String(project.id), project]));
   const existingDependencyIds = new Set<string>(card === null ? [] : [card.id, ...card.dependsOn]);
   // Dependencies cross groups; the card's own ancestors and
   // descendants are refused, so they are not offered.
@@ -471,17 +479,20 @@ export function BoardCardDetail({
   const [openedAt] = useState(() => Date.now());
   // The group archive confirmation: a group always warns.
   const [archiveGroupOpen, setArchiveGroupOpen] = useState(false);
-  // Older settled threads are not in the shell; read them so they are named, not "deleted".
-  const missingThreadIds = cardThreadIdsMissingFromShell(
-    card?.threadLinks ?? [],
-    snapshot?.threads ?? [],
+  // This card's threads only, so other threads' pushes leave the open card alone.
+  const cardShellThreads = useBoardCardShellThreads(
+    environmentId,
+    (card?.threadLinks ?? []).map((link) => link.threadId),
   );
-  const offShellThreads = useBoardCardThreadRows(environmentId, missingThreadIds);
+  // Older settled threads are not in the shell; read them so they are named, not "deleted".
+  const missingThreadIds = cardThreadIdsMissingFromShell(card?.threadLinks ?? [], [
+    ...cardShellThreads.values(),
+  ]);
+  const offShellThreads = useBoardCardOffShellThreads(environmentId, missingThreadIds);
   // A subagent awaiting approval turns its parent's row violet.
   const subagentRequests = useAtomValue(
     environmentThreadShells.pendingSubagentRequestsAtom(environmentId),
   );
-  const shellThreads = snapshot?.threads ?? [];
   // "Moved from {worker}" above the first thread after each move.
   const movedFrom = boardThreadMoveDividers({
     links: card?.threadLinks ?? [],
@@ -495,9 +506,9 @@ export function BoardCardDetail({
   });
   const threadLinks: ReadonlyArray<BoardDetailThreadLink> = (card?.threadLinks ?? []).map(
     (link) => {
-      const thread =
-        shellThreads.find((candidate) => candidate.id === link.threadId) ??
-        offShellThreads.threads.get(link.threadId);
+      const thread = cardShellThreads.get(link.threadId);
+      const offShellTitle = offShellThreads.titles.get(link.threadId);
+      // The titles read carries no run state, so an off-shell thread's state stays unknown.
       const source =
         thread === undefined
           ? undefined
@@ -515,9 +526,10 @@ export function BoardCardDetail({
         // A thread on another worker is not in this server's snapshot.
         title:
           thread?.title ??
+          offShellTitle ??
           (link.workerId !== undefined
             ? `Thread on ${worker.label}`
-            : offShellThreads.loading.has(link.threadId)
+            : offShellThreads.loading && missingThreadIds.includes(link.threadId)
               ? "Loading thread…"
               : null),
         threadState,
@@ -575,6 +587,10 @@ export function BoardCardDetail({
     adoptQuery,
   );
   const [adoptOpen, setAdoptOpen] = useState(false);
+  // Every thread is a candidate, so the whole shell is read, but only while the picker is open.
+  const adoptShell = useAtomValue(
+    adoptOpen ? environmentShell.stateValueAtom(environmentId) : CLOSED_ADOPT_SHELL_ATOM,
+  );
   const knownCardThreads = useBoardAdoptKnownCardThreadIds(environmentId, adoptOpen);
   const threadIdsOnCards = new Set((board?.cardThreads ?? []).map((entry) => entry.threadId));
   const adoptableThreads: ReadonlyArray<BoardPickerOption> =
@@ -585,7 +601,13 @@ export function BoardCardDetail({
           cardThreadIds: card.threadLinks.map((link) => link.threadId),
           linkedElsewhere: (threadId) =>
             threadIdsOnCards.has(threadId) || (knownCardThreads?.has(threadId) ?? false),
-          threads: [...(snapshot?.threads ?? []), ...adoptSearchRead.rows],
+          threads: [
+            ...Option.match(adoptShell.snapshot, {
+              onNone: () => [],
+              onSome: (value) => value.threads,
+            }),
+            ...adoptSearchRead.rows,
+          ],
         });
   const adoptSearch = {
     onQueryChange: setAdoptQuery,
@@ -618,7 +640,7 @@ export function BoardCardDetail({
             ),
             // Named as the board's own queue pill names it.
             projectName:
-              snapshot?.projects.find((project) => project.id === cardShell.projectId)?.title ??
+              projects.find((project) => project.id === cardShell.projectId)?.title ??
               "this project",
           }),
         });
@@ -647,8 +669,7 @@ export function BoardCardDetail({
   // The effective base is one shared function, so the row, picker, divergence
   // line and reactor cannot disagree. A pinned card skips the ref query; when it
   // runs it shares the picker's atom.
-  const baseBranchProject =
-    snapshot?.projects.find((entry) => entry.id === card?.projectId) ?? null;
+  const baseBranchProject = projects.find((entry) => entry.id === card?.projectId) ?? null;
   const baseBranchWorkspaceRoot = baseBranchProject?.workspaceRoot ?? null;
   const projectRefs = usePaginatedBranches({
     environmentId,
@@ -668,7 +689,7 @@ export function BoardCardDetail({
     );
   }
 
-  const projectName = snapshot?.projects.find((project) => project.id === card.projectId)?.title;
+  const projectName = projects.find((project) => project.id === card.projectId)?.title;
 
   // ── Project ───────────────────────────────────────────────────
   // The lock comes from the SAME predicate the decider refuses on, so the row
@@ -686,7 +707,7 @@ export function BoardCardDetail({
   const projectOptions =
     projectLock === null
       ? boardCardProjectOptions({
-          projects: (snapshot?.projects ?? []).map((project) => ({
+          projects: projects.map((project) => ({
             id: project.id,
             title: project.title,
             workspaceRoot: project.workspaceRoot,
@@ -700,16 +721,12 @@ export function BoardCardDetail({
   // An archived card gets the plain text row: the decider refuses the command and
   // a padlock for a pin it does not have would be a lie.
   const canSetProject = card.archivedAt === null;
-  const projectNames = new Map(
-    (snapshot?.projects ?? []).map((entry) => [String(entry.id), entry.title]),
-  );
+  const projectNames = new Map(projects.map((entry) => [String(entry.id), entry.title]));
   // The card owns no branch — its active thread does. Shown when there is one,
   // absent otherwise (never a guessed default).
   const activeThreadId = activeBoardCardThreadId(card.threadLinks);
   const branch =
-    activeThreadId === null
-      ? null
-      : (snapshot?.threads.find((thread) => thread.id === activeThreadId)?.branch ?? null);
+    activeThreadId === null ? null : (cardShellThreads.get(activeThreadId)?.branch ?? null);
 
   // A child reads its inherited base off its own `worktree.baseRefName`: the
   // parent's integration branch is not on the client.
@@ -1214,9 +1231,7 @@ export function BoardCardDetail({
       project={{
         lock: projectLock,
         options: projectOptions,
-        accent: projectIconColorOf(
-          (snapshot?.projects ?? []).find((entry) => entry.id === card.projectId),
-        ),
+        accent: projectIconColorOf(projects.find((entry) => entry.id === card.projectId)),
         names: projectNames,
         stopsAgent: isBoardCardRunInFlight(cardShell),
         restartsStage: resolveBoardStageExecution(boardSettings, card.stage, projectExecutionConfig)
@@ -1228,7 +1243,7 @@ export function BoardCardDetail({
               // The target project's key prefix is resolved — and PERSISTED —
               // here, exactly as the create dialog does it: a prefix derived
               // per caller drifts, so the first writer settles it.
-              const target = (snapshot?.projects ?? []).find((entry) => entry.id === projectId);
+              const target = projects.find((entry) => entry.id === projectId);
               const { prefix, assigned } = assignBoardKeyPrefix({
                 board: boardSettings,
                 projectId,
