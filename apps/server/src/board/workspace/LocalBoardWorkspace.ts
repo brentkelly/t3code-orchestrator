@@ -93,8 +93,26 @@ const forgeFailed = (operation: string) => (error: BoardPullRequestGatewayError)
     ...(error.refusal === undefined ? {} : { refusal: error.refusal }),
   });
 
-/** The worktree's private git dir, or null when git cannot say. */
-const worktreePrivateGitDir = (git: LocalBoardWorkspaceDeps["git"], worktreePath: string) =>
+/**
+ * The worktree's private git dir, or null when git cannot say. Read from the linked worktree's
+ * `.git` pointer file, as `upstreamGuards.ts` does, so a sweep over many worktrees spawns no git;
+ * only a checkout without one (or an unreadable one) asks git (T3O-108).
+ */
+const worktreePrivateGitDir = (
+  deps: Pick<LocalBoardWorkspaceDeps, "git" | "fileSystem" | "path">,
+  worktreePath: string,
+) =>
+  deps.fileSystem.readFileString(deps.path.join(worktreePath, ".git")).pipe(
+    Effect.map((dotGit) => /^gitdir:\s*(.+?)\s*$/m.exec(dotGit)?.[1] ?? null),
+    Effect.orElseSucceed(() => null),
+    Effect.flatMap((gitDir) =>
+      gitDir === null
+        ? worktreeGitDirFromGit(deps.git, worktreePath)
+        : Effect.succeed(deps.path.resolve(worktreePath, gitDir)),
+    ),
+  );
+
+const worktreeGitDirFromGit = (git: LocalBoardWorkspaceDeps["git"], worktreePath: string) =>
   git
     .execute({
       operation: "boardCardWorktree.gitDir",
@@ -120,7 +138,7 @@ export const boardWorktreeOwner = (
   deps: Pick<LocalBoardWorkspaceDeps, "git" | "fileSystem" | "path">,
   worktreePath: string,
 ) =>
-  worktreePrivateGitDir(deps.git, worktreePath).pipe(
+  worktreePrivateGitDir(deps, worktreePath).pipe(
     Effect.flatMap((dir) =>
       dir === null
         ? Effect.succeed(null)
@@ -150,7 +168,7 @@ export const adoptBoardWorktree = Effect.fn("adoptBoardWorktree")(function* (
   if (current === null) return "missing" as const;
   if (current === owner) return "owned" as const;
   if (current !== "legacy" || owner === "self") return "foreign" as const;
-  const dir = yield* worktreePrivateGitDir(deps.git, worktreePath);
+  const dir = yield* worktreePrivateGitDir(deps, worktreePath);
   if (dir === null) return "missing" as const;
   const written = yield* deps.fileSystem
     .writeFileString(deps.path.join(dir, CENTRAL_OWNER_MARKER), `${owner}\n`)
@@ -303,7 +321,7 @@ export function makeLocalBoardWorkspace(
     return { exists: yield* localExists() };
   });
 
-  const privateGitDir = (worktreePath: string) => worktreePrivateGitDir(git, worktreePath);
+  const privateGitDir = (worktreePath: string) => worktreePrivateGitDir(deps, worktreePath);
   const ownerOf = (worktreePath: string) => boardWorktreeOwner(deps, worktreePath);
 
   const markBoardOwned = Effect.fn("LocalBoardWorkspace.markBoardOwned")(function* (

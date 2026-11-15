@@ -554,6 +554,46 @@ describe("the cleanup sweep (D3/D4)", () => {
     ),
   );
 
+  it.effect("a worktree event re-probes no kept worktree but its own card's", () =>
+    withGovernor(
+      {
+        board: {
+          nextCardNumberByProject: {},
+          cards: [
+            doneCard(),
+            makeBoardCard({
+              id: "card-2",
+              stage: String(BOARD_SEED_STAGE_IDS.done),
+              orderKey: "e",
+              worktree: readyWorktree("card-2"),
+            }),
+          ],
+        },
+        settings: settings(),
+        pullRequest: null,
+        worktreeUndurable: true,
+      },
+      (h) =>
+        Effect.gen(function* () {
+          // Boot keeps both, each with its reason.
+          yield* h.reactor.drainWorktreeSweep;
+          const kept = (yield* h.board).cards;
+          assert.isNotNull(kept[0]!.worktree?.reclaimBlockedReason ?? null);
+          assert.isNotNull(kept[1]!.worktree?.reclaimBlockedReason ?? null);
+          const before = (yield* h.gitCwds).length;
+          yield* h.pumpDomain({
+            type: "board.card-worktree-ready",
+            sequence: 1,
+            payload: { cardId: kept[1]!.id, card: kept[1]! },
+          } as unknown as HarnessEvent);
+          yield* h.reactor.drainWorktreeSweep;
+          const cwds = (yield* h.gitCwds).slice(before);
+          assert.notInclude(cwds, "/tmp/wt/card-1");
+          assert.include(cwds, "/tmp/wt/card-2");
+        }),
+    ),
+  );
+
   const porcelain = (entries: ReadonlyArray<readonly [string, string]>) =>
     [
       "worktree /tmp/project",

@@ -517,6 +517,8 @@ export type Harness = {
       remote-only base was MATERIALISED has nowhere else to read it:
       `git branch develop origin/develop` leaves no trace on the card. */
   readonly gitInvocations: Effect.Effect<ReadonlyArray<ReadonlyArray<string>>>;
+  /** The working directory of each `git` run, in the same order as `gitInvocations`. */
+  readonly gitCwds: Effect.Effect<ReadonlyArray<string | undefined>>;
   /** The threads this server's own capacity counts as the board's, as the reactor told it. */
   readonly localBoardThreads: Effect.Effect<ReadonlySet<string>>;
 };
@@ -903,6 +905,7 @@ export function withGovernor(
     // stub — the two things a base-materialisation assertion needs and the card
     // does not record.
     const gitInvocationLog: Array<ReadonlyArray<string>> = [];
+    const gitCwdLog: Array<string | undefined> = [];
     const createdBranches = new Set<string>();
     const gitStub = {
       // Branch cleanup's first call. Its absence used to make
@@ -932,8 +935,9 @@ export function withGovernor(
                 refName: request.branch ?? request.refName ?? "board/wt",
               },
             }),
-      execute: (request: { readonly args?: ReadonlyArray<string> }) => {
+      execute: (request: { readonly args?: ReadonlyArray<string>; readonly cwd?: string }) => {
         gitInvocationLog.push(request.args ?? []);
+        gitCwdLog.push(request.cwd);
         if (input.notAGitRepo === true) {
           return Effect.succeed({
             stdout: "",
@@ -1348,6 +1352,7 @@ export function withGovernor(
           setBoardSettings: (settings) => void (boardSettings = settings),
           setWorktreeUndurable: (undurable) => void (worktreeUndurable = undurable),
           gitInvocations: Effect.sync(() => [...gitInvocationLog]),
+          gitCwds: Effect.sync(() => [...gitCwdLog]),
           localBoardThreads: Effect.suspend(() => localBoardThreads),
         });
       }).pipe(

@@ -7791,6 +7791,11 @@ const make = Effect.gen(function* () {
   const sweptDiscards = new Set<BoardCardId>();
   const sweepWorktrees = Effect.fn("board-supervisor-sweepWorktrees")(function* (options: {
     readonly refreshOpenPullRequests: boolean;
+    /** Null re-probes every kept worktree (boot, a direct request). Otherwise the pass was
+        asked for by these cards' worktree events: a worktree already kept for a reason is
+        re-probed only when it is one of them, since its fetches cost a remote round trip
+        and nothing about it changed (T3O-108). */
+    readonly eventCards: ReadonlySet<string> | null;
   }) {
     const settings = yield* boardSettings;
     const board = yield* readBoard;
@@ -7824,6 +7829,13 @@ const make = Effect.gen(function* () {
         continue;
       }
       if (card.worktree === null || card.worktree.status !== "ready") continue;
+      if (
+        options.eventCards !== null &&
+        card.worktree.reclaimBlockedReason !== null &&
+        !options.eventCards.has(card.id)
+      ) {
+        continue;
+      }
       if (card.archivedAt !== null) {
         yield* reclaimCardWorktree(card, fetchedBases);
         continue;
@@ -7965,12 +7977,16 @@ const make = Effect.gen(function* () {
   // a pass starts, so a trigger landing mid-pass queues a follow-up that sees its effect.
   let sweepQueued = false;
   let sweepRefreshQueued = false;
+  // T3o: the cards whose worktree events asked for the queued pass, or null for a full pass.
+  let sweepEventCards: Set<string> | null = new Set();
   const worktreeSweepWorker = yield* makeDrainableWorker(() =>
     Effect.suspend(() => {
       const refreshOpenPullRequests = sweepRefreshQueued;
+      const eventCards = sweepEventCards;
       sweepQueued = false;
       sweepRefreshQueued = false;
-      return sweepWorktrees({ refreshOpenPullRequests });
+      sweepEventCards = new Set();
+      return sweepWorktrees({ refreshOpenPullRequests, eventCards });
     }).pipe(
       Effect.catchCauseIf(
         (cause) => !Cause.hasInterruptsOnly(cause),
@@ -7981,9 +7997,15 @@ const make = Effect.gen(function* () {
       ),
     ),
   );
-  const requestWorktreeSweep = (options?: { readonly refreshOpenPullRequests?: boolean }) =>
+  const requestWorktreeSweep = (options?: {
+    readonly refreshOpenPullRequests?: boolean;
+    /** The card whose worktree event asks; absent asks for a full pass. */
+    readonly eventCardId?: BoardCardId;
+  }) =>
     Effect.suspend(() => {
       if (options?.refreshOpenPullRequests === true) sweepRefreshQueued = true;
+      if (options?.eventCardId === undefined) sweepEventCards = null;
+      else sweepEventCards?.add(options.eventCardId);
       if (sweepQueued) return Effect.void;
       sweepQueued = true;
       return worktreeSweepWorker.enqueue(undefined);
@@ -12428,7 +12450,7 @@ const make = Effect.gen(function* () {
           event.type === "board.card-worktree-ready" ||
           event.type === "board.card-worktree-reclaimed"
         ) {
-          return requestWorktreeSweep();
+          return requestWorktreeSweep({ eventCardId: event.payload.cardId });
         }
         // T3o: a human's Retry or Cancel on a card's setup (T3O-86).
         if (event.type === "board.card-resources-recorded") {
@@ -12666,7 +12688,7 @@ const make = Effect.gen(function* () {
           }).pipe(Effect.as({ outcome: "failed" } as const)),
         ),
       ),
-    sweepWorktrees: requestWorktreeSweep,
+    sweepWorktrees: (options) => requestWorktreeSweep(options),
     // The main worker first: boot reconcile and event handlers are what
     // request passes, so a pass may not be queued until they have run.
     drainWorktreeSweep: worker.drain.pipe(
