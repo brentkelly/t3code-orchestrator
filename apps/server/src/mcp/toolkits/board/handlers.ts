@@ -2166,6 +2166,22 @@ export const boardHandlers = {
     }
     const state = boardCardStepState(board, card.id);
     const policy = state === null ? null : planReviewPolicy({ board, card, settings, state });
+    // A review already ended (a round past the target) takes the instructed finished: true
+    // as a no-op success rather than refusing it.
+    if (
+      input.finished === true &&
+      state !== null &&
+      policy !== null &&
+      state.planReviewDoneAt !== undefined &&
+      !isBoardTerminalStepStatus(state.status)
+    ) {
+      return {
+        targetRounds: policy.targetRounds,
+        continue: false,
+        unattended: policy.unattended,
+        splitApprovedAfterReview: policy.splitApprovedAfterReview,
+      };
+    }
     if (state === null || policy === null || !isBoardPlanReviewRunning(state)) {
       return yield* new BoardToolError({
         code: "rejected",

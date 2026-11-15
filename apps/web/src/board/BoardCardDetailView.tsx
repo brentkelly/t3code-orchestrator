@@ -1305,7 +1305,7 @@ function PlanReviewSection({ props }: { readonly props: BoardCardDetailViewProps
           )}
         </span>
       </div>
-      {view.enabled ? (
+      {view.enabled && view.phase !== "waiting-for-you" ? (
         <div className="flex flex-col gap-1 pl-9.5">
           <div className="flex items-center gap-2.5">
             <span className="flex-1 text-board-12 font-medium text-foreground">Rounds</span>

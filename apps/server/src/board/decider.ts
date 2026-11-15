@@ -2961,12 +2961,14 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       const dependsOn = proposedDependsOn ?? card.dependsOn;
 
       // Plan review. Turning it off is always accepted and stops a running review; a rounds
-      // change moves the target the agent reads at its next round report.
+      // change moves the target the agent reads at its next round report, and is only the card's
+      // setting once the review is done: nothing reads that target any more.
       const planReviewStep = livePlanReviewStep(board, card.id);
       const planReviewRunning =
         planReviewStep !== null && planReviewStep.planReviewStartedAt !== undefined;
       const changedPlanReviewRounds =
         planReviewRunning &&
+        planReviewStep.planReviewDoneAt === undefined &&
         command.planReview != null &&
         command.planReview.enabled &&
         command.planReview.rounds !== planReviewStep.planReviewRounds

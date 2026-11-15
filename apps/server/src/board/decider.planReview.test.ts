@@ -454,6 +454,16 @@ it.effect("a rounds change while a review runs is recorded, and turning it off s
       "board.card-updated",
     ]);
 
+    // A done review's target is read by nothing: the change stays on the card alone, so the
+    // policy steer never answers the sign-off wait over it.
+    const done = readModel({
+      card: makeCard({ planReview: { enabled: true, rounds: 3 } }),
+      state: stepState({ ...started, planReviewDoneAt: NOW }),
+    });
+    assert.deepStrictEqual(types(yield* decide(update({ enabled: true, rounds: 5 }), done)), [
+      "board.card-updated",
+    ]);
+
     const stopped = yield* decide(update({ enabled: false, rounds: 3 }), running);
     assert.deepStrictEqual(types(stopped), ["board.card-updated", "board.plan-review-stopped"]);
     const stop = stopped[1]!;
