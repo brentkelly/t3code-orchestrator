@@ -112,6 +112,11 @@ describe("the thread gateway router's batch read", () => {
         assert.isTrue(records.get(LOCAL_THREAD)?.settlementDecided);
         // A removed worker's thread is left out, never asked of a gone worker.
         assert.strictEqual((yield* router.threadRecords([REMOVED_THREAD])).size, 0);
+
+        // The release sweep's read: the settled local thread is finished, so it is in neither set.
+        const sweep = yield* router.openThreadIds([LOCAL_THREAD, WORKER_THREAD, REMOVED_THREAD]);
+        assert.deepStrictEqual([...sweep.open], [WORKER_THREAD]);
+        assert.deepStrictEqual([...sweep.unanswered], [REMOVED_THREAD]);
       }),
     ),
   );
@@ -131,6 +136,15 @@ describe("the thread gateway router's batch read", () => {
         // rather than reporting a thread that never existed.
         const error = yield* Effect.flip(router.threadRecords([WORKER_THREAD]));
         assert.strictEqual(error._tag, "ThreadReadError");
+
+        // The sweep's read never fails on a worker: its threads come back unanswered, so an
+        // abandoned one there is kept rather than read as finished.
+        const sweep = yield* router.openThreadIds([LOCAL_THREAD, WORKER_THREAD, REMOVED_THREAD]);
+        assert.strictEqual(sweep.open.size, 0);
+        assert.deepStrictEqual(
+          [...sweep.unanswered].toSorted(),
+          [REMOVED_THREAD, WORKER_THREAD].toSorted(),
+        );
       }),
     ),
   );

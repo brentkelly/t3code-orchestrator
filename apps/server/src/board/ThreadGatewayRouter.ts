@@ -21,6 +21,7 @@ import * as SqlSchema from "effect/sql/SqlSchema";
 import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
 import {
   LocalThreadGateway,
+  isOpenThreadRecord,
   ThreadCommandFailedError,
   ThreadGateway,
   ThreadReadError,
@@ -201,6 +202,38 @@ export const makeThreadGatewayRouter = (deps: ThreadGatewayRouterDeps): ThreadGa
       }
       if (failure !== null && !answered) return yield* failure;
       return found;
+    }),
+    // Never fails on a worker: an unreachable or removed worker's threads come back unanswered,
+    // so the sweep keeps them for a later pass. A worker is asked over the existing
+    // `threadRecords` call and filtered here, which needs no protocol bump.
+    openThreadIds: Effect.fn("ThreadGatewayRouter.openThreadIds")(function* (threadIds) {
+      const byWorker = new Map<BoardWorkerId, Array<ThreadId>>();
+      const unanswered = new Set<ThreadId>();
+      for (const [threadId, { workerId, removed }] of yield* workersOf(threadIds)) {
+        if (removed) {
+          unanswered.add(threadId);
+          continue;
+        }
+        const ids = byWorker.get(workerId);
+        if (ids === undefined) byWorker.set(workerId, [threadId]);
+        else ids.push(threadId);
+      }
+      const open = new Set<ThreadId>();
+      for (const [workerId, ids] of byWorker) {
+        if (workerId === BOARD_LOCAL_WORKER_ID) {
+          for (const threadId of (yield* local.openThreadIds(ids)).open) open.add(threadId);
+          continue;
+        }
+        const remote = yield* Effect.result(deps.remote(workerId).threadRecords(ids));
+        if (remote._tag === "Failure") {
+          for (const threadId of ids) unanswered.add(threadId);
+          continue;
+        }
+        for (const record of remote.success.values()) {
+          if (isOpenThreadRecord(record)) open.add(record.threadId);
+        }
+      }
+      return { open, unanswered };
     }),
     // Worktree retirement on a worker is not routed: worktrees are this server's.
     threadsInWorktree: local.threadsInWorktree,

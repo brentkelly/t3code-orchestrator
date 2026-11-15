@@ -23,6 +23,7 @@ import {
 } from "@t3tools/contracts";
 import { subagentAwaitsApproval } from "@t3tools/shared/agentAwareness";
 import { boardThreadSessionStatus, boardThreadStateSource } from "@t3tools/shared/boardThreadState";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -736,6 +737,39 @@ const makeThreadGatewayV2 = Effect.gen(function* () {
       }),
     );
 
+  /**
+   * `threadRecords`' facts in one statement on the reader, not a shell read per thread: the
+   * release sweep asks after every thread the board ever released. Ids go as one JSON array, past
+   * SQLite's bound-parameter cap. A deleted thread reads as deleted only, as the shell read did.
+   */
+  const threadRecordRows = (threadIds: ReadonlyArray<ThreadId>, openOnly: boolean) =>
+    threadIds.length === 0
+      ? Effect.succeed([])
+      : sql<{
+          readonly threadId: string;
+          readonly deleted: number;
+          readonly archived: number;
+          readonly settlementDecided: number;
+        }>`
+          SELECT
+            t.thread_id AS "threadId",
+            t.deleted_at IS NOT NULL AS "deleted",
+            (t.deleted_at IS NULL
+              AND json_extract(t.payload_json, '$.archivedAt') IS NOT NULL) AS "archived",
+            (t.deleted_at IS NULL
+              AND json_extract(t.payload_json, '$.settledOverride') IS NOT NULL)
+              AS "settlementDecided"
+          FROM orchestration_v2_projection_threads t
+          WHERE t.thread_id IN (SELECT value FROM json_each(${JSON.stringify(threadIds)}))${
+            openOnly
+              ? sql`
+            AND t.deleted_at IS NULL
+            AND json_extract(t.payload_json, '$.archivedAt') IS NULL
+            AND json_extract(t.payload_json, '$.settledOverride') IS NULL`
+              : sql``
+          }
+        `.pipe(NodeSqliteClient.readOnly);
+
   /** A deleted thread drops out of the shell read; its row still says it existed. */
   const deletedRecord = (threadId: ThreadId) =>
     projections.getThread(threadId).pipe(
@@ -1039,30 +1073,33 @@ const makeThreadGatewayV2 = Effect.gen(function* () {
     ),
     threadRecords: Effect.fn("ThreadGatewayV2.threadRecords")(
       function* (threadIds) {
-        const records = new Map<ThreadId, BoardThreadRecord>();
-        for (const threadId of threadIds) {
-          const shell = yield* shellOf(threadId);
-          if (shell !== null) {
-            records.set(threadId, {
+        const rows = yield* threadRecordRows(threadIds, false);
+        return new Map(
+          rows.map((row): [ThreadId, BoardThreadRecord] => {
+            const threadId = ThreadId.make(row.threadId);
+            return [
               threadId,
-              deleted: shell.deletedAt !== null,
-              archived: shell.archivedAt !== null,
-              settlementDecided: shell.settledOverride !== null,
-            });
-            continue;
-          }
-          if ((yield* deletedRecord(threadId)) !== null) {
-            records.set(threadId, {
-              threadId,
-              deleted: true,
-              archived: false,
-              settlementDecided: false,
-            });
-          }
-        }
-        return records as ReadonlyMap<ThreadId, BoardThreadRecord>;
+              {
+                threadId,
+                deleted: row.deleted === 1,
+                archived: row.archived === 1,
+                settlementDecided: row.settlementDecided === 1,
+              },
+            ];
+          }),
+        ) as ReadonlyMap<ThreadId, BoardThreadRecord>;
       },
       Effect.mapError(readError("threadRecords")),
+    ),
+    openThreadIds: Effect.fn("ThreadGatewayV2.openThreadIds")(
+      function* (threadIds) {
+        const rows = yield* threadRecordRows(threadIds, true);
+        return {
+          open: new Set(rows.map((row) => ThreadId.make(row.threadId))),
+          unanswered: new Set<ThreadId>(),
+        };
+      },
+      Effect.mapError(readError("openThreadIds")),
     ),
     threadsInWorktree: Effect.fn("ThreadGatewayV2.threadsInWorktree")(
       function* (worktreePath) {

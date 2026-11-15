@@ -12,6 +12,7 @@ import * as Stream from "effect/Stream";
 
 import {
   deletedThreadState,
+  isOpenThreadRecord,
   ThreadCommandRefusedError,
   ThreadGateway,
   type BoardAssistantMessage,
@@ -385,6 +386,18 @@ export const makeFakeThreadGateway = (options: FakeThreadGatewayOptions = {}) =>
             return found;
           }),
         ),
+      openThreadIds: (threadIds) =>
+        Ref.get(records).pipe(
+          Effect.map((current) => ({
+            open: new Set(
+              threadIds.filter((threadId) => {
+                const entry = current.get(String(threadId));
+                return entry !== undefined && isOpenThreadRecord(entry);
+              }),
+            ),
+            unanswered: new Set<ThreadId>(),
+          })),
+        ),
       threadsInWorktree: (worktreePath) =>
         Effect.all([Ref.get(records), Ref.get(states)]).pipe(
           Effect.map(([currentRecords, currentStates]) =>
@@ -505,6 +518,7 @@ export const inertThreadGateway = (
   unlinkPullRequest: () => Effect.void,
   threadState: () => Effect.succeed(null),
   threadRecords: () => Effect.succeed(new Map()),
+  openThreadIds: () => Effect.succeed({ open: new Set(), unanswered: new Set() }),
   threadsInWorktree: () => Effect.succeed([]),
   latestAssistantMessage: () => Effect.succeed(null),
   lastSignalAt: () => Effect.succeed(null),

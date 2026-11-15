@@ -972,23 +972,21 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * Settle every thread the board is finished with. The only place it settles: it re-derives
-   * the released set each pass because an agent completes its step inside its own turn, when the
-   * settle is refused. Pre-filters (one batch read, then `autoSettleCandidate`) keep a settle
-   * nobody could accept from writing a rejected receipt every pass.
+   * The board's only settle. It re-derives the released set each pass, since an agent completes
+   * its step mid-turn, when a settle is refused. One batch read of the still-open threads, then
+   * `autoSettleCandidate`, keep an unacceptable settle from writing a rejected receipt per pass.
    */
   const releaseFinishedThreads = Effect.gen(function* () {
     const board = yield* readBoard;
     const released = [...boardReleasedThreadIds(board, abandonedThreads)];
-    const records = released.length === 0 ? new Map() : yield* threads.threadRecords(released);
+    if (released.length === 0) return;
+    const { open, unanswered } = yield* threads.openThreadIds(released);
     for (const threadId of released) {
       steeredThreads.delete(String(threadId));
       deferredSteers.delete(String(threadId));
-      const thread = records.get(threadId);
-      // No record is no answer: the thread's worker couldn't be asked,
-      // so an abandoned thread there is kept for the next pass.
-      if (thread === undefined) continue;
-      if (thread.deleted || thread.archived || thread.settlementDecided) {
+      // The thread's worker couldn't be asked, so an abandoned thread there is kept for the next pass.
+      if (unanswered.has(threadId)) continue;
+      if (!open.has(threadId)) {
         // Nothing left to ask about — and an abandoned thread that reaches this
         // is finished business, so stop carrying it.
         abandonedThreads.delete(String(threadId));

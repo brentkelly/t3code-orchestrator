@@ -393,6 +393,7 @@ it.layer(makeBoardStackTestLayer("t3o-thread-gateway-contract-"))(
           archived: false,
           settlementDecided: false,
         });
+        assert.deepStrictEqual([...(yield* threads.openThreadIds([threadId])).open], [threadId]);
         // Its waiting run makes it busy; an idle thread is not.
         const idle = yield* createIdleThread("spawned-idle-neighbour");
         const busy = yield* threads.listBusyThreadIds();
@@ -405,6 +406,8 @@ it.layer(makeBoardStackTestLayer("t3o-thread-gateway-contract-"))(
           threadId,
         });
         assert.notInclude(yield* threads.listBusyThreadIds(), threadId);
+        assert.isTrue((yield* threads.threadRecords([threadId])).get(threadId)!.archived);
+        assert.strictEqual((yield* threads.openThreadIds([threadId])).open.size, 0);
 
         // The turn the spawn asked for reads as the BOARD's, never a human's.
         const requested = signalsOf(yield* loggedSince(before)).filter(
@@ -460,6 +463,7 @@ it.layer(makeBoardStackTestLayer("t3o-thread-gateway-contract-"))(
         assert.strictEqual(refusalTag(exit), "ThreadCommandRefusedError");
         assert.isNull(yield* threads.threadState(threadId));
         assert.strictEqual((yield* threads.threadRecords([threadId])).size, 0);
+        assert.strictEqual((yield* threads.openThreadIds([threadId])).open.size, 0);
       }),
     );
 
@@ -841,8 +845,14 @@ it.layer(makeBoardStackTestLayer("t3o-thread-gateway-contract-"))(
         const threadId = yield* createIdleThread("settled");
         const threads = yield* LocalThreadGateway;
         assert.isTrue((yield* threads.threadState(threadId))!.autoSettleCandidate);
+        const neighbour = yield* createIdleThread("settled-neighbour");
         yield* threads.settle({ commandId: boardCommandId("settle"), threadId, auto: false });
         assert.isTrue((yield* threads.threadRecords([threadId])).get(threadId)!.settlementDecided);
+        // One batch read: the settled thread drops out, its unsettled neighbour stays.
+        assert.deepStrictEqual(
+          [...(yield* threads.openThreadIds([threadId, neighbour])).open],
+          [neighbour],
+        );
         const state = yield* threads.threadState(threadId);
         assert.isTrue(state!.settlementDecided);
         assert.isFalse(state!.autoSettleCandidate);
@@ -945,7 +955,13 @@ it.layer(makeBoardStackTestLayer("t3o-thread-gateway-contract-"))(
         const state = yield* threads.threadState(threadId);
         assert.isTrue(state!.deleted);
         assert.isFalse(state!.alive);
-        assert.isTrue((yield* threads.threadRecords([threadId])).get(threadId)!.deleted);
+        assert.deepStrictEqual((yield* threads.threadRecords([threadId])).get(threadId), {
+          threadId,
+          deleted: true,
+          archived: false,
+          settlementDecided: false,
+        });
+        assert.strictEqual((yield* threads.openThreadIds([threadId])).open.size, 0);
 
         const after = yield* threads.todoLogHead;
         const logged = yield* Stream.runCollect(threads.readTodoLog(before, after));
