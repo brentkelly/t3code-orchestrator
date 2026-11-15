@@ -61,6 +61,7 @@ import {
   BoardPlanReviewStartedPayload,
   BoardPlanReviewStoppedPayload,
   BoardPlanReviewRoundsChangedPayload,
+  BoardPlanReviewProgressedPayload,
   BoardCardBaseRefRecordedPayload,
   BoardCardPlacedPayload,
   BoardCardWorkerMoveRecordedPayload,
@@ -140,6 +141,9 @@ const decodeBoardPlanReviewStoppedPayload = Schema.decodeUnknownEffect(
 );
 const decodeBoardPlanReviewRoundsChangedPayload = Schema.decodeUnknownEffect(
   BoardPlanReviewRoundsChangedPayload,
+);
+const decodeBoardPlanReviewProgressedPayload = Schema.decodeUnknownEffect(
+  BoardPlanReviewProgressedPayload,
 );
 const decodeBoardPlanWrittenPayload = Schema.decodeUnknownEffect(BoardPlanWrittenPayload);
 const decodeBoardPlansApprovedPayload = Schema.decodeUnknownEffect(BoardPlansApprovedPayload);
@@ -255,6 +259,7 @@ export function boardCardFromCreatedPayload(payload: BoardCardCreatedPayload): B
     threadLinks: [],
     attachments: [],
     externalRef: payload.externalRef ?? null,
+    ...(payload.planReview === undefined ? {} : { planReview: payload.planReview }),
     // No overrides at birth, split children included: that is what makes a
     // child resolve its parent's model overrides.
     humanInLoop: null,
@@ -594,6 +599,23 @@ function replaceCardPlans<M extends BoardReadModel>(
   const others = (board.plans ?? []).filter((plan) => plan.cardId !== cardId);
   const next = [...others, ...plans].toSorted(compareBoardPlans);
   return { ...model, board: { ...board, plans: next } };
+}
+
+/** Drop every `revisedInRound` stamp on a card's plans: a new review starts. */
+function clearPlansRevisedInRound<M extends BoardReadModel>(
+  model: M,
+  cardId: BoardPlan["cardId"],
+): M {
+  const board = model.board ?? EMPTY_BOARD_STATE;
+  const current = board.plans ?? [];
+  if (!current.some((plan) => plan.cardId === cardId && plan.revisedInRound !== undefined))
+    return model;
+  const plans = current.map((plan) => {
+    if (plan.cardId !== cardId || plan.revisedInRound === undefined) return plan;
+    const { revisedInRound: _round, ...rest } = plan;
+    return rest;
+  });
+  return { ...model, board: { ...board, plans } };
 }
 
 /** Upsert one plan's metadata (board_write_plan bumps `updatedAt`). */
@@ -975,6 +997,15 @@ export function projectBoardEvent<M extends BoardReadModel>(
     // clears it, so turning review back on starts a fresh one.
     case "board.plan-review-started":
       return decodeBoardPlanReviewStartedPayload(event.payload).pipe(
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
+        // A new review starts every plan unstamped.
+        Effect.map((payload) =>
+          clearPlansRevisedInRound(upsertStepState(model, payload.state), payload.cardId),
+        ),
+      );
+
+    case "board.plan-review-progressed":
+      return decodeBoardPlanReviewProgressedPayload(event.payload).pipe(
         Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
         Effect.map((payload) => upsertStepState(model, payload.state)),
       );
@@ -1391,6 +1422,7 @@ export function boardShellStreamEvent(event: BoardEvent): Option.Option<BoardShe
     case "board.plan-review-started":
     case "board.plan-review-stopped":
     case "board.plan-review-rounds-changed":
+    case "board.plan-review-progressed":
     // Branch cleanup is card DETAIL too: it lands on the activity rail, which
     // rides `board.subscribeCard`, and changes nothing a column card renders.
     case "board.card-note-recorded":

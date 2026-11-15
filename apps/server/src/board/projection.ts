@@ -514,6 +514,12 @@ const BoardCardStepStateDbRow = Schema.Struct({
   // NULL before migration 054 and on every step with no plan review started.
   planReviewStartedAt: Schema.NullOr(IsoDateTime),
   planReviewRounds: Schema.NullOr(Schema.Int),
+  // T3o: NULL before migration 077 and on every step with no review round, end, arming or
+  // delivered policy (T3O-104).
+  planReviewRound: Schema.NullOr(Schema.Int),
+  planReviewDoneAt: Schema.NullOr(IsoDateTime),
+  planReviewAwaitingStart: Schema.NullOr(IsoDateTime),
+  planReviewPolicySent: Schema.NullOr(Schema.String),
   // NULL before migration 067 and on every step Auto-plan never reopened.
   reopenedAt: Schema.NullOr(IsoDateTime),
   reopenedPromptAt: Schema.NullOr(IsoDateTime),
@@ -568,6 +574,8 @@ const BoardPlanDbRow = Schema.Struct({
       }),
     ),
   ),
+  /** T3o: migration 077; NULL outside a plan review (T3O-104). */
+  revisedInRound: Schema.NullOr(Schema.Int),
   body: Schema.String,
   createdAt: BoardPlan.fields.createdAt,
   updatedAt: BoardPlan.fields.updatedAt,
@@ -589,6 +597,7 @@ function rowToBoardPlan(row: BoardPlanDbRow): BoardPlan {
     ...(row.planned === 0 ? { planned: false } : {}),
     ...(row.sizing === null ? {} : { size: row.sizing.size }),
     ...(row.sizing?.reason === undefined ? {} : { sizeReason: row.sizing.reason }),
+    ...(row.revisedInRound === null ? {} : { revisedInRound: row.revisedInRound }),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -2247,7 +2256,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         stage_entry_recoveries, last_nudge_at, prompt,
         provider_instance_id, model, mode, runtime_mode, model_options, base_tip_at_round_start,
         last_error, awaiting_reason, human_turn_at, stalled_reason, retry_at,
-        plan_review_started_at, plan_review_rounds, reopened_at, reopened_prompt_at,
+        plan_review_started_at, plan_review_rounds, plan_review_round, plan_review_done_at,
+        plan_review_awaiting_start, plan_review_policy_sent, reopened_at, reopened_prompt_at,
         human_in_loop, max_attempts, timeout_ms, thread_id, status, slot_held, force_start,
         queued_by, queued_detail, started_at, updated_at
       )
@@ -2257,7 +2267,9 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ${row.providerInstanceId}, ${row.model}, ${row.mode}, ${row.runtimeMode}, ${row.modelOptions},
         ${row.baseTipAtRoundStart},
         ${row.lastError}, ${row.awaitingReason}, ${row.humanTurnAt}, ${row.stalledReason}, ${row.retryAt},
-        ${row.planReviewStartedAt}, ${row.planReviewRounds}, ${row.reopenedAt}, ${row.reopenedPromptAt},
+        ${row.planReviewStartedAt}, ${row.planReviewRounds}, ${row.planReviewRound},
+        ${row.planReviewDoneAt}, ${row.planReviewAwaitingStart}, ${row.planReviewPolicySent},
+        ${row.reopenedAt}, ${row.reopenedPromptAt},
         ${row.humanInLoop}, ${row.maxAttempts},
         ${row.timeoutMs}, ${row.threadId}, ${row.status}, ${row.slotHeld}, ${row.forceStart},
         ${row.queuedBy}, ${row.queuedDetail}, ${row.startedAt}, ${row.updatedAt}
@@ -2285,6 +2297,10 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         retry_at = excluded.retry_at,
         plan_review_started_at = excluded.plan_review_started_at,
         plan_review_rounds = excluded.plan_review_rounds,
+        plan_review_round = excluded.plan_review_round,
+        plan_review_done_at = excluded.plan_review_done_at,
+        plan_review_awaiting_start = excluded.plan_review_awaiting_start,
+        plan_review_policy_sent = excluded.plan_review_policy_sent,
         reopened_at = excluded.reopened_at,
         reopened_prompt_at = excluded.reopened_prompt_at,
         human_in_loop = excluded.human_in_loop,
@@ -2328,6 +2344,10 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         retry_at AS "retryAt",
         plan_review_started_at AS "planReviewStartedAt",
         plan_review_rounds AS "planReviewRounds",
+        plan_review_round AS "planReviewRound",
+        plan_review_done_at AS "planReviewDoneAt",
+        plan_review_awaiting_start AS "planReviewAwaitingStart",
+        plan_review_policy_sent AS "planReviewPolicySent",
         reopened_at AS "reopenedAt",
         reopened_prompt_at AS "reopenedPromptAt",
         human_in_loop AS "humanInLoop",
@@ -2421,13 +2441,19 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
       status: BoardCardStepState.fields.status,
       planReviewStartedAt: Schema.NullOr(IsoDateTime),
       planReviewRounds: Schema.NullOr(Schema.Int),
+      planReviewRound: Schema.NullOr(Schema.Int),
+      planReviewDoneAt: Schema.NullOr(IsoDateTime),
+      planReviewAwaitingStart: Schema.NullOr(IsoDateTime),
     }),
     execute: (cardId) => sql`
       SELECT
         last_error AS "lastError",
         status,
         plan_review_started_at AS "planReviewStartedAt",
-        plan_review_rounds AS "planReviewRounds"
+        plan_review_rounds AS "planReviewRounds",
+        plan_review_round AS "planReviewRound",
+        plan_review_done_at AS "planReviewDoneAt",
+        plan_review_awaiting_start AS "planReviewAwaitingStart"
       FROM board_card_step_state
       WHERE card_id = ${cardId}
     `,
@@ -2577,13 +2603,13 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     Request: BoardPlanDbRow,
     execute: (row) => sql`
       INSERT INTO board_plans (
-        plan_id, card_id, title, summary, depends_on, ordinal, locked, planned, sizing, body,
-        created_at, updated_at
+        plan_id, card_id, title, summary, depends_on, ordinal, locked, planned, sizing,
+        revised_in_round, body, created_at, updated_at
       )
       VALUES (
         ${row.planId}, ${row.cardId}, ${row.title}, ${row.summary}, ${row.dependsOn},
-        ${row.ordinal}, ${row.locked}, ${row.planned}, ${row.sizing}, ${row.body},
-        ${row.createdAt}, ${row.updatedAt}
+        ${row.ordinal}, ${row.locked}, ${row.planned}, ${row.sizing}, ${row.revisedInRound},
+        ${row.body}, ${row.createdAt}, ${row.updatedAt}
       )
       ON CONFLICT (plan_id)
       DO UPDATE SET
@@ -2595,6 +2621,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         locked = excluded.locked,
         planned = excluded.planned,
         sizing = excluded.sizing,
+        revised_in_round = excluded.revised_in_round,
         body = excluded.body,
         created_at = excluded.created_at,
         updated_at = excluded.updated_at
@@ -2604,14 +2631,25 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
   const UpdatePlanBodyRequest = Schema.Struct({
     planId: BoardPlanId,
     body: Schema.String,
+    revisedInRound: Schema.NullOr(Schema.Int),
     updatedAt: BoardPlan.fields.updatedAt,
   });
   const updateBoardPlanBodyRow = SqlSchema.void({
     Request: UpdatePlanBodyRequest,
     execute: (request) => sql`
       UPDATE board_plans
-      SET body = ${request.body}, updated_at = ${request.updatedAt}
+      SET body = ${request.body}, revised_in_round = ${request.revisedInRound},
+        updated_at = ${request.updatedAt}
       WHERE plan_id = ${request.planId}
+    `,
+  });
+
+  // T3o: a new plan review starts every plan unstamped (T3O-104).
+  const clearBoardPlanRevisedInRoundRows = SqlSchema.void({
+    Request: BoardCardId,
+    execute: (cardId) => sql`
+      UPDATE board_plans SET revised_in_round = NULL
+      WHERE card_id = ${cardId} AND revised_in_round IS NOT NULL
     `,
   });
 
@@ -2629,6 +2667,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         locked,
         planned,
         sizing,
+        revised_in_round AS "revisedInRound",
         body,
         created_at AS "createdAt",
         updated_at AS "updatedAt"
@@ -2653,6 +2692,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         locked,
         planned,
         sizing,
+        revised_in_round AS "revisedInRound",
         body,
         created_at AS "createdAt",
         updated_at AS "updatedAt"
@@ -2675,6 +2715,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         locked,
         planned,
         sizing,
+        revised_in_round AS "revisedInRound",
         body,
         created_at AS "createdAt",
         updated_at AS "updatedAt"
@@ -2765,6 +2806,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     deleteBoardCardUsageForCard,
     insertBoardPlanRow,
     updateBoardPlanBodyRow,
+    clearBoardPlanRevisedInRoundRows,
     listBoardPlanRows,
     listBoardPlanRowsForCard,
     findBoardPlanRow,
@@ -3051,6 +3093,10 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
         retryAt: state.retryAt,
         planReviewStartedAt: state.planReviewStartedAt ?? null,
         planReviewRounds: state.planReviewRounds ?? null,
+        planReviewRound: state.planReviewRound ?? null,
+        planReviewDoneAt: state.planReviewDoneAt ?? null,
+        planReviewAwaitingStart: state.planReviewAwaitingStart ?? null,
+        planReviewPolicySent: state.planReviewPolicySent ?? null,
         reopenedAt: state.reopenedAt ?? null,
         reopenedPromptAt: state.reopenedPromptAt ?? null,
         humanInLoop: state.humanInLoop ? 1 : 0,
@@ -3136,6 +3182,7 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
                   size: plan.size,
                   ...(plan.sizeReason === undefined ? {} : { reason: plan.sizeReason }),
                 },
+          revisedInRound: plan.revisedInRound ?? null,
           body: plan.body,
           createdAt: plan.createdAt,
           updatedAt: plan.updatedAt,
@@ -3145,9 +3192,14 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
     Effect.mapError(toPersistenceSqlError("BoardCardsProjection.plans:query")),
   );
 
-  const writePlanBody = (planId: BoardPlanId, body: string, updatedAt: string) =>
+  const writePlanBody = (
+    planId: BoardPlanId,
+    body: string,
+    updatedAt: string,
+    revisedInRound: number | null,
+  ) =>
     queries
-      .updateBoardPlanBodyRow({ planId, body, updatedAt })
+      .updateBoardPlanBodyRow({ planId, body, updatedAt, revisedInRound })
       .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.planBody:query")));
 
   // Two THREAD signals feed board-owned tables. Nothing upstream is
@@ -3217,6 +3269,7 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
                   locked: 0,
                   planned: 1,
                   sizing: planRow.value.sizing,
+                  revisedInRound: null,
                   body: planRow.value.body,
                 })
                 .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.plans:query")));
@@ -3571,6 +3624,7 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
               planReviewRounds: event.payload.planReviewFinished.rounds,
               planReviewRoundsRun: event.payload.planReviewFinished.roundsRun,
               planReviewConverged: event.payload.planReviewFinished.converged,
+              planReviewFindings: event.payload.planReviewFinished.findings,
             },
             threadId: event.payload.completion.threadId,
             activityIdSuffix: ":plan-review-finished",
@@ -3581,6 +3635,9 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
       // Plan review: on the rail, so the card shows a review happened.
       case "board.plan-review-started":
         yield* upsertStepState(event.payload.state);
+        yield* queries
+          .clearBoardPlanRevisedInRoundRows(event.payload.cardId)
+          .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.plans:query")));
         yield* recordActivity({
           event,
           cardId: event.payload.cardId,
@@ -3593,6 +3650,11 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
           },
           threadId: event.payload.state.threadId,
         });
+        return;
+
+      // T3o: review bookkeeping, step state only (T3O-104).
+      case "board.plan-review-progressed":
+        yield* upsertStepState(event.payload.state);
         return;
 
       case "board.plan-review-stopped":
@@ -3617,6 +3679,9 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
             ...(event.payload.state.planReviewRounds === undefined
               ? {}
               : { planReviewRounds: event.payload.state.planReviewRounds }),
+            ...(event.payload.previousRounds === undefined
+              ? {}
+              : { planReviewRoundsBefore: event.payload.previousRounds }),
           },
           threadId: event.payload.state.threadId,
         });
@@ -3801,6 +3866,7 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
           event.payload.planId,
           event.payload.body,
           event.payload.plan.updatedAt,
+          event.payload.plan.revisedInRound ?? null,
         );
         yield* recordActivity({
           event,
@@ -4000,6 +4066,14 @@ function loadBoardState(
               ? {}
               : { planReviewStartedAt: row.planReviewStartedAt }),
             ...(row.planReviewRounds === null ? {} : { planReviewRounds: row.planReviewRounds }),
+            ...(row.planReviewRound === null ? {} : { planReviewRound: row.planReviewRound }),
+            ...(row.planReviewDoneAt === null ? {} : { planReviewDoneAt: row.planReviewDoneAt }),
+            ...(row.planReviewAwaitingStart === null
+              ? {}
+              : { planReviewAwaitingStart: row.planReviewAwaitingStart }),
+            ...(row.planReviewPolicySent === null
+              ? {}
+              : { planReviewPolicySent: row.planReviewPolicySent }),
             ...(row.reopenedAt === null ? {} : { reopenedAt: row.reopenedAt }),
             ...(row.reopenedPromptAt === null ? {} : { reopenedPromptAt: row.reopenedPromptAt }),
             humanInLoop: row.humanInLoop !== 0,
@@ -4558,15 +4632,21 @@ function makeBoardCardDetailLoader(
             stepError: Option.getOrNull(stepErrorRow)?.lastError ?? null,
             ...(() => {
               const step = Option.getOrNull(stepErrorRow);
-              return step === null ||
-                step.planReviewStartedAt === null ||
+              if (step === null) return {};
+              const awaiting =
+                step.planReviewAwaitingStart === null || step.planReviewStartedAt !== null
+                  ? {}
+                  : { planReviewAwaitingStart: step.planReviewAwaitingStart };
+              return step.planReviewStartedAt === null ||
                 step.planReviewRounds === null ||
                 isBoardTerminalStepStatus(step.status)
-                ? {}
+                ? awaiting
                 : {
                     planReviewStarted: {
                       startedAt: step.planReviewStartedAt,
                       rounds: step.planReviewRounds,
+                      ...(step.planReviewRound === null ? {} : { round: step.planReviewRound }),
+                      ...(step.planReviewDoneAt === null ? {} : { doneAt: step.planReviewDoneAt }),
                     },
                   };
             })(),

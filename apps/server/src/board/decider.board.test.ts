@@ -2531,6 +2531,15 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
       const projectCard = makeCard({ id: "card-project", stage: "ready" });
       // mark-auto-plan only accepts a leaf in planning.
       const autoPlanCard = makeCard({ id: "card-auto-plan", stage: "planning" });
+      // Plan review: one armed (waiting for Start review) and one running.
+      const reviewArmedCard = {
+        ...makeCard({ id: "card-review-armed", stage: "planning" }),
+        planReview: { enabled: true, rounds: 2 },
+      };
+      const reviewRunningCard = {
+        ...makeCard({ id: "card-review-running", stage: "planning" }),
+        planReview: { enabled: true, rounds: 2 },
+      };
       const autoPlanningCard = {
         ...makeCard({ id: "card-auto-planning", stage: "planning" }),
         autoPlan: { mode: "build" as const, requestedAt: NOW, endedAt: null },
@@ -2586,6 +2595,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
             projectCard,
             autoPlanCard,
             autoPlanningCard,
+            reviewArmedCard,
+            reviewRunningCard,
           ],
           labels: [...BOARD_SEED_LABELS, tombstonedLabel],
           plans: [readyPlan, ...splitPlans],
@@ -2605,6 +2616,15 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
             // complete-step validates against the card's LIVE step, so the
             // catalog's completion needs one to succeed against.
             makeStepState("card-ready", "running", "build"),
+            {
+              ...makeStepState("card-review-armed", "running", "planning"),
+              planReviewAwaitingStart: NOW,
+            },
+            {
+              ...makeStepState("card-review-running", "running", "planning"),
+              planReviewStartedAt: NOW,
+              planReviewRounds: 2,
+            },
           ],
           // A registered worker for the registry commands to act on.
           workers: [
@@ -2815,6 +2835,27 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
           type: "board.plans.approve",
           commandId: CommandId.make("cmd-approve"),
           cardId: BoardCardId.make("card-split"),
+          createdAt: NOW,
+        },
+        "board.plan-review.start": {
+          type: "board.plan-review.start",
+          commandId: CommandId.make("cmd-plan-review-start"),
+          cardId: BoardCardId.make("card-review-armed"),
+          createdAt: NOW,
+        },
+        "board.plan-review.round-started": {
+          type: "board.plan-review.round-started",
+          commandId: CommandId.make("cmd-plan-review-round"),
+          cardId: BoardCardId.make("card-review-running"),
+          round: 1,
+          createdAt: NOW,
+        },
+        "board.plan-review.policy-sent": {
+          type: "board.plan-review.policy-sent",
+          commandId: CommandId.make("cmd-plan-review-policy"),
+          cardId: BoardCardId.make("card-review-running"),
+          stepId: "planning",
+          policySent: "rounds=2;unattended=false;split=false",
           createdAt: NOW,
         },
         // Records the integration branch the reactor created —

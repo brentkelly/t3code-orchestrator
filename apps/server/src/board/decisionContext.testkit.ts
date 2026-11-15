@@ -41,7 +41,7 @@ export type BoardOrchestrationReadModel = BoardReadModel & {
 function boardDecisionContextFromModel(
   command: BoardCommand,
   model: Pick<BoardOrchestrationReadModel, "projects" | "threads">,
-  extra?: { readonly brief?: string | null },
+  extra?: Pick<BoardDecisionContext, "brief" | "planBodies">,
 ): BoardDecisionContext {
   const projects = boardCommandNeedsProjects(command)
     ? {
@@ -67,7 +67,7 @@ const findThread = (model: Pick<BoardOrchestrationReadModel, "threads">, threadI
 export const decideBoardCommandOnModel = (input: {
   readonly command: BoardCommand;
   readonly readModel: BoardOrchestrationReadModel;
-  readonly context?: { readonly brief?: string | null };
+  readonly context?: Pick<BoardDecisionContext, "brief" | "planBodies">;
 }) =>
   decideBoardCommand({
     command: input.command,
