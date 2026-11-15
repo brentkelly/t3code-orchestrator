@@ -115,8 +115,9 @@ const worktreePrivateGitDir = (
             Effect.orElseSucceed(() => null),
           ),
     ),
-    Effect.flatMap((gitDir) =>
-      gitDir === null ? worktreeGitDirFromGit(deps.git, worktreePath) : Effect.succeed(gitDir),
+    Effect.filterOrElse(
+      (gitDir): gitDir is string => gitDir !== null,
+      () => worktreeGitDirFromGit(deps.git, worktreePath),
     ),
   );
 
