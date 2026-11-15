@@ -109,6 +109,7 @@ import {
 // T3o: measured actuals (T3O-87).
 import { listCardActualsRows } from "./actuals/boardActualsStore.ts";
 import { makeBoardEventStore } from "./boardEventStore.ts";
+import { boardCardDependentRefs } from "./cardDetailRelations.ts";
 import {
   boardCardFromCreatedPayload,
   compareBoardCards,
@@ -4581,8 +4582,8 @@ const loadBoardShellSnapshot: (
  */
 function makeBoardCardDetailLoader(
   queries: BoardCardQueries,
-): (cardId: BoardCardId) => Effect.Effect<BoardCardDetail | null, ProjectionRepositoryError> {
-  return (cardId) =>
+): BoardQueriesShape["boardCardDetail"] {
+  return (cardId, board) =>
     Effect.all([
       queries.findBoardCardRow(cardId),
       queries.listBoardCardThreadLinkRowsForCard(cardId),
@@ -4590,7 +4591,9 @@ function makeBoardCardDetailLoader(
       queries.findBoardCardBodyRow({ cardId, kind: BOARD_CARD_BRIEF_BODY_KIND }),
       queries.listBoardCardLabelRowsForCard(cardId),
       queries.listBoardCardDependencyRefRows(cardId),
-      queries.listBoardCardDependentRefRows(cardId),
+      board === undefined
+        ? queries.listBoardCardDependentRefRows(cardId)
+        : Effect.succeed(boardCardDependentRefs(board, cardId)),
       queries.listBoardCardChildRefRows(cardId),
       queries.listBoardPlanRowsForCard(cardId),
       queries.listBoardCardStepRowsForCard(cardId),
@@ -4790,9 +4793,11 @@ export interface BoardQueriesShape {
     ReadonlyArray<BoardCardShell>,
     ProjectionRepositoryError
   >;
-  /** Full detail for `board.subscribeCard`; null when the card does not exist. */
+  /** Full detail for `board.subscribeCard`; null when the card does not exist. Given the
+      in-memory board, dependents come from it instead of a JSON scan of every row. */
   readonly boardCardDetail: (
     cardId: BoardCardId,
+    board?: BoardState,
   ) => Effect.Effect<BoardCardDetail | null, ProjectionRepositoryError>;
   /** A card's activity log for `board_get_card_context`. */
   readonly boardCardActivity: (

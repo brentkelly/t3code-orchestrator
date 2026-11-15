@@ -75,6 +75,7 @@ import {
   type BoardProjectConfigServiceShape,
 } from "./projectConfig/BoardProjectConfigService.ts";
 import { BoardQueries } from "./BoardQueries.ts";
+import { boardCardDetailWakes } from "./cardDetailRelations.ts";
 import type { BoardQueriesShape } from "./projection.ts";
 import { subscribeBoard } from "./boardSubscription.ts";
 import { BoardThreadTail } from "./boardThreadTail.ts";
@@ -257,7 +258,9 @@ function makeBoardRpcHandlers(
   const readDetail = (
     cardId: BoardCardId,
   ): Effect.Effect<BoardCardDetail | null, BoardSubscribeCardError> =>
-    boardQueries.boardCardDetail(cardId).pipe(
+    Effect.flatMap(boardEngine.getReadModel, (model) =>
+      boardQueries.boardCardDetail(cardId, model.board),
+    ).pipe(
       Effect.mapError(
         (cause) =>
           new BoardSubscribeCardError({
@@ -694,24 +697,33 @@ function makeBoardRpcHandlers(
       ),
 
     /**
-     * One subscription per open card: emits the full detail on subscribe and re-emits it on
-     * every board event, disposed with the stream's scope. One card's detail is small enough
-     * that re-emitting it whole beats an event grammar and a client-side merge.
+     * One subscription per open card: emits the full detail on subscribe and re-emits it
+     * when an event touches the card or one its detail embeds, disposed with the stream's
+     * scope. One card's detail is small enough that re-emitting it whole beats an event
+     * grammar and a client-side merge; a re-read identical to the last frame is not sent.
      */
     [BOARD_WS_METHODS.subscribeCard]: (input: BoardSubscribeCardInput) =>
       Stream.unwrap(
         authorized(
           BOARD_WS_METHODS.subscribeCard,
           Effect.gen(function* () {
+            // The last frame sent: its encoding drops identical re-reads, and its related
+            // cards keep an edge removed since then waking this viewer.
+            let lastSent: { readonly detail: BoardCardDetail; readonly encoded: string } | null =
+              null;
             // Attach live delivery BEFORE the initial read, so an event committed during
             // it triggers a re-read. The payload-free buffer slides at capacity 1, so a burst
             // during a re-read collapses into one wake-up and one frame of the latest state.
             const liveBuffer = yield* Queue.sliding<void>(1);
             yield* Effect.forkScoped(
-              // Wake on ANY board event: the detail embeds dependencies and dependents
-              // whose stage and archive state change under events on other cards' ids.
               boardEngine.liveBoardEvents.pipe(
-                Stream.runForEach(() => Queue.offer(liveBuffer, undefined)),
+                Stream.runForEach((event) =>
+                  Effect.flatMap(boardEngine.getReadModel, (model) =>
+                    boardCardDetailWakes(event, model.board, input.cardId, lastSent?.detail ?? null)
+                      ? Queue.offer(liveBuffer, undefined)
+                      : Effect.void,
+                  ),
+                ),
               ),
               { startImmediately: true },
             );
@@ -731,17 +743,21 @@ function makeBoardRpcHandlers(
                 message: `Board card ${input.cardId} does not exist.`,
               });
             }
+            const emit = (detail: BoardCardDetail) => {
+              const encoded = JSON.stringify(detail);
+              if (lastSent?.encoded === encoded) return Stream.empty;
+              lastSent = { detail, encoded };
+              return Stream.make(detailItem(detail));
+            };
 
             return Stream.concat(
-              Stream.make(detailItem(initial)),
+              emit(initial),
               Stream.fromQueue(liveBuffer).pipe(
                 Stream.mapEffect(() => readDetail(input.cardId)),
                 // Null mid-stream: the card was deleted under an open viewer (an
                 // archived card still resolves). Drop the frame rather than close the
                 // stream, so other viewers keep the last frame.
-                Stream.flatMap((detail) =>
-                  detail === null ? Stream.empty : Stream.make(detailItem(detail)),
-                ),
+                Stream.flatMap((detail) => (detail === null ? Stream.empty : emit(detail))),
               ),
             );
           }),

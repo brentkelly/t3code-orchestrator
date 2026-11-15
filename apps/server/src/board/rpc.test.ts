@@ -257,6 +257,86 @@ it.layer(makeBoardRpcTestLayer("t3o-board-rpc-test-"))("board.subscribeCard", (i
       assert.strictEqual(updated?.detail.brief, "The brief body.");
     }),
   );
+
+  it.effect("re-emits only for related cards, and never an unchanged frame", () =>
+    Effect.gen(function* () {
+      const engine = yield* boardStackEngine;
+      yield* seedCard;
+      const create = (id: BoardCardId, title: string, orderKey: string) =>
+        engine.dispatch({
+          type: "board.card.create",
+          commandId: CommandId.make(`cmd-rel-create-${id}`),
+          cardId: id,
+          projectId,
+          title,
+          orderKey,
+          createdAt: t0,
+        });
+      const subject = BoardCardId.make("card-rel-subject");
+      const dependency = BoardCardId.make("card-rel-dependency");
+      const unrelated = BoardCardId.make("card-rel-unrelated");
+      yield* create(dependency, "Dependency", "a");
+      yield* create(unrelated, "Unrelated", "b");
+      yield* create(subject, "Subject", "c");
+      yield* engine.dispatch({
+        type: "board.card.update",
+        commandId: CommandId.make("cmd-rel-depends"),
+        cardId: subject,
+        dependsOn: [dependency],
+        createdAt: t0,
+      });
+      const handlers = yield* makeHandlers([AuthOrchestrationReadScope]);
+
+      const collected = yield* Deferred.make<ReadonlyArray<BoardCardDetailStreamItem>>();
+      const firstFrame = yield* Deferred.make<void>();
+      yield* Effect.forkScoped(
+        handlers["board.subscribeCard"]({ cardId: subject }).pipe(
+          Stream.tap(() => Deferred.succeed(firstFrame, undefined)),
+          Stream.take(3),
+          Stream.runCollect,
+          Effect.flatMap((items) => Deferred.succeed(collected, Array.from(items))),
+          Effect.scoped,
+        ),
+      );
+      yield* Deferred.await(firstFrame);
+      // A related card changing nothing the detail shows: a re-read, but no frame.
+      yield* engine.dispatch({
+        type: "board.card.reorder",
+        commandId: CommandId.make("cmd-rel-reorder-dependency"),
+        cardId: dependency,
+        orderKey: "d",
+        createdAt: t0,
+      });
+      // An unrelated card: no frame.
+      yield* engine.dispatch({
+        type: "board.card.update",
+        commandId: CommandId.make("cmd-rel-unrelated-title"),
+        cardId: unrelated,
+        title: "Unrelated renamed",
+        createdAt: t0,
+      });
+      yield* engine.dispatch({
+        type: "board.card.update",
+        commandId: CommandId.make("cmd-rel-dependency-title"),
+        cardId: dependency,
+        title: "Dependency renamed",
+        createdAt: t0,
+      });
+      yield* engine.dispatch({
+        type: "board.card.update",
+        commandId: CommandId.make("cmd-rel-subject-brief"),
+        cardId: subject,
+        brief: "Subject brief.",
+        createdAt: t0,
+      });
+
+      const [initial, dependencyFrame, subjectFrame] = yield* Deferred.await(collected);
+      assert.strictEqual(initial?.detail.dependencies[0]?.title, "Dependency");
+      assert.strictEqual(dependencyFrame?.detail.dependencies[0]?.title, "Dependency renamed");
+      assert.strictEqual(dependencyFrame?.detail.brief, null);
+      assert.strictEqual(subjectFrame?.detail.brief, "Subject brief.");
+    }),
+  );
 });
 
 // T3o: the forced re-check has to survive the wire. The automatic
