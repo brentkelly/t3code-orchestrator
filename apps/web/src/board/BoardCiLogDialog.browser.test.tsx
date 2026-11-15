@@ -66,6 +66,7 @@ const viewer = (view: typeof first) => (
     onClose={() => {}}
     onDownload={() => {}}
     pass={pass}
+    passNumber={1}
     stepIndex={0}
     view={view}
   />

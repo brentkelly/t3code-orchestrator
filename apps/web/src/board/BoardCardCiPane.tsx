@@ -528,8 +528,11 @@ function EarlierPass({
   ci,
   completions,
   onOpenLog,
+  number,
 }: {
   readonly pass: BoardCiPass;
+  /** Card-wide; `pass.ordinal` restarts with each CI entry. */
+  readonly number: number;
   readonly ci: BoardCardCi | null | undefined;
   readonly completions: ReadonlyArray<BoardStepCompletion>;
   readonly onOpenLog: (target: BoardCiLogTarget) => void;
@@ -558,7 +561,7 @@ function EarlierPass({
         type="button"
       >
         <span className="shrink-0 text-board-12-5 font-semibold text-foreground">
-          Pass {pass.ordinal}
+          Pass {number}
         </span>
         <Chip label={chip.label} tone={chip.tone} />
         <span className="min-w-0 truncate text-board-11 text-muted-foreground">{summary}</span>
@@ -663,6 +666,10 @@ export function BoardCardCiPane({
             cardKey={cardKey}
             environmentId={environmentId}
             onClose={() => setLogTarget(null)}
+            passNumber={
+              passes.findIndex((candidate) => candidate.runId === logTarget.pass.runId) + 1 ||
+              passes.length
+            }
             target={(() => {
               // The pass's latest row, so the header follows the step settling.
               const pass =
@@ -681,7 +688,7 @@ export function BoardCardCiPane({
         <SectionHeading>Continuous integration</SectionHeading>
         {current === undefined ? null : (
           <span className="truncate text-board-11-5 text-muted-foreground">
-            Pass {current.ordinal}
+            Pass {passes.length}
             {ci == null ? "" : ` · fix ${ci.fixAttempts} of ${ci.maxFixAttempts}`}
             {ci == null ? "" : ` · stop on failure ${ci.continueOnFailure === true ? "No" : "Yes"}`}
           </span>
@@ -829,7 +836,7 @@ export function BoardCardCiPane({
           <div className="flex shrink-0 flex-col overflow-hidden rounded-xl border border-border bg-card">
             <div className="flex items-center gap-2 border-b border-border px-3 py-2.5">
               <span className="text-board-12-5 font-semibold text-foreground">
-                Pass {current.ordinal}
+                Pass {passes.length}
               </span>
               {(() => {
                 const chip = boardCiPassOutcomeChip(current, inCi ? ci : null);
@@ -889,6 +896,7 @@ export function BoardCardCiPane({
                 ci={ci}
                 completions={completions}
                 key={pass.runId}
+                number={passes.indexOf(pass) + 1}
                 onOpenLog={setLogTarget}
                 pass={pass}
               />

@@ -163,12 +163,15 @@ export function BoardCiLogDialog({
   cardId,
   cardKey,
   target,
+  passNumber,
   onClose,
 }: {
   readonly environmentId: EnvironmentId;
   readonly cardId: BoardCardId;
   readonly cardKey: string;
   readonly target: BoardCiLogTarget;
+  /** Card-wide; `pass.ordinal` restarts with each CI entry. */
+  readonly passNumber: number;
   readonly onClose: () => void;
 }) {
   const { pass, index, live, openAt } = target;
@@ -210,7 +213,7 @@ export function BoardCiLogDialog({
         }
         if (!AsyncResult.isSuccess(next) || next.value.status === "loading") return;
         if (next.value.status === "ended") {
-          saveLog(boardCiLogFileName(cardKey, step.name, pass.ordinal), next.value.parts);
+          saveLog(boardCiLogFileName(cardKey, step.name, passNumber), next.value.parts);
         } else {
           toastManager.add({
             type: "error",
@@ -235,6 +238,7 @@ export function BoardCiLogDialog({
       onDownload={download}
       openAt={openAt}
       pass={pass}
+      passNumber={passNumber}
       stepIndex={index}
       view={view}
     />
@@ -245,6 +249,7 @@ export function BoardCiLogDialog({
 export function BoardCiLogDialogView({
   cardKey,
   pass,
+  passNumber,
   stepIndex,
   live,
   openAt,
@@ -256,6 +261,7 @@ export function BoardCiLogDialogView({
 }: {
   readonly cardKey: string;
   readonly pass: BoardCiPass;
+  readonly passNumber: number;
   readonly stepIndex: number;
   readonly live: boolean;
   readonly openAt?: { readonly offset: number } | undefined;
@@ -333,7 +339,7 @@ export function BoardCiLogDialogView({
               {step?.command}
             </span>
             <span className="truncate text-board-11 text-muted-foreground">
-              {cardKey} · pass {pass.ordinal}
+              {cardKey} · pass {passNumber}
               {stillLive
                 ? following
                   ? " · live, following output"
