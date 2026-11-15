@@ -7,12 +7,10 @@
 import {
   BOARD_SEED_STAGE_IDS,
   boardAllStages,
-  boardCiStepGroups,
   boardProjectStagesInOrder,
   boardProjectUsesStage,
   boardStageDefaultForProjects,
   compareBoardStages,
-  type BoardCiStepShape,
   type BoardStageDefinition,
   type BoardStageView,
   type ProjectId,
@@ -80,13 +78,6 @@ function boardPartialStageTitle(coverage: BoardStageCoverage): string {
   return `${included.length} of ${total} projects · ${tail}`;
 }
 
-/** A CI step list as its run shape: "Typecheck ∥ Lint → Test". */
-export function boardCiStepShapeLine(steps: ReadonlyArray<BoardCiStepShape>): string {
-  return boardCiStepGroups(steps)
-    .map((group) => group.map((step) => step.name).join(" ∥ "))
-    .join(" → ");
-}
-
 /**
  * The columns a view draws: every stage a project in view uses, plus any stage
  * holding one of the view's cards, always in board order. With no project in
@@ -147,19 +138,16 @@ export function boardPipelineColumns(input: {
   return columns;
 }
 
-/** The header line on a single-project board: CI's step shape, or a note on
-    a stage the project switched on against its default. */
+/** The header line on a single-project board: a note on a stage the project
+    switched on against its default. CI is off by default, so a note there would
+    read on every board that uses it. */
 function singleProjectHint(
   view: BoardStageView,
   stage: BoardStageDefinition,
   project: BoardPipelineProject,
 ): string | null {
+  if (stage.stageId === BOARD_SEED_STAGE_IDS.ci) return null;
   const config = view.projectStageConfigs?.[project.id];
-  if (stage.stageId === BOARD_SEED_STAGE_IDS.ci) {
-    const steps =
-      config === undefined ? [] : "ciSteps" in config ? config.ciSteps : config.ci.steps;
-    return steps.length === 0 ? null : `Sync with base → ${boardCiStepShapeLine(steps)}`;
-  }
   return config?.stageSwitches[stage.stageId] === true && !boardStageDefaultForProjects(stage)
     ? "Switched on for this project"
     : null;

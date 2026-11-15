@@ -17,7 +17,6 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   boardCardPipelineStages,
   boardCardStageGoneNotes,
-  boardCiStepShapeLine,
   boardPipelineColumns,
 } from "./boardProjectPipelines";
 
@@ -125,7 +124,7 @@ describe("boardPipelineColumns", () => {
     );
   });
 
-  it("draws CI only for a project with CI on, with its step shape on a single-project board", () => {
+  it("draws CI only for a project with CI on, with no step list in its header", () => {
     const view = (enabled: boolean): BoardStageView => ({
       stages: BOARD_SEED_STAGES,
       projectStageConfigs: {
@@ -148,9 +147,7 @@ describe("boardPipelineColumns", () => {
     const single = summary(
       boardPipelineColumns({ view: view(true), projects: [advisor], occupiedStageIds: new Set() }),
     );
-    expect(single).toContain(
-      "Continuous integration:shared:Sync with base → Typecheck ∥ Lint → Test",
-    );
+    expect(single).toContain("Continuous integration:shared:");
     expect(
       summary(
         boardPipelineColumns({
@@ -167,18 +164,6 @@ describe("boardPipelineColumns", () => {
         occupiedStageIds: new Set(),
       }).map((column) => column.stage.stageId),
     ).not.toContain(BOARD_SEED_STAGE_IDS.ci);
-  });
-});
-
-describe("boardCiStepShapeLine", () => {
-  it("joins parallel scripts with ∥ and groups with →", () => {
-    expect(
-      boardCiStepShapeLine([
-        { id: "a", name: "A", kind: "script", parallel: false },
-        { id: "b", name: "B", kind: "script", parallel: true },
-        { id: "c", name: "C", kind: "agent", parallel: false },
-      ]),
-    ).toBe("A ∥ B → C");
   });
 });
 
