@@ -1159,6 +1159,35 @@ describe("boardAtom", () => {
     expect(registry.get(atoms.cardThreadsByCardAtom(environmentId))).toBe(first);
     unsubscribe();
   });
+
+  it("keeps a card's link list when only another card's links change", () => {
+    const { atoms, registry, boardSnapshotAtom } = setup();
+    const card1 = BoardCardId.make("card-1");
+    const card2 = BoardCardId.make("card-2");
+    const board = snapshot({
+      cards: [cardShell("card-1"), cardShell("card-2")],
+      cardThreads: [
+        { cardId: card1, threadId },
+        { cardId: card2, threadId: ThreadId.make("thread-2") },
+      ],
+    });
+    registry.set(boardSnapshotAtom, board);
+    const unsubscribe = registry.subscribe(atoms.cardThreadsByCardAtom(environmentId), () => {});
+    const first = registry.get(atoms.cardThreadsByCardAtom(environmentId));
+    registry.set(
+      boardSnapshotAtom,
+      applyBoardShellStreamEvent(board, {
+        kind: "card-threads",
+        sequence: 2,
+        cardId: card2,
+        threads: [{ cardId: card2, threadId: ThreadId.make("thread-2"), todoTotal: 3 }],
+      }),
+    );
+    const next = registry.get(atoms.cardThreadsByCardAtom(environmentId));
+    expect(next.get(card1)).toBe(first.get(card1));
+    expect(next.get(card2)).not.toBe(first.get(card2));
+    unsubscribe();
+  });
 });
 
 const label = (id: string, overrides?: Partial<BoardLabel>): BoardLabel => ({

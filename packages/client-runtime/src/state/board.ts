@@ -851,19 +851,38 @@ export function createBoardEnvironmentAtoms<R, ER>(
     BoardCardId,
     ReadonlyArray<BoardCardThreadShell>
   > = new Map();
-  const cardThreadsByCardAtom = Atom.family((environmentId: EnvironmentId) =>
-    Atom.make((get) => {
+  const cardThreadsByCardAtom = Atom.family((environmentId: EnvironmentId) => {
+    // A card whose links are unchanged keeps its list, so another card's todo or link delta
+    // does not re-render it.
+    let previous: ReadonlyMap<
+      BoardCardId,
+      ReadonlyArray<BoardCardThreadShell>
+    > = EMPTY_CARD_THREADS;
+    return Atom.make((get) => {
       const entries = get(cardThreadLinksAtom(environmentId));
-      if (entries.length === 0) return EMPTY_CARD_THREADS;
+      if (entries.length === 0) {
+        previous = EMPTY_CARD_THREADS;
+        return previous;
+      }
       const byCard = new Map<BoardCardId, BoardCardThreadShell[]>();
       for (const entry of entries) {
         const list = byCard.get(entry.cardId) ?? [];
         list.push(entry);
         byCard.set(entry.cardId, list);
       }
-      return byCard;
-    }).pipe(Atom.withLabel(`environment-board-card-threads:${environmentId}`)),
-  );
+      const next = new Map<BoardCardId, ReadonlyArray<BoardCardThreadShell>>();
+      for (const [cardId, list] of byCard) {
+        const held = previous.get(cardId);
+        const same =
+          held !== undefined &&
+          held.length === list.length &&
+          held.every((entry, index) => entry === list[index]);
+        next.set(cardId, same ? held : list);
+      }
+      previous = next;
+      return next;
+    }).pipe(Atom.withLabel(`environment-board-card-threads:${environmentId}`));
+  });
 
   /** The board's label catalogue — the vocabulary every card chip
       and the label picker read. Includes tombstoned labels (a card carrying
