@@ -393,7 +393,18 @@ it.layer(makeBoardStackTestLayer("t3o-thread-gateway-contract-"))(
           archived: false,
           settlementDecided: false,
         });
-        assert.include(yield* threads.listLiveThreadIds(), threadId);
+        // Its waiting run makes it busy; an idle thread is not.
+        const idle = yield* createIdleThread("spawned-idle-neighbour");
+        const busy = yield* threads.listBusyThreadIds();
+        assert.include(busy, threadId);
+        assert.notInclude(busy, idle);
+        // An archived thread is never busy, whatever its run says.
+        yield* (yield* boardStackEngine).dispatch({
+          type: "thread.archive",
+          commandId: CommandId.make("cmd-contract-archive-spawned"),
+          threadId,
+        });
+        assert.notInclude(yield* threads.listBusyThreadIds(), threadId);
 
         // The turn the spawn asked for reads as the BOARD's, never a human's.
         const requested = signalsOf(yield* loggedSince(before)).filter(
@@ -924,7 +935,7 @@ it.layer(makeBoardStackTestLayer("t3o-thread-gateway-contract-"))(
       }),
     );
 
-    it.effect("a deleted thread reads as deleted, drops out of the live set, and is logged", () =>
+    it.effect("a deleted thread reads as deleted and is logged", () =>
       Effect.gen(function* () {
         const threadId = yield* createIdleThread("deleted");
         const threads = yield* LocalThreadGateway;
@@ -935,7 +946,6 @@ it.layer(makeBoardStackTestLayer("t3o-thread-gateway-contract-"))(
         assert.isTrue(state!.deleted);
         assert.isFalse(state!.alive);
         assert.isTrue((yield* threads.threadRecords([threadId])).get(threadId)!.deleted);
-        assert.notInclude(yield* threads.listLiveThreadIds(), threadId);
 
         const after = yield* threads.todoLogHead;
         const logged = yield* Stream.runCollect(threads.readTodoLog(before, after));

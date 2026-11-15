@@ -84,7 +84,6 @@ const setup = Effect.gen(function* () {
   const digest = yield* Digest.Digest;
   const router = makeThreadGatewayRouter({
     local: central.gateway,
-    connections: env.connections,
     feed: emptyWorkerSignalFeed,
     linkedWorkers: makeLinkedThreadWorkers(sql),
     remote: (workerId) =>

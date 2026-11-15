@@ -109,7 +109,7 @@ const makeBoardWorkerCapacityLive = Effect.gen(function* () {
     boardId === ownBoardId ? "self" : boardWorktreeOwnerOf(boardId);
 
   const threads: WorkerCapacityPorts["threads"] = Effect.gen(function* () {
-    const ids = yield* local.listLiveThreadIds().pipe(Effect.orElseSucceed(() => []));
+    const ids = yield* local.listBusyThreadIds().pipe(Effect.orElseSucceed(() => []));
     const ownThreads = yield* ownBoardThreads;
     const out: CapacityThread[] = [];
     for (const threadId of ids) {

@@ -372,8 +372,6 @@ export interface ThreadGatewayShape {
   readonly threadsInWorktree: (
     worktreePath: string,
   ) => Effect.Effect<ReadonlyArray<BoardWorktreeThread>, ThreadReadError>;
-  /** Every thread that is not deleted — the todo cache's orphan sweep. */
-  readonly listLiveThreadIds: () => Effect.Effect<ReadonlyArray<ThreadId>, ThreadReadError>;
   /** The newest assistant message of the thread's latest turn, or null. */
   readonly latestAssistantMessage: (
     threadId: ThreadId,
@@ -431,6 +429,10 @@ export interface ThreadSignalBatch {
  * own threads.
  */
 export interface LocalThreadGatewayShape extends ThreadGatewayShape {
+  /** This server's unarchived threads that may be running: an in-flight run, background work or
+      an unfinished tool call. Read from the in-flight rows, so its cost follows what is running,
+      never how many threads exist. */
+  readonly listBusyThreadIds: () => Effect.Effect<ReadonlyArray<ThreadId>, ThreadReadError>;
   /** This server's threads are always reachable, so never `unknown`. */
   readonly threadState: (
     threadId: ThreadId,

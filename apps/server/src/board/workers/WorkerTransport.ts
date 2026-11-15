@@ -361,7 +361,6 @@ const makeLiveGatewayRpc = (
     threadState: (threadId) => call({ _tag: "threadState", threadId }),
     threadRecords: (threadIds) => call({ _tag: "threadRecords", threadIds }),
     threadsInWorktree: (worktreePath) => call({ _tag: "threadsInWorktree", worktreePath }),
-    listLiveThreadIds: call({ _tag: "listLiveThreadIds" }),
     latestAssistantMessage: (threadId) => call({ _tag: "latestAssistantMessage", threadId }),
     lastSignalAt: (threadId) => call({ _tag: "lastSignalAt", threadId }),
     pendingTurnStartAt: (threadId) => call({ _tag: "pendingTurnStartAt", threadId }),

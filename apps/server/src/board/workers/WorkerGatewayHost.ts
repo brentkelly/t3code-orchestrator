@@ -662,7 +662,6 @@ export const makeWorkerGatewayHost = Effect.gen(function* () {
     threadRecords: (threadIds) =>
       wireRead(local.threadRecords(threadIds)).pipe(Effect.map((records) => [...records.values()])),
     threadsInWorktree: (worktreePath) => wireRead(local.threadsInWorktree(worktreePath)),
-    listLiveThreadIds: wireRead(local.listLiveThreadIds()),
     latestAssistantMessage: (threadId) => wireRead(local.latestAssistantMessage(threadId)),
     lastSignalAt: (threadId) => wireRead(local.lastSignalAt(threadId)),
     pendingTurnStartAt: (threadId) => wireRead(local.pendingTurnStartAt(threadId)),

@@ -33,7 +33,7 @@ import {
   makeRemoteThreadGateway,
   type RemoteThreadGatewayShape,
 } from "./workers/RemoteThreadGateway.ts";
-import { WorkerConnections, type WorkerConnectionsShape } from "./workers/WorkerConnections.ts";
+import { WorkerConnections } from "./workers/WorkerConnections.ts";
 import { WorkerSignalFeed, type WorkerSignalFeedShape } from "./workers/WorkerSignalFeed.ts";
 
 /** How many spawns the router remembers the worker of, for the moment between
@@ -49,7 +49,6 @@ export interface LinkedThreadWorker {
 
 export interface ThreadGatewayRouterDeps {
   readonly local: LocalThreadGatewayShape;
-  readonly connections: WorkerConnectionsShape;
   readonly feed: WorkerSignalFeedShape;
   /** Where each linked thread lives, in one read. Ids no card links are
       absent: they are this server's. */
@@ -148,10 +147,6 @@ export const makeThreadGatewayRouter = (deps: ThreadGatewayRouterDeps): ThreadGa
     (threadId: ThreadId) =>
       workerOf(threadId).pipe(Effect.flatMap((workerId) => pick(gatewayFor(workerId))(threadId)));
 
-  const registeredWorkers = deps.connections.current.pipe(
-    Effect.map((runtime) => [...runtime.keys()]),
-  );
-
   return {
     spawn: (input) => {
       const workerId = input.workerId;
@@ -207,17 +202,6 @@ export const makeThreadGatewayRouter = (deps: ThreadGatewayRouterDeps): ThreadGa
       if (failure !== null && !answered) return yield* failure;
       return found;
     }),
-    // Every live thread anywhere. A registered worker that cannot answer
-    // fails the read, so a sweep keyed on it never mistakes that worker's
-    // threads for deleted ones.
-    listLiveThreadIds: Effect.fn("ThreadGatewayRouter.listLiveThreadIds")(function* () {
-      const ids = [...(yield* local.listLiveThreadIds())];
-      for (const workerId of yield* registeredWorkers) {
-        ids.push(...(yield* deps.remote(workerId).listLiveThreadIds()));
-      }
-      return ids;
-    }),
-
     // Worktree retirement on a worker is not routed: worktrees are this server's.
     threadsInWorktree: local.threadsInWorktree,
     projects: local.projects,
@@ -293,7 +277,6 @@ export const ThreadGatewayRouterLive = Layer.effect(
     const remotes = new Map<EnvironmentId, RemoteThreadGatewayShape>();
     return makeThreadGatewayRouter({
       local,
-      connections,
       feed,
       linkedWorkers,
       remote: (workerId) => {

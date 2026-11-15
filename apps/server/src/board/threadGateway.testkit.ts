@@ -400,10 +400,19 @@ export const makeFakeThreadGateway = (options: FakeThreadGatewayOptions = {}) =>
               }),
           ),
         ),
-      listLiveThreadIds: () =>
-        Ref.get(records).pipe(
-          Effect.map((current) =>
-            [...current.values()].filter((entry) => !entry.deleted).map((entry) => entry.threadId),
+      listBusyThreadIds: () =>
+        Effect.all([Ref.get(records), Ref.get(states)]).pipe(
+          Effect.map(([currentRecords, currentStates]) =>
+            [...currentRecords.values()]
+              .filter((entry) => !entry.deleted)
+              .filter((entry) => {
+                const state = currentStates.get(String(entry.threadId));
+                return (
+                  state !== undefined &&
+                  (state.activeTurnRef !== null || state.backgroundWork !== null)
+                );
+              })
+              .map((entry) => entry.threadId),
           ),
         ),
       latestAssistantMessage: (threadId) =>
@@ -497,7 +506,6 @@ export const inertThreadGateway = (
   threadState: () => Effect.succeed(null),
   threadRecords: () => Effect.succeed(new Map()),
   threadsInWorktree: () => Effect.succeed([]),
-  listLiveThreadIds: () => Effect.succeed([]),
   latestAssistantMessage: () => Effect.succeed(null),
   lastSignalAt: () => Effect.succeed(null),
   pendingTurnStartAt: () => Effect.succeed(null),

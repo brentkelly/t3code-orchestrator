@@ -65,8 +65,6 @@ const runGatewayCall = (
         return host.threadRecords(call.threadIds);
       case "threadsInWorktree":
         return host.threadsInWorktree(call.worktreePath);
-      case "listLiveThreadIds":
-        return host.listLiveThreadIds;
       case "latestAssistantMessage":
         return host.latestAssistantMessage(call.threadId);
       case "lastSignalAt":

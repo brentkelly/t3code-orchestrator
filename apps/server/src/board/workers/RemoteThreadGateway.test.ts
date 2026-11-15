@@ -127,7 +127,6 @@ const setup = (
     const digest = yield* Digest.Digest;
     const router = makeThreadGatewayRouter({
       local: central.gateway,
-      connections: env.connections,
       feed,
       linkedWorkers: () =>
         Effect.succeed(

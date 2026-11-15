@@ -81,7 +81,7 @@ it.effect("a call that drives threads needs the operate scope", () =>
       const env = yield* makeInProcessWorker();
       const handlers = workerGatewayRpcHandlers(session([AuthOrchestrationReadScope]));
       const failure = yield* Effect.flip(
-        handlers["boardWorker.gateway.call"]({ _tag: "listLiveThreadIds" }).pipe(
+        handlers["boardWorker.gateway.call"]({ _tag: "todoLogHead" }).pipe(
           Effect.provideService(WorkerGatewayHost, env.host),
           Effect.as(null),
         ),

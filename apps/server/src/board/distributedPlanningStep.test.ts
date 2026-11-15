@@ -125,7 +125,6 @@ const distributed = Effect.fn("distributed")(function* (
   const gateway = (local: Parameters<typeof makeThreadGatewayRouter>[0]["local"]) => {
     const router = makeThreadGatewayRouter({
       local,
-      connections: env.connections,
       feed,
       linkedWorkers: () => Effect.succeed(linked),
       remote: (workerId) =>

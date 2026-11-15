@@ -22,7 +22,6 @@ import {
   makeBoardStackTestLayer,
   writeStackPlan,
 } from "./boardStack.testkit.ts";
-import { ThreadGateway } from "./ThreadGateway.ts";
 
 const makeLayer = makeBoardStackTestLayer;
 
@@ -292,42 +291,21 @@ it.layer(makeLayer("t3o-board-todos-"))("board thread todos (t3o-18)", (it) => {
     }),
   );
 
-  it.effect("AC 20: the boot sweep removes rows whose thread no longer exists", () =>
+  // The boot sweep is the backstop for a delete that landed while the server was down, so it
+  // is driven directly: the live path would already have dropped a row deleted here.
+  it.effect("AC 20: the boot sweep drops the rows of deleted threads and keeps the rest", () =>
     Effect.gen(function* () {
-      const { linkedThread } = yield* seed("ac20");
-      const engine = yield* boardStackEngine;
+      const gone = (yield* seed("ac20")).linkedThread;
+      const kept = (yield* seed("ac20b")).linkedThread;
       const methods = yield* BoardQueries;
-      yield* appendPlan(linkedThread, "ac20-1", [{ step: "Alpha", status: "pending" }], at(1));
+      yield* appendPlan(gone, "ac20-1", [{ step: "Alpha", status: "pending" }], at(1));
+      yield* appendPlan(kept, "ac20b-1", [{ step: "Alpha", status: "pending" }], at(1));
+      const cached = yield* methods.boardThreadTodoThreadIds();
+      assert.includeMembers([...cached], [gone, kept]);
 
-      yield* engine.dispatch({
-        type: "thread.delete",
-        commandId: nextCommandId(),
-        threadId: linkedThread,
-      });
-      yield* drainBoardThreadTail;
-      // Whatever the live path did, the sweep is the backstop for the case where
-      // the delete landed while the server was down. The live set is the v1
-      // gateway's own answer, as the supervisor's boot sweep reads it.
-      const threads = yield* ThreadGateway;
-      const liveThreadIds = yield* threads.listLiveThreadIds();
-      assert.notInclude(liveThreadIds, linkedThread);
-      yield* methods.boardSweepThreadTodos(liveThreadIds, at(30));
-      assert.isNull(yield* methods.boardThreadTodo(linkedThread));
-    }),
-  );
-
-  it.effect("AC 20: the boot sweep spares a row written after the live list was taken", () =>
-    Effect.gen(function* () {
-      const { linkedThread } = yield* seed("ac20b");
-      const methods = yield* BoardQueries;
-      // The thread was born and posted its first plan between the clock read
-      // and the list read, so the list does not name it.
-      yield* appendPlan(linkedThread, "ac20b-1", [{ step: "Alpha", status: "pending" }], at(5));
-      yield* methods.boardSweepThreadTodos([], at(5));
-      assert.isNotNull(yield* methods.boardThreadTodo(linkedThread));
-      // A later boot, whose list really does omit it, still drops it.
-      yield* methods.boardSweepThreadTodos([], at(6));
-      assert.isNull(yield* methods.boardThreadTodo(linkedThread));
+      yield* methods.boardSweepThreadTodos([gone]);
+      assert.isNull(yield* methods.boardThreadTodo(gone));
+      assert.isNotNull(yield* methods.boardThreadTodo(kept));
     }),
   );
 

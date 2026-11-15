@@ -52,7 +52,6 @@ export type RemoteThreadGatewayShape = Pick<
   | "unlinkPullRequest"
   | "threadState"
   | "threadRecords"
-  | "listLiveThreadIds"
   | "latestAssistantMessage"
   | "lastSignalAt"
   | "pendingTurnStartAt"
@@ -317,7 +316,6 @@ export const makeRemoteThreadGateway = (
             ),
         ),
       ),
-    listLiveThreadIds: () => read("listLiveThreadIds", (rpc) => rpc.gateway.listLiveThreadIds),
     latestAssistantMessage: (threadId) =>
       read("latestAssistantMessage", (rpc) => rpc.gateway.latestAssistantMessage(threadId)),
     lastSignalAt: (threadId) => read("lastSignalAt", (rpc) => rpc.gateway.lastSignalAt(threadId)),

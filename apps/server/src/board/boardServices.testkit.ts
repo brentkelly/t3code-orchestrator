@@ -37,6 +37,7 @@ export const inertBoardQueries = (overrides?: Partial<BoardQueriesShape>): Board
   boardCardIdForThread: () => Effect.succeed(null),
   boardThreadWorker: () => Effect.succeed(null),
   boardThreadTodo: () => Effect.succeed(null),
+  boardThreadTodoThreadIds: () => Effect.succeed([]),
   boardSweepThreadTodos: () => Effect.void,
   ...overrides,
 });

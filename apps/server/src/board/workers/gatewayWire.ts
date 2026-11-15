@@ -91,7 +91,6 @@ export interface WorkerGatewayRpcOf<E> {
   readonly threadsInWorktree: (
     worktreePath: string,
   ) => Effect.Effect<ReadonlyArray<BoardWorktreeThread>, E>;
-  readonly listLiveThreadIds: Effect.Effect<ReadonlyArray<ThreadId>, E>;
   readonly latestAssistantMessage: (
     threadId: ThreadId,
   ) => Effect.Effect<BoardAssistantMessage | null, E>;

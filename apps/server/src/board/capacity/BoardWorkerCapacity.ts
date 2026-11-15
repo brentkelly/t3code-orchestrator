@@ -103,6 +103,7 @@ export interface CapacityThread {
 /** Everything the service reads from the server around it, so tests supply each. */
 export interface WorkerCapacityPorts {
   readonly settings: Effect.Effect<WorkerCapacitySettings>;
+  /** The threads that may be running, never every thread: only running ones count. */
   readonly threads: Effect.Effect<ReadonlyArray<CapacityThread>>;
   readonly providers: Effect.Effect<ReadonlyArray<ServerProvider>>;
   readonly refreshProviderUsage: (instanceId: string) => Effect.Effect<void>;
@@ -780,9 +781,8 @@ export const makeBoardWorkerCapacity = Effect.fn("makeBoardWorkerCapacity")(func
     );
 
   /**
-   * Reading every thread is the costly part of a snapshot: each board's stream and the status
-   * file share one reading for a few seconds. Claims and spawns read fresh, so the agent cap
-   * counts the turn that just started.
+   * Each board's stream and the status file share one thread reading for a few seconds. Claims
+   * and spawns read fresh, so the agent cap counts the turn that just started.
    */
   let sharedThreads: {
     readonly at: number;

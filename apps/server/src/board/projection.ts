@@ -4689,11 +4689,14 @@ export interface BoardQueriesShape {
   readonly boardThreadTodo: (
     threadId: ThreadId,
   ) => Effect.Effect<BoardThreadTodoState | null, ProjectionRepositoryError>;
-  /** Drops todo rows whose link or card is gone or whose thread is not live.
-      A row written after `listedAt` is spared: the live list may have missed it. */
+  /** The threads holding a cached todo row: bounded by live links on active cards. */
+  readonly boardThreadTodoThreadIds: () => Effect.Effect<
+    ReadonlyArray<ThreadId>,
+    ProjectionRepositoryError
+  >;
+  /** Drops todo rows whose link or card is gone, or whose thread is one of `deletedThreadIds`. */
   readonly boardSweepThreadTodos: (
-    liveThreadIds: ReadonlyArray<ThreadId>,
-    listedAt: string,
+    deletedThreadIds: ReadonlyArray<ThreadId>,
   ) => Effect.Effect<void, ProjectionRepositoryError>;
 }
 
@@ -4710,22 +4713,24 @@ export function makeBoardQueries(sql: SqlClient.SqlClient): BoardQueriesShape {
   const queries = makeBoardCardQueries(sql);
   const eventStore = makeBoardEventStore(sql);
   /* The cache is a projection, so a leaked row is invisible until it resurfaces
-     on a reused id; sweeping at boot is the cheap, total answer. The live
-     thread set arrives as one JSON array parameter. */
+     on a reused id; sweeping at boot is the cheap, total answer. The deleted
+     threads arrive as one JSON array parameter. */
   const sweepOrphans = SqlSchema.void({
-    Request: Schema.Struct({ liveThreadIdsJson: Schema.String, listedAt: Schema.String }),
-    execute: ({ liveThreadIdsJson, listedAt }) => sql`
+    Request: Schema.Struct({ deletedThreadIdsJson: Schema.String }),
+    execute: ({ deletedThreadIdsJson }) => sql`
       DELETE FROM boards.board_thread_todos
       WHERE thread_id NOT IN (
               SELECT thread_id FROM boards.board_card_thread_links
               WHERE tombstoned_at IS NULL AND retired_at IS NULL
             )
          OR card_id NOT IN (SELECT card_id FROM boards.board_cards WHERE archived_at IS NULL)
-         OR (
-              updated_at < ${listedAt}
-              AND thread_id NOT IN (SELECT value FROM json_each(${liveThreadIdsJson}))
-            )
+         OR thread_id IN (SELECT value FROM json_each(${deletedThreadIdsJson}))
     `,
+  });
+  const listTodoThreadIds = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: Schema.Struct({ threadId: ThreadId }),
+    execute: () => sql`SELECT thread_id AS "threadId" FROM boards.board_thread_todos`,
   });
   return {
     loadBoardState: () => loadBoardState(queries),
@@ -4796,8 +4801,13 @@ export function makeBoardQueries(sql: SqlClient.SqlClient): BoardQueriesShape {
         ),
         Effect.mapError(toPersistenceSqlError("BoardCardsProjection.threadTodo:query")),
       ),
-    boardSweepThreadTodos: (liveThreadIds, listedAt) =>
-      sweepOrphans({ liveThreadIdsJson: JSON.stringify(liveThreadIds), listedAt }).pipe(
+    boardThreadTodoThreadIds: () =>
+      listTodoThreadIds().pipe(
+        Effect.map((rows) => rows.map((row) => row.threadId)),
+        Effect.mapError(toPersistenceSqlError("BoardCardsProjection.threadTodoThreadIds:query")),
+      ),
+    boardSweepThreadTodos: (deletedThreadIds) =>
+      sweepOrphans({ deletedThreadIdsJson: JSON.stringify(deletedThreadIds) }).pipe(
         Effect.mapError(toPersistenceSqlError("BoardCardsProjection.threadTodoSweep:query")),
       ),
   };

@@ -2381,6 +2381,7 @@ const make = Effect.gen(function* () {
   });
   let requestCapacityPass: Effect.Effect<void> = Effect.void;
   let capacityPassQueued = false;
+  let timeoutSweepQueued = false;
   /** T3o: each card's setup, once per worktree, on its worker (T3O-86). */
   const cardSetup = Option.map(capacityClient, (client) =>
     makeBoardCardSetup({
@@ -11179,12 +11180,14 @@ const make = Effect.gen(function* () {
     // is still enqueued first, so live events stay queued behind it.
     if (serverActivation !== undefined) yield* serverActivation;
     // Sweep cached todo rows whose thread or link is gone: a delete while the server was down
-    // leaves rows with no event to un-apply. Best-effort, never blocks reconcile. The clock is
-    // read first so a thread born after the listing keeps its row.
-    const listedAt = yield* nowIso;
-    yield* threads.listLiveThreadIds().pipe(
-      Effect.flatMap((liveThreadIds) =>
-        boardQueries.boardSweepThreadTodos(liveThreadIds, listedAt),
+    // leaves rows with no event to un-apply. Best-effort, never blocks reconcile. Only a thread
+    // recorded as deleted goes: an unreachable worker's threads are absent, not gone.
+    yield* boardQueries.boardThreadTodoThreadIds().pipe(
+      Effect.flatMap((cached) => threads.threadRecords(cached)),
+      Effect.flatMap((records) =>
+        boardQueries.boardSweepThreadTodos(
+          [...records.values()].filter((record) => record.deleted).map((record) => record.threadId),
+        ),
       ),
       Effect.catchCause((cause) =>
         Effect.logWarning("board supervisor: thread-todo sweep failed", {
@@ -11980,6 +11983,7 @@ const make = Effect.gen(function* () {
           Effect.andThen(schedule()),
         );
       case "timeout-sweep":
+        timeoutSweepQueued = false;
         // These sweeps ride the 30s tick: each is a board read plus an in-memory pass serialised
         // against the handlers, and the tick is the only retry for work nothing else will ask about
         // again (dropped turn ends, a restart, a worker whose reconcile did not finish).
@@ -12198,10 +12202,15 @@ const make = Effect.gen(function* () {
     if (Option.isSome(capacityAdmission)) yield* forkParked(startCapacityUpgrade);
     // Periodic timeout sweep: rides the worker so it never races the
     // event handlers. 30s granularity is plenty against minutes-scale timeouts.
+    // Coalesced: a slow worker gets one waiting sweep, not a backlog of them.
     yield* forkParked(
       Effect.forever(
         Effect.sleep("30 seconds").pipe(
-          Effect.flatMap(() => worker.enqueue({ source: "timeout-sweep" })),
+          Effect.flatMap(() => {
+            if (timeoutSweepQueued) return Effect.void;
+            timeoutSweepQueued = true;
+            return worker.enqueue({ source: "timeout-sweep" });
+          }),
         ),
       ),
     );

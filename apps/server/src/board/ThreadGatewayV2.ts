@@ -19,7 +19,7 @@ import {
   type OrchestrationV2StoredEvent,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadShell,
-  type ThreadId,
+  ThreadId,
 } from "@t3tools/contracts";
 import { subagentAwaitsApproval } from "@t3tools/shared/agentAwareness";
 import { boardThreadSessionStatus, boardThreadStateSource } from "@t3tools/shared/boardThreadState";
@@ -33,6 +33,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ServerConfig from "../config.ts";
 import * as AttachmentClaims from "../orchestration-v2/AttachmentClaims.ts";
@@ -625,6 +626,7 @@ const readError = (operation: string) => (cause: unknown) =>
 const makeThreadGatewayV2 = Effect.gen(function* () {
   const threads = yield* ThreadManagement.ThreadManagementService;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
+  const sql = yield* SqlClient.SqlClient;
   const projectRows = yield* ProjectStore.ProjectStoreV2;
   const projectService = yield* ProjectService.ProjectService;
   const eventSink = yield* EventSink.EventSinkV2;
@@ -1093,16 +1095,31 @@ const makeThreadGatewayV2 = Effect.gen(function* () {
       },
       Effect.mapError(readError("threadsInWorktree")),
     ),
-    listLiveThreadIds: () =>
-      projections.getShellSnapshot({}).pipe(
-        Effect.flatMap((active) =>
-          Effect.map(projections.getShellSnapshot({ location: "archive" }), (archive) => [
-            ...active.threads.map((thread) => thread.id),
-            ...archive.archivedThreads.map((thread) => thread.id),
-          ]),
-        ),
-        Effect.mapError(readError("listLiveThreadIds")),
-      ),
+    // A superset of `capacityThreadRunning`'s sources, each led by an index over in-flight rows
+    // (upstream's `listActiveShellIndex` liveness predicate, inverted). Callers read each id's state.
+    listBusyThreadIds: Effect.fn("ThreadGatewayV2.listBusyThreadIds")(
+      function* () {
+        const rows = yield* sql<{ readonly threadId: string }>`
+          SELECT t.thread_id AS "threadId"
+          FROM (
+            SELECT thread_id FROM orchestration_v2_projection_runs
+            WHERE status IN ('queued', 'preparing', 'starting', 'running', 'waiting')
+            UNION
+            SELECT thread_id FROM orchestration_v2_projection_turn_items
+            WHERE type IN ('command_execution', 'dynamic_tool', 'subagent')
+              AND status NOT IN ('completed', 'interrupted', 'failed', 'cancelled')
+            UNION
+            SELECT thread_id FROM orchestration_v2_projection_provider_threads
+            WHERE json_array_length(payload_json, '$.pendingBackgroundTasks') > 0
+          ) busy
+          JOIN orchestration_v2_projection_threads t ON t.thread_id = busy.thread_id
+          WHERE t.deleted_at IS NULL
+            AND json_extract(t.payload_json, '$.archivedAt') IS NULL
+        `;
+        return rows.map((row) => ThreadId.make(row.threadId));
+      },
+      Effect.mapError(readError("listBusyThreadIds")),
+    ),
     latestAssistantMessage: Effect.fn("ThreadGatewayV2.latestAssistantMessage")(
       function* (threadId) {
         // Read from the latest run only: a thread's whole assistant history is

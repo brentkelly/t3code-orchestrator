@@ -844,6 +844,7 @@ export function withGovernor(
               },
         );
       },
+      boardThreadTodoThreadIds: () => Effect.succeed([]),
       boardSweepThreadTodos: () => Effect.void,
       loadBoardState: () => Ref.get(model).pipe(Effect.map((current) => current.board ?? null)),
     } as unknown as BoardQueries["Service"];
