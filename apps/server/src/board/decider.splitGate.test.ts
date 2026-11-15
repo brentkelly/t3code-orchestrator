@@ -479,6 +479,21 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("split gate (T3O-
     }),
   );
 
+  it.effect("carries the card's own Auto-plan and Auto sign-off to the group by default", () =>
+    Effect.gen(function* () {
+      const plans = [makePlan({ key: "p1", ordinal: 0 }), makePlan({ key: "p2", ordinal: 1 })];
+      const handsOff = approvedEvent(
+        yield* decideEvents(
+          approve(),
+          makeBoard({ parent: { autoPlanSetting: true, autoSignOffSetting: true }, plans }),
+        ),
+      );
+      expect(handsOff.payload.card.group).toMatchObject({ autoPlan: true, autoSignOff: true });
+      const manual = approvedEvent(yield* decideEvents(approve(), makeBoard({ plans })));
+      expect(manual.payload.card.group).toMatchObject({ autoPlan: false, autoSignOff: false });
+    }),
+  );
+
   it.effect("falls back for a proposal stored before the recommendation existed", () =>
     Effect.gen(function* () {
       // Fully planned, top level: today's sub-board exactly.

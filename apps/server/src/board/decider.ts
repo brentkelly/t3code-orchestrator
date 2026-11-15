@@ -4500,11 +4500,18 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       // planned on its own; a planned one lands on the floor.
       const backlog = boardProjectFirstStageId(board, card.projectId);
       const recommendation = boardSplitRecommendationOf(board, card);
+      const cardAutomation = resolveBoardCardAutomationIn({
+        board,
+        card,
+        boardWideAutoMerge: false,
+      });
       const settings = {
         autoBuild: command.autoBuild ?? recommendation.autoBuild,
         target: command.mergeTarget ?? recommendation.mergeTarget,
-        ...(command.autoPlan === undefined ? {} : { autoPlan: command.autoPlan }),
-        ...(command.autoSignOff === undefined ? {} : { autoSignOff: command.autoSignOff }),
+        // The card's own planning automation carries over to the group: sign-off alone
+        // would sit inert until someone turned the group's Auto-plan on.
+        autoPlan: command.autoPlan ?? cardAutomation.autoPlan.value,
+        autoSignOff: command.autoSignOff ?? cardAutomation.autoSignOff.value,
         ...(command.autoMerge === undefined ? {} : { autoMerge: command.autoMerge }),
       };
       // The graph is agent-authored and therefore re-validated at the gate —

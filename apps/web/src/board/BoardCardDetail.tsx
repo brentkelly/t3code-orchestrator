@@ -113,10 +113,7 @@ import {
 import { BoardPlanningExitConfirmDialog } from "./BoardPlanningExitConfirmDialog";
 import { BoardArchiveGroupDialog } from "./BoardGroupDialogs";
 import { BoardCardAutomation } from "./BoardCardAutomation";
-import {
-  boardCardPlanningFinishedFromDetail,
-  resolveBoardShellAutomation,
-} from "./boardCardAutomation";
+import { boardCardPlanningFinishedFromDetail } from "./boardCardAutomation";
 import {
   boardGroupNote,
   boardShellGroup,
@@ -1267,28 +1264,18 @@ export function BoardCardDetail({
       stages={stages}
       canApproveSplit={canApproveSplit}
       splitGate={splitGate}
-      onApproveSplit={(settings) => {
-        // The card's Auto-plan and Auto sign-off carry over together to the new group:
-        // sign-off alone would sit inert until the group's Auto-plan was turned on.
-        const resolved = resolveBoardShellAutomation({
-          shells: groupShells,
-          stages: stageState,
-          card,
-          boardWideAutoMerge,
-        });
-        return runCommand(
+      onApproveSplit={(settings) =>
+        runCommand(
           approvePlans({
             environmentId,
             input: {
               cardId: card.id,
               autoBuild: settings.autoBuild,
               mergeTarget: settings.mergeTarget,
-              autoPlan: resolved.autoPlan.value,
-              autoSignOff: resolved.autoSignOff.value,
             },
           }),
-        );
-      }}
+        )
+      }
       catalogue={catalogue}
       dependencies={dependencies}
       dependencyOptions={dependencyOptions}

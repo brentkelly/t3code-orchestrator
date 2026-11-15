@@ -31,7 +31,8 @@ gate, and the header shows one tag per gate saying whether you pass it or the bo
 
 **Make hands-off** turns on every switch that is still off and can be turned on. The header then
 shows a **Hands-off** tag. A proposed split always waits for you, even hands-off: the agent's split
-creates cards and sets where they merge, so it needs a person.
+creates cards and sets where they merge, so it needs a person. Once you approve it, the new group
+starts with the card's Auto-plan and Auto sign-off, so its unplanned cards are planned the same way.
 
 You can turn the switches on before the card gets there. A card in Backlog with Auto-plan on is
 planned unattended as soon as it reaches Planning.
