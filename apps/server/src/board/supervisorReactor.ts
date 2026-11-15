@@ -423,6 +423,8 @@ interface PlacementPass {
   readonly grants: Map<BoardWorkerId, BoardResourceProfile>;
   /** Cards offered earlier in this queue pass; null outside one, where every hold counts. */
   readonly ahead: Set<string> | null;
+  /** Warm workers per repository, computed once a pass rather than once per queued card. */
+  readonly warm?: Map<string, ReadonlyMap<BoardWorkerId, number>>;
 }
 const CI_CLAIM = { providerInstanceId: null, force: false, noHolds: true } as const;
 const freshPlacementPass = (): PlacementPass => ({ grants: new Map(), ahead: null });
@@ -1708,23 +1710,31 @@ const make = Effect.gen(function* () {
         }),
       );
     }
-    const keys = new Map<ProjectId, string | null>();
-    for (const candidate of board.cards) {
-      if (!keys.has(candidate.projectId)) {
-        keys.set(candidate.projectId, yield* projectRepositoryKey(candidate.projectId));
+    // Which builds count depends only on the repository, so the pass computes it once per one.
+    const warmKey =
+      repositoryKey === null ? `project\0${card.projectId}` : `repo\0${repositoryKey}`;
+    let warm = pass.warm?.get(warmKey);
+    if (warm === undefined) {
+      const keys = new Map<ProjectId, string | null>();
+      for (const candidate of board.cards) {
+        if (!keys.has(candidate.projectId)) {
+          keys.set(candidate.projectId, yield* projectRepositoryKey(candidate.projectId));
+        }
       }
+      const now = Date.parse(yield* nowIso);
+      warm = warmWorkers({
+        builds: boardBuildHistory({
+          board,
+          buildStageId: boardStageWithRole(board, "build")?.stageId ?? null,
+          sameRepository: (projectId) =>
+            projectId === card.projectId ||
+            (repositoryKey !== null && keys.get(projectId) === repositoryKey),
+          now,
+        }),
+        now,
+      });
+      pass.warm?.set(warmKey, warm);
     }
-    const now = Date.parse(yield* nowIso);
-    const warm = warmWorkers({
-      builds: boardBuildHistory({
-        board,
-        buildStageId: boardStageWithRole(board, "build")?.stageId ?? null,
-        sameRepository: (projectId) =>
-          projectId === card.projectId ||
-          (repositoryKey !== null && keys.get(projectId) === repositoryKey),
-      }),
-      now,
-    });
     const project = yield* threads
       .project(card.projectId)
       .pipe(Effect.catchCause(() => Effect.succeed(null)));
@@ -2322,12 +2332,33 @@ const make = Effect.gen(function* () {
       service.beingRemoved ??
       Effect.succeed(new Set<BoardWorkerId>() as ReadonlySet<BoardWorkerId>),
   });
-  /** The board project's repository key, which names its checkout on a worker. */
-  const projectRepositoryKey = (projectId: ProjectId) =>
-    threads.project(projectId).pipe(
-      Effect.map((project) => boardRepositoryGroupingKey(project?.repositoryIdentity)),
-      Effect.catchCause(() => Effect.succeed(null)),
-    );
+  let repositoryKeyMemo: Map<string, string | null> | null = null;
+  /** Runs `effect` as one scheduling pass for `projectRepositoryKey`; a nested pass joins it. */
+  const withRepositoryKeyMemo = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    Effect.suspend(() => {
+      if (repositoryKeyMemo !== null) return effect;
+      const memo = new Map<string, string | null>();
+      repositoryKeyMemo = memo;
+      return effect.pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (repositoryKeyMemo === memo) repositoryKeyMemo = null;
+          }),
+        ),
+      );
+    });
+  /** The board project's repository key, which names its checkout on a worker. Read once per
+      project while a scheduling pass runs (T3O-108); a pass-scoped memo needs no invalidation. */
+  const projectRepositoryKey = (projectId: ProjectId): Effect.Effect<string | null> =>
+    Effect.suspend(() => {
+      const memo = repositoryKeyMemo;
+      if (memo?.has(projectId) === true) return Effect.succeed(memo.get(projectId) ?? null);
+      return threads.project(projectId).pipe(
+        Effect.map((project) => boardRepositoryGroupingKey(project?.repositoryIdentity)),
+        Effect.catchCause(() => Effect.succeed(null)),
+        Effect.tap((key) => Effect.sync(() => memo?.set(projectId, key))),
+      );
+    });
   /** T3o: capacity claims, grows and the phase rule, when the board has capacity (T3O-86). */
   const capacityAdmission = Option.map(capacityClient, (client) =>
     makeBoardCapacityAdmission({
@@ -3536,7 +3567,8 @@ const make = Effect.gen(function* () {
   // immediately (no slot, no worktree). Build-mode steps waiting for a slot,
   // whose worktree is ready, are ordered by the queue rule (stage desc →
   // started before unstarted → card priority → drag order) and offered to the governor greedily.
-  const schedule = Effect.fn("board-supervisor-schedule")(function* () {
+  const schedule = () => withRepositoryKeyMemo(schedulePass());
+  const schedulePass = Effect.fn("board-supervisor-schedule")(function* () {
     // Queued CI passes go first: whatever freed a slot (a step settling, a
     // pass ending) runs this pass, and CI cards are later-stage than any step.
     // T3o: a parked or finished card's room reaches the queue now (T3O-86).
@@ -3656,7 +3688,7 @@ const make = Effect.gen(function* () {
     const rest = ordered.filter(({ entry }) => entry?.state.forceStart !== true);
     // T3o: cards are placed in queue order; holds keep a later card off a worker held for an
     // earlier one (T3O-87). Each grant this pass is subtracted from the worker's last snapshot.
-    const pass: PlacementPass = { grants: new Map(), ahead: new Set() };
+    const pass: PlacementPass = { grants: new Map(), ahead: new Set(), warm: new Map() };
     for (const { entry } of [...forced, ...rest]) {
       if (entry === undefined) continue;
       yield* offerBuildCandidate({ ...entry, pass });
@@ -12033,6 +12065,7 @@ const make = Effect.gen(function* () {
       }
     }
   }).pipe(
+    withRepositoryKeyMemo,
     Effect.catchCause((cause) =>
       Effect.logWarning("board supervisor: hold refresh failed", { cause: Cause.pretty(cause) }),
     ),
@@ -12049,6 +12082,7 @@ const make = Effect.gen(function* () {
     yield* requestReadiness;
     yield* schedule();
   }).pipe(
+    withRepositoryKeyMemo,
     Effect.catchCause((cause) =>
       Effect.logWarning("board supervisor: capacity sweep failed", { cause: Cause.pretty(cause) }),
     ),

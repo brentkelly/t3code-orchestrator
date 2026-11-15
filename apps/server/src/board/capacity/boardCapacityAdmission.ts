@@ -259,10 +259,11 @@ export const makeBoardCapacityAdmission = (deps: BoardCapacityAdmissionDeps) => 
   const freshClaimId = (cardId: BoardCardId) =>
     claimNonce.set(cardId, (claimNonce.get(cardId) ?? 0) + 1);
 
+  /** `keys` may be shared across one `syncAll`, so each project is read once per sweep. */
   const repositoryKeys = Effect.fn("BoardCapacityAdmission.repositoryKeys")(function* (
     board: BoardState,
+    keys: Map<string, string | null> = new Map(),
   ) {
-    const keys = new Map<string, string | null>();
     for (const card of board.cards) {
       if (!keys.has(card.projectId))
         keys.set(card.projectId, yield* deps.repositoryKey(card.projectId));
@@ -284,6 +285,7 @@ export const makeBoardCapacityAdmission = (deps: BoardCapacityAdmissionDeps) => 
   /** Send each worker the board's granted state for it, when it changed. */
   const syncWorker = Effect.fn("BoardCapacityAdmission.syncWorker")(function* (
     workerId: BoardWorkerId,
+    repositoryKeyMemo?: Map<string, string | null>,
   ) {
     return yield* syncLockFor(workerId).withPermits(1)(
       Effect.gen(function* () {
@@ -293,7 +295,7 @@ export const makeBoardCapacityAdmission = (deps: BoardCapacityAdmissionDeps) => 
           workerId,
           Effect.gen(function* () {
             const board = yield* deps.readBoard;
-            const keys = yield* repositoryKeys(board);
+            const keys = yield* repositoryKeys(board, repositoryKeyMemo);
             return syncEntriesFor({ board, workerId, repositoryKey: keys });
           }),
         );
@@ -311,7 +313,8 @@ export const makeBoardCapacityAdmission = (deps: BoardCapacityAdmissionDeps) => 
 
   const syncAll = Effect.fn("BoardCapacityAdmission.syncAll")(function* () {
     const board = yield* deps.readBoard;
-    for (const workerId of workersOf(board)) yield* syncWorker(workerId);
+    const repositoryKeyMemo = new Map<string, string | null>();
+    for (const workerId of workersOf(board)) yield* syncWorker(workerId, repositoryKeyMemo);
   });
 
   /** A placement claim, immediately before the card's provision is dispatched. */

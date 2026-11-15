@@ -748,3 +748,38 @@ it("the upgrade's baseline keeps the old throttle: n builds still fit on each wo
 });
 
 void projectId;
+
+it.effect("syncAll reads each project's repository key once, however many workers it syncs", () =>
+  Effect.gen(function* () {
+    const W2 = EnvironmentId.make("env-w2");
+    const fake = yield* makeFakeCapacity(
+      new Map([
+        [BOARD_LOCAL_WORKER_ID, { cpuCores: 16, ramGiB: 64, diskGB: 200 }],
+        [W1, { cpuCores: 16, ramGiB: 64, diskGB: 200 }],
+        [W2, { cpuCores: 16, ramGiB: 64, diskGB: 200 }],
+      ]),
+    );
+    const other = "project-other" as BoardCard["projectId"];
+    const board: BoardState = {
+      ...boardWith([granted("a"), granted("b"), { ...granted("c"), projectId: other }]),
+      workers: [{ id: W1 }, { id: W2 }] as unknown as BoardState["workers"],
+    };
+    const keyReads: Array<string> = [];
+    const admission = makeBoardCapacityAdmission({
+      client: fake.client,
+      readBoard: Effect.succeed(board),
+      dispatch: () => Effect.succeed(true),
+      commandId: (tag) => Effect.succeed(`cmd-${tag}` as BoardCommand["commandId"]),
+      nowIso: Effect.succeed(iso(T0)),
+      repositoryKey: (projectId) =>
+        Effect.sync(() => {
+          keyReads.push(projectId);
+          return `github.com/acme/${projectId}`;
+        }),
+      awaitingPermission: () => Effect.succeed(false),
+    });
+    yield* admission.syncAll();
+    assert.strictEqual(fake.syncs.length, 3);
+    assert.deepStrictEqual([...keyReads].sort(), [other, projectId].sort());
+  }),
+);
