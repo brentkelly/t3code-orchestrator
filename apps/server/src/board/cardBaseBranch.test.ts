@@ -420,6 +420,7 @@ describe("retargeting a card whose branch already exists (T3O-5, D10)", () => {
         autoBuild: false,
         autoMerge: false,
         autoPlan: false,
+        autoSignOff: false,
         started: true,
         placed: BOARD_SEED_STAGE_IDS.building,
         prevStage: null,

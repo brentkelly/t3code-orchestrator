@@ -1840,6 +1840,7 @@ export const boardHandlers = {
       ...(input.autoBuild === undefined ? {} : { autoBuild: input.autoBuild }),
       ...(input.autoMerge === undefined ? {} : { autoMerge: input.autoMerge }),
       ...(input.autoPlan === undefined ? {} : { autoPlan: input.autoPlan }),
+      ...(input.autoSignOff === undefined ? {} : { autoSignOff: input.autoSignOff }),
       createdAt: yield* nowIso,
     };
     yield* dispatch(deps, command);
@@ -2211,6 +2212,7 @@ export const boardHandlers = {
       commandId: yield* mintCommandId,
       cardId: card.id,
       ...(input.autoPlan === undefined ? {} : { autoPlan: input.autoPlan }),
+      ...(input.autoSignOff === undefined ? {} : { autoSignOff: input.autoSignOff }),
       ...(input.autoBuild === undefined ? {} : { autoBuild: input.autoBuild }),
       ...(input.autoMerge === undefined ? {} : { autoMerge: input.autoMerge }),
       createdAt: yield* nowIso,
@@ -2233,6 +2235,7 @@ export const boardHandlers = {
       cardId: card.id,
       key: card.key,
       autoPlan: view(resolved.autoPlan),
+      autoSignOff: view(resolved.autoSignOff),
       autoBuild: view(resolved.autoBuild),
       autoMerge: view(resolved.autoMerge),
     };

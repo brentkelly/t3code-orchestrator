@@ -54,14 +54,14 @@ const BOARD_AUTO_PLAN_REOPENED_NOTE =
 const reopenedSuffix = (options: { readonly reopened?: boolean } | undefined) =>
   options?.reopened === true ? ` ${BOARD_AUTO_PLAN_REOPENED_NOTE}` : "";
 
-/** The full auto-plan instruction: with Auto-build on the plan is approved and
-    built without a human; without it the plan waits for the user's approval. */
+/** The full auto-plan instruction: with Auto sign-off on a single plan is approved without a
+    human; without it the plan waits for the user's approval. A split always waits. */
 export function boardAutoPlanInstruction(
-  autoBuild: boolean,
+  autoSignOff: boolean,
   options?: { readonly reopened?: boolean },
 ): string {
-  const base = autoBuild
-    ? `${BOARD_AUTO_PLAN_INSTRUCTION} Auto-build is on: the plan you propose is approved and built automatically, unclear decisions included, so make each call the way you would defend it in review.`
+  const base = autoSignOff
+    ? `${BOARD_AUTO_PLAN_INSTRUCTION} Auto sign-off is on: a single plan you propose is approved automatically, unclear decisions included, so make each call the way you would defend it in review. A proposed split always waits for the user's approval.`
     : `${BOARD_AUTO_PLAN_INSTRUCTION} Your plan will be presented to the user for approval, so make each call the way you would defend it in review.`;
   return `${base}${reopenedSuffix(options)}`;
 }
@@ -115,8 +115,8 @@ export interface ComposeStepPromptStep {
   readonly humanInLoop: boolean;
   /** An auto-planned planning run. */
   readonly autoPlan?: boolean;
-  /** With `autoPlan`: Auto-build is on, so the plan is approved and built. */
-  readonly autoBuild?: boolean;
+  /** With `autoPlan`: Auto sign-off is on, so a single plan is approved without a human. */
+  readonly autoSignOff?: boolean;
   /** The plan review this step is running (plan review): set once a
       review has started, so a respawned or nudged thread resumes it. */
   readonly planReview?: { readonly instructions: string };
@@ -247,8 +247,8 @@ export function boardStepPostamble(input: {
   readonly step: Pick<ComposeStepPromptStep, "stepId" | "stepLabel">;
   /** An auto-planned planning run. */
   readonly autoPlan?: boolean;
-  /** With `autoPlan`: the plan is approved and built without a human. */
-  readonly autoBuild?: boolean;
+  /** With `autoPlan`: a single plan is approved without a human. */
+  readonly autoSignOff?: boolean;
 }): string {
   const { step } = input;
   const call = completionCall(step);
@@ -275,7 +275,7 @@ export function boardStepPostamble(input: {
   const deliverable =
     input.role === "plan"
       ? input.autoPlan === true
-        ? [BOARD_ENVELOPE_PLAN_DELIVERABLE, boardAutoPlanInstruction(input.autoBuild === true)]
+        ? [BOARD_ENVELOPE_PLAN_DELIVERABLE, boardAutoPlanInstruction(input.autoSignOff === true)]
         : [BOARD_ENVELOPE_PLAN_DELIVERABLE]
       : input.role === "build"
         ? [BOARD_ENVELOPE_BUILD_DELIVERABLE]
@@ -295,7 +295,7 @@ export function composeStepPrompt(input: ComposeStepPromptInput): string {
     role: input.role,
     step: input.step,
     ...(input.step.autoPlan === true ? { autoPlan: true } : {}),
-    ...(input.step.autoBuild === true ? { autoBuild: true } : {}),
+    ...(input.step.autoSignOff === true ? { autoSignOff: true } : {}),
   });
   // The build draft line rides on the body, so an empty-body
   // re-entry stays the clean conversational thread it is.

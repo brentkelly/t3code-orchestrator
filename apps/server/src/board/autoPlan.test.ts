@@ -1,6 +1,7 @@
 /**
- * Auto-planning through the live reactor. Alone, the plan waits at the human gate; with Auto-build
- * it is approved (unclear decisions included) and built. A group's toggles reach children that set
+ * Auto-planning through the live reactor. Alone, the plan waits at the human gate; with Auto
+ * sign-off a single plan is approved (unclear decisions included), and Auto-build then builds it.
+ * A split always waits for a human. A group's toggles reach children that set
  * none, and the card's current planning thread is steered, never replaced.
  */
 import {
@@ -74,8 +75,12 @@ const plan = (cardId: string, key: string, ordinal: number): BoardPlan => ({
   updatedAt: NOW,
 });
 
-/** Both toggles on: the plan is approved and built when it arrives. */
-const autoPlanBuild = { autoPlanSetting: true, autoBuildSetting: true } as const;
+/** Every planning gate on: the plan is approved and built when it arrives. */
+const autoPlanBuild = {
+  autoPlanSetting: true,
+  autoSignOffSetting: true,
+  autoBuildSetting: true,
+} as const;
 
 const planningCard = (id: string, overrides?: Partial<BoardCard>): BoardCard => ({
   ...makeBoardCard({ id, stage: "planning", orderKey: "m" }),
@@ -84,6 +89,13 @@ const planningCard = (id: string, overrides?: Partial<BoardCard>): BoardCard => 
 
 const cardOf = (cards: ReadonlyArray<BoardCard>, id: string) =>
   cards.find((candidate) => candidate.id === BoardCardId.make(id));
+
+const autoPlanNotes = (commands: ReadonlyArray<HarnessCommand>) =>
+  commands.flatMap((command) =>
+    command.type === "board.card.record-note" && command.kind === "card-auto-planned"
+      ? [command.detail]
+      : [],
+  );
 
 const priorPlanning = (cardId: string): BoardStepCompletion => ({
   cardId: BoardCardId.make(cardId),
@@ -96,7 +108,7 @@ const priorPlanning = (cardId: string): BoardStepCompletion => ({
 });
 
 it.effect(
-  "Auto-plan + Auto-build approves the plan, unclear decisions and all, and moves the card to Building",
+  "Auto-plan + Auto sign-off + Auto-build approves the plan, unclear decisions and all, and moves the card to Building",
   () => {
     const card = planningCard("auto", autoPlanBuild);
     return withGovernor(
@@ -147,9 +159,67 @@ it.effect("Auto-plan alone plans unattended and leaves the plan at the approval 
         assert.strictEqual(cardStage(after, id), BOARD_SEED_STAGE_IDS.planning);
         assert.strictEqual(cardOf(after.cards, "gated")?.autoPlan?.endedAt, null);
 
-        // Turning Auto-build on now counts as the approval.
+        // Auto-build never approves a plan.
         yield* setAutomation(h, id, { autoBuild: true }, 3);
+        assert.strictEqual(cardStage(yield* h.board, id), BOARD_SEED_STAGE_IDS.planning);
+
+        // Turning Auto sign-off on is the approval, and Auto-build then builds it.
+        yield* setAutomation(h, id, { autoSignOff: true }, 4);
         assert.strictEqual(cardStage(yield* h.board, id), BOARD_SEED_STAGE_IDS.building);
+      }),
+  );
+});
+
+it.effect("Auto-plan + Auto-build without Auto sign-off leaves the plan at the gate", () => {
+  const card = planningCard("unsigned", { autoPlanSetting: true, autoBuildSetting: true });
+  return withGovernor(
+    {
+      board: { cards: [card], plans: [plan("unsigned", "one", 0)], nextCardNumberByProject: {} },
+      settings,
+    },
+    (h) =>
+      Effect.gen(function* () {
+        const id = BoardCardId.make("unsigned");
+        yield* h.pumpDomain(cardMoved(card, "sprint", "planning", 1));
+        const spawn = (yield* h.commands).find((command) => command.type === "thread.spawn");
+        assert.ok(spawn?.type === "thread.spawn");
+        assert.include(spawn.text, boardAutoPlanInstruction(false));
+
+        yield* h.pumpDomain(stepCompleted(id, "succeeded", 2, PLANNING));
+        const after = yield* h.board;
+        assert.strictEqual(cardStage(after, id), BOARD_SEED_STAGE_IDS.planning);
+        assert.strictEqual(cardOf(after.cards, "unsigned")?.autoPlan?.endedAt, null);
+        assert.ok(
+          autoPlanNotes(yield* h.commands).includes(
+            "Auto-plan finished. The plan waits for your approval.",
+          ),
+        );
+      }),
+  );
+});
+
+it.effect("Auto sign-off without Auto-build approves the plan into Ready, where it waits", () => {
+  const card = planningCard("signed", { autoPlanSetting: true, autoSignOffSetting: true });
+  return withGovernor(
+    {
+      board: { cards: [card], plans: [plan("signed", "one", 0)], nextCardNumberByProject: {} },
+      settings,
+    },
+    (h) =>
+      Effect.gen(function* () {
+        const id = BoardCardId.make("signed");
+        yield* h.pumpDomain(cardMoved(card, "sprint", "planning", 1));
+        const spawn = (yield* h.commands).find((command) => command.type === "thread.spawn");
+        assert.ok(spawn?.type === "thread.spawn");
+        assert.include(spawn.text, boardAutoPlanInstruction(true));
+
+        yield* h.pumpDomain(stepCompleted(id, "succeeded", 2, PLANNING));
+        assert.strictEqual(cardStage(yield* h.board, id), BOARD_SEED_STAGE_IDS.ready);
+        assert.ok(
+          autoPlanNotes(yield* h.commands).includes(
+            "Auto sign-off approved the plan. It waits in Ready for you to start it.",
+          ),
+        );
       }),
   );
 });
@@ -189,7 +259,7 @@ it.effect("steers a live planning thread and approves the plan it then proposes"
         assert.isTrue(interview?.humanInLoop);
         assert.ok(interview?.threadId != null);
 
-        yield* setAutomation(h, id, { autoPlan: true, autoBuild: true }, 2);
+        yield* setAutomation(h, id, { autoPlan: true, autoSignOff: true, autoBuild: true }, 2);
 
         const sent = (yield* commands).filter((command) => command.type === "thread.send");
         assert.ok(
@@ -353,41 +423,34 @@ const splitCard = (id: string, autoBuild: boolean) =>
 
 const splitPlans = (id: string) => [plan(id, "a", 0), plan(id, "b", 1)];
 
-it.effect(
-  "an auto-plan + auto-build split is approved with the card's toggles, logged as important, and started",
-  () => {
-    const card = splitCard("split", true);
-    return withGovernor(
-      {
-        board: { cards: [card], plans: splitPlans("split"), nextCardNumberByProject: {} },
-        settings,
-      },
-      ({ pumpDomain, board, commands }) =>
-        Effect.gen(function* () {
-          const id = BoardCardId.make("split");
-          yield* pumpDomain(cardMoved(card, "sprint", "planning", 1));
-          yield* pumpDomain(stepCompleted(id, "succeeded", 2, PLANNING));
+it.effect("a split is never approved automatically, even with every gate on", () => {
+  const card = { ...splitCard("split", true), autoSignOffSetting: true };
+  return withGovernor(
+    {
+      board: { cards: [card], plans: splitPlans("split"), nextCardNumberByProject: {} },
+      settings,
+    },
+    ({ pumpDomain, board, commands }) =>
+      Effect.gen(function* () {
+        const id = BoardCardId.make("split");
+        yield* pumpDomain(cardMoved(card, "sprint", "planning", 1));
+        yield* pumpDomain(stepCompleted(id, "succeeded", 2, PLANNING));
 
-          const after = yield* board;
-          const parent = cardOf(after.cards, "split");
-          const children = after.cards.filter((candidate) => candidate.parentCardId === id);
-          assert.strictEqual(children.length, 2);
-          assert.strictEqual(parent?.group?.autoBuild, true);
-          assert.strictEqual(parent?.group?.target, "own");
-          // Started: the group was moved to the build stage, which is what
-          // cascades its ready children whose dependencies are met.
-          assert.isTrue(parent?.group?.started);
-
-          const decided = (yield* commands).find(
-            (command) => command.type === "board.card.record-decisions",
-          );
-          assert.ok(decided?.type === "board.card.record-decisions");
-          assert.strictEqual(decided.decisions[0]?.flag, "important");
-          assert.include(decided.decisions[0]?.decision ?? "", "Split into 2 cards");
-        }),
-    );
-  },
-);
+        const after = yield* board;
+        const parent = cardOf(after.cards, "split");
+        assert.strictEqual(after.cards.filter((c) => c.parentCardId === id).length, 0);
+        assert.strictEqual(parent?.group, null);
+        assert.strictEqual(parent?.stage, BOARD_SEED_STAGE_IDS.planning);
+        const sent = yield* commands;
+        assert.isFalse(sent.some((command) => command.type === "board.plans.approve"));
+        assert.ok(
+          autoPlanNotes(sent).includes(
+            "Auto-plan proposed a split. Splits always need your approval.",
+          ),
+        );
+      }),
+  );
+});
 
 it.effect("an auto-plan-only split waits at the gate, unapproved", () => {
   const card = splitCard("epic", false);
@@ -396,7 +459,7 @@ it.effect("an auto-plan-only split waits at the gate, unapproved", () => {
       board: { cards: [card], plans: splitPlans("epic"), nextCardNumberByProject: {} },
       settings,
     },
-    ({ pumpDomain, board }) =>
+    ({ pumpDomain, board, commands }) =>
       Effect.gen(function* () {
         const id = BoardCardId.make("epic");
         yield* pumpDomain(cardMoved(card, "sprint", "planning", 1));
@@ -407,6 +470,11 @@ it.effect("an auto-plan-only split waits at the gate, unapproved", () => {
         assert.strictEqual(after.cards.filter((c) => c.parentCardId === id).length, 0);
         assert.strictEqual(parent?.group, null);
         assert.strictEqual(parent?.stage, BOARD_SEED_STAGE_IDS.planning);
+        assert.ok(
+          autoPlanNotes(yield* commands).includes(
+            "Auto-plan finished. The proposed split waits for your approval.",
+          ),
+        );
       }),
   );
 });
@@ -416,6 +484,7 @@ const autoPlanGroup: BoardCardGroup = {
   autoBuild: false,
   autoMerge: false,
   autoPlan: true,
+  autoSignOff: false,
   started: false,
   placed: BOARD_SEED_STAGE_IDS.planning,
   prevStage: null,
@@ -488,8 +557,10 @@ it.effect(
   },
 );
 
-it.effect("a group's start approves and builds a child plan that waited for it", () => {
-  const group = planningCard("group", { group: { ...autoPlanGroup, autoBuild: true } });
+it.effect("an unstarted group's sign-off approves a child's plan; its start then builds it", () => {
+  const group = planningCard("group", {
+    group: { ...autoPlanGroup, autoSignOff: true, autoBuild: true },
+  });
   const child = planningCard("child", { parentCardId: BoardCardId.make("group") });
   const sibling = makeBoardCard({
     id: "sibling",
@@ -506,13 +577,18 @@ it.effect("a group's start approves and builds a child plan that waited for it",
       },
       settings,
     },
-    ({ pumpDomain, board, model }) =>
+    ({ pumpDomain, board, model, commands }) =>
       Effect.gen(function* () {
         const id = BoardCardId.make("child");
         yield* pumpDomain(cardMoved(child, "sprint", "planning", 1));
         yield* pumpDomain(stepCompleted(id, "succeeded", 2, PLANNING));
-        // Inherited Auto-build waits for the group to begin, so the plan waits.
-        assert.strictEqual(cardStage(yield* board, id), BOARD_SEED_STAGE_IDS.planning);
+        // Signed off into Ready; the inherited Auto-build waits for the group to begin.
+        assert.strictEqual(cardStage(yield* board, id), BOARD_SEED_STAGE_IDS.ready);
+        assert.ok(
+          autoPlanNotes(yield* commands).includes(
+            "Auto sign-off approved the plan. It waits in Ready and builds once GROUP starts.",
+          ),
+        );
 
         // A human starts a sibling, which begins the group.
         let moved: BoardCard | undefined;
@@ -787,35 +863,6 @@ it.effect("a steering turn that does not land ends the request and starts no new
   );
 });
 
-it.effect("a refused auto-approval ends the request, so planning is gated again", () => {
-  const card = splitCard("refused", true);
-  // A live child already on the board: the split approve refuses ("approved once").
-  const stray = {
-    ...makeBoardCard({ id: "stray", stage: "done", orderKey: "n" }),
-    parentCardId: BoardCardId.make("refused"),
-  };
-  return withGovernor(
-    {
-      board: {
-        cards: [card, stray],
-        plans: splitPlans("refused"),
-        nextCardNumberByProject: {},
-      },
-      settings,
-    },
-    ({ pumpDomain, board }) =>
-      Effect.gen(function* () {
-        const id = BoardCardId.make("refused");
-        yield* pumpDomain(cardMoved(card, "sprint", "planning", 1));
-        yield* pumpDomain(stepCompleted(id, "succeeded", 2, PLANNING));
-
-        const after = yield* board;
-        assert.strictEqual(cardStage(after, id), BOARD_SEED_STAGE_IDS.planning);
-        assert.isString(cardOf(after.cards, "refused")?.autoPlan?.endedAt);
-      }),
-  );
-});
-
 it.effect(
   "steering interrupts the in-flight interview turn, so its question does not end the request",
   () => {
@@ -983,8 +1030,8 @@ const finishedPlanning = (
 const completedAgain = (id: BoardCardId, sequence: number) =>
   planningCompleted(id, sequence, SECOND_FINISH);
 
-const reopenedText = (autoBuild: boolean) =>
-  boardAutoPlanInstruction(autoBuild, { reopened: true });
+const reopenedText = (autoSignOff: boolean) =>
+  boardAutoPlanInstruction(autoSignOff, { reopened: true });
 
 const sendsOf = (commands: ReadonlyArray<HarnessCommand>, text: string) =>
   commands.filter((command) => command.type === "thread.send" && command.text === text);
@@ -994,17 +1041,10 @@ const answersOf = (commands: ReadonlyArray<HarnessCommand>, text: string) =>
     (command) => command.type === "thread.answer-pending-input" && command.text === text,
   );
 
-const autoPlanNotes = (commands: ReadonlyArray<HarnessCommand>) =>
-  commands.flatMap((command) =>
-    command.type === "board.card.record-note" && command.kind === "card-auto-planned"
-      ? [command.detail]
-      : [],
-  );
-
 it.effect(
   "Auto-plan turned on after planning was marked finished waits for the turn, then approves and builds",
   () => {
-    const card = planningCard("late", { autoBuildSetting: true });
+    const card = planningCard("late", { autoSignOffSetting: true, autoBuildSetting: true });
     return withGovernor(
       {
         board: { cards: [card], plans: [plan("late", "one", 0)], nextCardNumberByProject: {} },
@@ -1056,7 +1096,7 @@ it.effect(
 );
 
 it.effect("a reopened prompt whose send fails stays pending, so recovery sends it", () => {
-  const card = planningCard("flaky", { autoBuildSetting: true });
+  const card = planningCard("flaky", { autoSignOffSetting: true, autoBuildSetting: true });
   let failures = 1;
   return withGovernor(
     {
@@ -1097,7 +1137,7 @@ it.effect("a reopened prompt whose send fails stays pending, so recovery sends i
 });
 
 it.effect("a reopened step whose turn hits a usage limit parks with its prompt pending", () => {
-  const card = planningCard("limited", { autoBuildSetting: true });
+  const card = planningCard("limited", { autoSignOffSetting: true, autoBuildSetting: true });
   return withGovernor(
     {
       board: { cards: [card], plans: [plan("limited", "one", 0)], nextCardNumberByProject: {} },
@@ -1136,7 +1176,7 @@ it.effect("a reopened step whose turn hits a usage limit parks with its prompt p
 });
 
 it.effect("a refused reopen says so on the card's rail", () => {
-  const card = planningCard("refused", { autoBuildSetting: true });
+  const card = planningCard("refused", { autoSignOffSetting: true, autoBuildSetting: true });
   let beforeReopen: Effect.Effect<void> = Effect.void;
   return withGovernor(
     {
@@ -1181,7 +1221,7 @@ it.effect("a refused reopen says so on the card's rail", () => {
 });
 
 it.effect("a re-completion in the same turn is approved with nothing sent", () => {
-  const card = planningCard("quick", { autoBuildSetting: true });
+  const card = planningCard("quick", { autoSignOffSetting: true, autoBuildSetting: true });
   return withGovernor(
     {
       board: { cards: [card], plans: [plan("quick", "one", 0)], nextCardNumberByProject: {} },
@@ -1199,7 +1239,7 @@ it.effect("a re-completion in the same turn is approved with nothing sent", () =
   );
 });
 
-it.effect("with Auto-build off the re-completed plan waits at the gate", () => {
+it.effect("with Auto sign-off off the re-completed plan waits at the gate", () => {
   const card = planningCard("gate");
   return withGovernor(
     {
@@ -1220,7 +1260,7 @@ it.effect("with Auto-build off the re-completed plan waits at the gate", () => {
 });
 
 it.effect("a pending question is answered with the prompt at once, and not sent again", () => {
-  const card = planningCard("asking", { autoBuildSetting: true });
+  const card = planningCard("asking", { autoSignOffSetting: true, autoBuildSetting: true });
   return withGovernor(
     {
       board: { cards: [card], plans: [plan("asking", "one", 0)], nextCardNumberByProject: {} },
@@ -1248,7 +1288,7 @@ it.effect("a pending question is answered with the prompt at once, and not sent 
 });
 
 it.effect("a question before the reopened prompt is answered; a second one parks", () => {
-  const card = planningCard("later", { autoBuildSetting: true });
+  const card = planningCard("later", { autoSignOffSetting: true, autoBuildSetting: true });
   return withGovernor(
     {
       board: { cards: [card], plans: [plan("later", "one", 0)], nextCardNumberByProject: {} },
@@ -1323,7 +1363,7 @@ it.effect("a reopen during a background wait gets its prompt after the check-ins
 });
 
 it.effect("a finished thread keeps the setting, gets no prompt, and the plan waits", () => {
-  const card = planningCard("done", { autoBuildSetting: true });
+  const card = planningCard("done", { autoSignOffSetting: true, autoBuildSetting: true });
   return withGovernor(
     {
       board: { cards: [card], plans: [plan("done", "one", 0)], nextCardNumberByProject: {} },
@@ -1357,7 +1397,7 @@ it.effect("a finished thread keeps the setting, gets no prompt, and the plan wai
 });
 
 it.effect("an unreachable planning thread is left alone, not read as finished", () => {
-  const card = planningCard("away", { autoBuildSetting: true });
+  const card = planningCard("away", { autoSignOffSetting: true, autoBuildSetting: true });
   let unreachable = false;
   return withGovernor(
     {
@@ -1424,7 +1464,7 @@ const failingAnswer = (local: LocalThreadGatewayShape): ThreadGatewayShape => ({
 });
 
 it.effect("Auto-plan turned on during a late plan review waits for the turn, no interrupt", () => {
-  const card = planningCard("review", { autoBuildSetting: true });
+  const card = planningCard("review", { autoSignOffSetting: true, autoBuildSetting: true });
   return withGovernor(
     {
       board: { cards: [card], plans: [plan("review", "one", 0)], nextCardNumberByProject: {} },
@@ -1456,7 +1496,7 @@ it.effect("Auto-plan turned on during a late plan review waits for the turn, no 
 });
 
 it.effect("a reopen whose answer fails ends Auto-plan and settles the finish back", () => {
-  const card = planningCard("lost", { autoBuildSetting: true });
+  const card = planningCard("lost", { autoSignOffSetting: true, autoBuildSetting: true });
   return withGovernor(
     {
       board: { cards: [card], plans: [plan("lost", "one", 0)], nextCardNumberByProject: {} },
@@ -1479,7 +1519,7 @@ it.effect("a reopen whose answer fails ends Auto-plan and settles the finish bac
 });
 
 it.effect("a re-armed reopen whose answer fails keeps the step running with a human", () => {
-  const card = planningCard("rearm", { autoBuildSetting: true });
+  const card = planningCard("rearm", { autoSignOffSetting: true, autoBuildSetting: true });
   let failAnswers = false;
   return withGovernor(
     {
@@ -1517,7 +1557,7 @@ it.effect("a re-armed reopen whose answer fails keeps the step running with a hu
 });
 
 it.effect("the timeout sweep holds the reopened prompt while the turn is live", () => {
-  const card = planningCard("sweep", { autoBuildSetting: true });
+  const card = planningCard("sweep", { autoSignOffSetting: true, autoBuildSetting: true });
   return withGovernor(
     {
       board: { cards: [card], plans: [plan("sweep", "one", 0)], nextCardNumberByProject: {} },
@@ -1567,7 +1607,7 @@ it.effect("turning Auto-plan off while reopened sends the reopened off text", ()
 it.effect(
   "turning Auto-plan on again while still reopened waits for the turn, no interrupt",
   () => {
-    const card = planningCard("again", { autoBuildSetting: true });
+    const card = planningCard("again", { autoSignOffSetting: true, autoBuildSetting: true });
     return withGovernor(
       {
         board: { cards: [card], plans: [plan("again", "one", 0)], nextCardNumberByProject: {} },
@@ -1638,7 +1678,7 @@ it.effect("a group turning Auto-plan on never reopens a child's finished plannin
 
 it.effect("boot reconcile hands a reopened step its prompt instead of settling it", () =>
   Effect.gen(function* () {
-    const card = planningCard("boot", { autoBuildSetting: true });
+    const card = planningCard("boot", { autoSignOffSetting: true, autoBuildSetting: true });
     let seeded: { board: BoardState; threadId: string } | undefined;
     yield* withGovernor(
       {

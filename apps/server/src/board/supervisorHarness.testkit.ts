@@ -181,6 +181,7 @@ export const makeBoardCard = (input: {
   /** The card's auto-start arm. Absent is unarmed. */
   readonly autoStart?: boolean;
   readonly autoPlanSetting?: boolean | null;
+  readonly autoSignOffSetting?: boolean | null;
   readonly autoBuildSetting?: boolean | null;
   readonly autoMergeSetting?: boolean | null;
   /** The per-card auto-merge arm. */
@@ -238,6 +239,7 @@ export const makeBoardCard = (input: {
   // `autoStart` / `autoMerge` are the legacy spellings of an own
   // Auto-build / Auto-merge on.
   autoPlanSetting: input.autoPlanSetting ?? null,
+  autoSignOffSetting: input.autoSignOffSetting ?? null,
   autoBuildSetting: input.autoBuildSetting ?? (input.autoStart === true ? true : null),
   autoMergeSetting: input.autoMergeSetting ?? (input.autoMerge === true ? true : null),
   autoMergeHold: input.autoMergeHold ?? null,
@@ -1539,6 +1541,7 @@ const cardAutomationUpdated = (
   card: BoardCard,
   settings: {
     readonly autoPlan?: boolean | null;
+    readonly autoSignOff?: boolean | null;
     readonly autoBuild?: boolean | null;
     readonly autoMerge?: boolean | null;
   },
@@ -1552,11 +1555,13 @@ const cardAutomationUpdated = (
       card: {
         ...card,
         ...(settings.autoPlan === undefined ? {} : { autoPlanSetting: settings.autoPlan }),
+        ...(settings.autoSignOff === undefined ? {} : { autoSignOffSetting: settings.autoSignOff }),
         ...(settings.autoBuild === undefined ? {} : { autoBuildSetting: settings.autoBuild }),
         ...(settings.autoMerge === undefined ? {} : { autoMergeSetting: settings.autoMerge }),
       },
       automationChanged: {
         ...(settings.autoPlan === undefined ? {} : { autoPlan: true }),
+        ...(settings.autoSignOff === undefined ? {} : { autoSignOff: true }),
         ...(settings.autoBuild === undefined ? {} : { autoBuild: true }),
         ...(settings.autoMerge === undefined ? {} : { autoMerge: true }),
       },
@@ -1644,6 +1649,7 @@ export const setAutomation = (
   cardId: BoardCardId,
   settings: {
     readonly autoPlan?: boolean | null;
+    readonly autoSignOff?: boolean | null;
     readonly autoBuild?: boolean | null;
     readonly autoMerge?: boolean | null;
   },
@@ -1662,6 +1668,9 @@ export const setAutomation = (
             updated = {
               ...card,
               ...(settings.autoPlan === undefined ? {} : { autoPlanSetting: settings.autoPlan }),
+              ...(settings.autoSignOff === undefined
+                ? {}
+                : { autoSignOffSetting: settings.autoSignOff }),
               ...(settings.autoBuild === undefined ? {} : { autoBuildSetting: settings.autoBuild }),
               ...(settings.autoMerge === undefined ? {} : { autoMergeSetting: settings.autoMerge }),
             };

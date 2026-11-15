@@ -40,12 +40,11 @@ import {
   type BoardWorkerId,
   boardCardAutoArchiveDue,
   boardAutoPlanInstruction,
+  boardPlanAutomatedBy,
   boardAutoPlanOffInstruction,
   BOARD_PLAN_REVIEW_LATE_START_LEAD,
   boardPlanReviewRoundsChangedLead,
   BOARD_PLAN_REVIEW_STOP_INSTRUCTION,
-  BOARD_DECISION_REASON_MAX_LENGTH,
-  BOARD_DECISION_TEXT_MAX_LENGTH,
   isBoardCardAutoPlanPending,
   boardCardAutoBuildDue,
   boardStageBeforeBuild,
@@ -604,10 +603,6 @@ export interface SupervisorReactorShape {
   ) => Effect.Effect<BoardCiActionResult>;
   readonly ciSendBack: (cardId: BoardCardId) => Effect.Effect<BoardCiActionResult>;
 }
-
-/** A string cut to `max` characters, ending in an ellipsis when cut. */
-const clip = (text: string, max: number): string =>
-  text.length <= max ? text : `${text.slice(0, max - 1).trimEnd()}…`;
 
 /** Epoch millis off the Effect clock, never `new Date()`, so a test's
     `TestClock` moves every due-time comparison the reactor makes. */
@@ -2774,7 +2769,9 @@ const make = Effect.gen(function* () {
         ...(role === "plan" && isBoardCardAutoPlanPending(card)
           ? {
               autoPlan: true,
-              ...(automationIn(yield* readBoard, card).autoBuild.value ? { autoBuild: true } : {}),
+              ...(automationIn(yield* readBoard, card).autoSignOff.value
+                ? { autoSignOff: true }
+                : {}),
             }
           : {}),
         ...(planReview === null ? {} : { planReview }),
@@ -6351,7 +6348,7 @@ const make = Effect.gen(function* () {
           const failure = yield* steerPlanningThread(
             card.id,
             state,
-            boardAutoPlanInstruction(automationIn(board, current).autoBuild.value),
+            boardAutoPlanInstruction(automationIn(board, current).autoSignOff.value),
           );
           if (failure !== null) {
             yield* endAutoPlan(
@@ -8655,7 +8652,7 @@ const make = Effect.gen(function* () {
       threads.send({
         commandId: yield* commandId("auto-plan-reopened-prompt"),
         threadId: live.threadId,
-        text: boardAutoPlanInstruction(automationIn(board, current).autoBuild.value, {
+        text: boardAutoPlanInstruction(automationIn(board, current).autoSignOff.value, {
           reopened: true,
         }),
         attachments: [],
@@ -8685,7 +8682,7 @@ const make = Effect.gen(function* () {
       .answerPendingInput({
         commandId: yield* commandId("auto-plan-reopened-answer"),
         threadId: state.threadId,
-        text: boardAutoPlanInstruction(automationIn(board, current).autoBuild.value, {
+        text: boardAutoPlanInstruction(automationIn(board, current).autoSignOff.value, {
           reopened: true,
         }),
       })
@@ -8791,7 +8788,7 @@ const make = Effect.gen(function* () {
       .answerPendingInput({
         commandId: yield* commandId("auto-plan-reopened-answer"),
         threadId,
-        text: boardAutoPlanInstruction(automationIn(board, card).autoBuild.value, {
+        text: boardAutoPlanInstruction(automationIn(board, card).autoSignOff.value, {
           reopened: true,
         }),
       })
@@ -8868,19 +8865,16 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * Approve an unattended planning run's plan only when the card's Auto-build authorises it;
-   * otherwise it waits at the human gate with the run record pending. A split's new group starts
-   * only when the card's own Auto-build is on. A refused approval ends the run record.
+   * The sign-off gate: approve an automated planning run's single plan only when the card's Auto
+   * sign-off is on; otherwise it waits at the human gate with the run record pending. A split is
+   * never approved here. Approval moves the card to Ready, and Auto-build takes it from there.
    */
-  const approveAutoPlannedCard = Effect.fn("board-supervisor-approveAutoPlannedCard")(function* (
+  const approvePlannedCard = Effect.fn("board-supervisor-approvePlannedCard")(function* (
     card: BoardCard,
-    state: BoardCardStepState,
   ) {
     const board = yield* readBoard;
     const resolved = automationIn(board, card);
-    const plans = boardCardPlans(board, card.id).toSorted(
-      (left, right) => left.ordinal - right.ordinal,
-    );
+    const plans = boardCardPlans(board, card.id);
     if (plans.length === 0) {
       yield* endAutoPlan(
         card.id,
@@ -8888,78 +8882,17 @@ const make = Effect.gen(function* () {
       );
       return;
     }
-    const buildStage = boardStageWithRole(board, "build");
-    const split = plans.length >= 2;
-    const authorised =
-      resolved.autoBuild.value || (split && resolved.autoBuild.waitingForGroupStart);
-    if (!authorised) {
+    if (plans.length >= 2) {
       yield* autoPlanNote(
         card.id,
-        resolved.autoBuild.waitingForGroupStart
-          ? `Auto-plan finished. The plan waits for your approval, or is approved when ${resolved.autoBuild.inheritedFrom?.key ?? "its group"} starts.`
-          : "Auto-plan finished. The plan waits for your approval.",
+        resolved.autoSignOff.value
+          ? "Auto-plan proposed a split. Splits always need your approval."
+          : "Auto-plan finished. The proposed split waits for your approval.",
       );
       return;
     }
-    if (split) {
-      const refusal = yield* dispatchRefusal({
-        type: "board.plans.approve",
-        commandId: yield* commandId("auto-plan-approve-split"),
-        cardId: card.id,
-        autoBuild: true,
-        autoPlan: resolved.autoPlan.value,
-        autoMerge: resolved.autoMerge.value,
-        createdAt: yield* nowIso,
-      });
-      if (refusal !== null) {
-        yield* endAutoPlan(card.id, `Auto-plan could not approve the split: ${refusal}`);
-        return;
-      }
-      const titles = plans.map((plan) => plan.title).join("; ");
-      yield* dispatch({
-        type: "board.card.record-decisions",
-        commandId: yield* commandId("auto-plan-split-decision"),
-        cardId: card.id,
-        decisions: [
-          {
-            question: "Build this card as one plan, or split it?",
-            decision: clip(
-              `Split into ${plans.length} cards: ${titles}`,
-              BOARD_DECISION_TEXT_MAX_LENGTH,
-            ),
-            reason: clip(
-              card.splitRationale ?? "The agent proposed a split.",
-              BOARD_DECISION_REASON_MAX_LENGTH,
-            ),
-            flag: "important",
-            decidedBy: "agent",
-          },
-        ],
-        stepId: state.stepId,
-        threadId: state.threadId,
-        createdAt: yield* nowIso,
-      });
-      if (!resolved.autoBuild.value || buildStage === null) {
-        yield* autoPlanNote(
-          card.id,
-          `Auto-plan approved the split into ${plans.length} cards. Nothing starts until ${resolved.autoBuild.inheritedFrom?.key ?? "the group"} starts.`,
-        );
-        return;
-      }
-      const started = yield* dispatchRefusal({
-        type: "board.card.move",
-        commandId: yield* commandId("auto-plan-start-group"),
-        cardId: card.id,
-        toStage: buildStage.stageId,
-        override: true,
-        createdAt: yield* nowIso,
-      });
-      yield* autoPlanNote(
-        card.id,
-        started === null
-          ? `Auto-plan approved the split into ${plans.length} cards and started the group.`
-          : `Auto-plan approved the split into ${plans.length} cards; the group did not start: ${started}`,
-      );
+    if (!resolved.autoSignOff.value) {
+      yield* autoPlanNote(card.id, "Auto-plan finished. The plan waits for your approval.");
       return;
     }
     const next = boardNextStageId(board, card.stage, card.projectId);
@@ -8975,8 +8908,18 @@ const make = Effect.gen(function* () {
       yield* endAutoPlan(card.id, `Auto-plan could not approve the plan: ${toReady}`);
       return;
     }
+    const buildStage = boardStageWithRole(board, "build");
     if (buildStage === null || next === buildStage.stageId) return;
-    yield* startAutoBuildCard(card.id, "Auto-plan approved the plan");
+    if (!resolved.autoBuild.value) {
+      yield* autoPlanNote(
+        card.id,
+        resolved.autoBuild.waitingForGroupStart
+          ? `Auto sign-off approved the plan. It waits in Ready and builds once ${resolved.autoBuild.inheritedFrom?.key ?? "its group"} starts.`
+          : "Auto sign-off approved the plan. It waits in Ready for you to start it.",
+      );
+      return;
+    }
+    yield* startAutoBuildCard(card.id, "Auto sign-off approved the plan");
   });
 
   /**
@@ -9146,7 +9089,7 @@ const make = Effect.gen(function* () {
     });
     if (refusal !== null) return { outcome: "refused", detail: refusal } as const;
     const board = yield* readBoard;
-    const autoBuild = automationIn(board, card).autoBuild.value;
+    const autoSignOff = automationIn(board, card).autoSignOff.value;
     const state = boardCardStepState(board, card.id);
     if (
       state !== null &&
@@ -9156,14 +9099,14 @@ const make = Effect.gen(function* () {
     ) {
       yield* autoPlanNote(
         card.id,
-        autoBuild
-          ? "Auto-plan is on: the agent decides what is left, and its plan is approved and built when it arrives."
+        autoSignOff
+          ? "Auto-plan is on: the agent decides what is left, and Auto sign-off approves its plan when it arrives."
           : "Auto-plan is on: the agent decides what is left, and its plan waits for your approval.",
       );
       const steered = yield* steerPlanningThread(
         card.id,
         state,
-        boardAutoPlanInstruction(autoBuild),
+        boardAutoPlanInstruction(autoSignOff),
       );
       if (steered === null) return { outcome: "steered" } as const;
       yield* endAutoPlan(
@@ -9273,17 +9216,16 @@ const make = Effect.gen(function* () {
           yield* stopAutoPlanRun(card);
           return "stopped" as const;
         }
-        if (pending && finished) {
-          const state = boardCardStepState(board, card.id);
-          const split = boardCardPlans(board, card.id).length >= 2;
+        // Auto sign-off turned on for a finished run whose single plan waits for approval.
+        if (pending && finished && resolved.autoSignOff.value) {
           if (
-            state !== null &&
-            (resolved.autoBuild.value || (split && resolved.autoBuild.waitingForGroupStart))
+            boardCardStepState(board, card.id) !== null &&
+            boardPlanAutomatedBy(resolved) !== null &&
+            boardCardPlans(board, card.id).length === 1
           ) {
-            yield* approveAutoPlannedCard(card, state);
+            yield* approvePlannedCard(card);
             const after = yield* readCard(card.id);
-            const approved = after !== null && (after.stage !== card.stage || after.group !== null);
-            return approved ? ("approved" as const) : null;
+            return after !== null && after.stage !== card.stage ? ("approved" as const) : null;
           }
         }
         return null;
@@ -9526,13 +9468,13 @@ const make = Effect.gen(function* () {
           }
           return;
         }
-        // An auto-planned card's plan is approved by the board: the
-        // click or the group's setting authorised it, so the plan never waits
-        // on the gate — and the stage's own auto-advance must not move it too.
+        // The sign-off gate owns an auto-planned card's plan: it is approved when Auto sign-off
+        // authorises it and otherwise waits for a human, so the stage's own auto-advance must
+        // not move it.
         if (stageRole === "plan") {
           const planned = yield* readCard(card.id);
           if (planned !== null && isBoardCardAutoPlanPending(planned)) {
-            yield* approveAutoPlannedCard(planned, state);
+            yield* approvePlannedCard(planned);
             yield* releaseFinishedThreads;
             yield* schedule();
             return;
@@ -9975,6 +9917,7 @@ const make = Effect.gen(function* () {
       }
       if (
         automationChanged.autoPlan === true ||
+        automationChanged.autoSignOff === true ||
         automationChanged.autoBuild === true ||
         automationChanged.autoMerge === true
       ) {
@@ -10803,12 +10746,13 @@ const make = Effect.gen(function* () {
     if (disarmed !== undefined) {
       const which = [
         ...(disarmed.autoPlan === true ? ["Auto-plan"] : []),
+        ...(disarmed.autoSignOff === true ? ["Auto sign-off"] : []),
         ...(disarmed.autoBuild === true ? ["Auto-build"] : []),
       ];
       if (which.length > 0) {
         yield* autoPlanNote(
           card.id,
-          `Moved back, so ${which.join(" and ")} ${which.length === 1 ? "is" : "are"} off for this card. Turn ${which.length === 1 ? "it" : "them"} on again in Automation.`,
+          `Moved back, so ${[which.slice(0, -1).join(", "), which.at(-1)].filter(Boolean).join(" and ")} ${which.length === 1 ? "is" : "are"} off for this card. Turn ${which.length === 1 ? "it" : "them"} on again in Automation.`,
         );
       }
     }

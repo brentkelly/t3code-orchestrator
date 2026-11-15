@@ -1,5 +1,5 @@
 /**
- * Auto-plan, Auto-build and Auto-merge switches. A group's switches set group
+ * Auto-plan, Auto sign-off, Auto-build and Auto-merge switches, one per gate. A group's switches set group
  * settings that inheriting children follow live, so a flip touching in-flight work
  * asks first. The decider re-checks every lock; the rows only mirror them.
  */
@@ -15,7 +15,7 @@ import {
   isAtomCommandInterrupted,
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
-import { SlidersHorizontalIcon } from "lucide-react";
+import { SlidersHorizontalIcon, TriangleAlertIcon } from "lucide-react";
 import { useState } from "react";
 
 import { Button } from "../components/ui/button";
@@ -30,19 +30,24 @@ import {
 } from "../components/ui/alert-dialog";
 import { Popover, PopoverTrigger } from "../components/ui/popover";
 import { Switch } from "../components/ui/switch";
+import { cn } from "../lib/utils";
 import { Toggle, ToggleGroup } from "../components/ui/toggle-group";
 import { boardEnvironment } from "../state/board";
 import { useAtomCommand } from "../state/use-atom-command";
 import { BoardCollapsibleSection } from "./BoardCardFields";
 import { BoardHint } from "./BoardHint";
 import {
-  boardAutomationRowsSummary,
+  BOARD_AUTOMATION_HANDS_OFF_TOOLTIP,
+  boardAutomationPastPlanning,
+  boardAutomationStrip,
   boardCardAutomationRows,
   boardGroupAutomationEffects,
   boardGroupAutomationRows,
+  boardMakeHandsOffPatch,
   boardShellAutomationNode,
   resolveBoardShellAutomation,
   type BoardAutomationRow,
+  type BoardAutomationStrip,
 } from "./boardCardAutomation";
 import { describeBoardCommandFailure } from "./boardCommandFeedback";
 import { boardGroupSettingsVm } from "./boardGroups";
@@ -84,7 +89,10 @@ function AutomationRowView({
   return (
     // A div, not a label: the switch is its own button, and a label wrapping
     // a button makes one row look like one target and behave like two.
-    <div className="flex items-start gap-2.5" data-board-automation-row={row.id}>
+    <div
+      className={cn("flex items-start gap-2.5", row.indent === true && "ps-6")}
+      data-board-automation-row={row.id}
+    >
       <BoardHint label={row.lockReason}>
         <span className="mt-0.5 inline-flex shrink-0">
           <Switch
@@ -110,6 +118,35 @@ function AutomationRowView({
         </span>
       </span>
     </div>
+  );
+}
+
+/** The collapsed header's gate tags: blue where the board passes the gate, grey where you do. */
+function AutomationStripView({ strip }: { readonly strip: BoardAutomationStrip }) {
+  const tag = "inline-flex items-center gap-1 rounded px-1.5 py-px text-board-10-5 font-medium";
+  return (
+    <span className="flex flex-wrap items-center justify-end gap-1" data-board-automation-strip>
+      {strip.tags.map(({ gate, auto }) => (
+        <span
+          className={cn(
+            tag,
+            auto ? "bg-info/12 text-info-foreground" : "bg-muted text-muted-foreground",
+          )}
+          data-board-automation-gate={gate}
+          key={gate}
+        >
+          {gate} · {auto ? "auto" : "you"}
+        </span>
+      ))}
+      {strip.handsOff ? (
+        <BoardHint label={BOARD_AUTOMATION_HANDS_OFF_TOOLTIP}>
+          <span className={cn(tag, "bg-muted text-foreground")} data-board-automation-hands-off>
+            <TriangleAlertIcon aria-hidden className="size-3 text-muted-foreground" />
+            Hands-off
+          </span>
+        </BoardHint>
+      ) : null}
+    </span>
   );
 }
 
@@ -211,6 +248,7 @@ function BoardGroupAutomationPanel(
     readonly autoBuild?: boolean;
     readonly autoMerge?: boolean;
     readonly autoPlan?: boolean;
+    readonly autoSignOff?: boolean;
   }) => {
     void setGroupSettings({ environmentId, input: { cardId: group.cardId, ...patch } }).then(
       report,
@@ -270,13 +308,15 @@ function BoardGroupAutomationPanel(
   );
 }
 
-/** A leaf card's three switches. */
+/** A leaf card's switches, and Make hands-off while a gate is still off. */
 function CardAutomationRows({
   rows,
+  handsOffPatch,
   environmentId,
   card,
 }: {
   readonly rows: ReadonlyArray<BoardAutomationRow>;
+  readonly handsOffPatch: AutomationPatch | null;
   readonly environmentId: EnvironmentId;
   readonly card: BoardAutomationNode;
 }) {
@@ -289,6 +329,17 @@ function CardAutomationRows({
           <AutomationRowView key={row.id} onChange={(next) => set({ [toggle]: next })} row={row} />
         );
       })}
+      {handsOffPatch === null ? null : (
+        <Button
+          className="self-start"
+          data-board-make-hands-off
+          onClick={() => set(handsOffPatch)}
+          size="compact"
+          variant="outline"
+        >
+          Make hands-off
+        </Button>
+      )}
     </div>
   );
 }
@@ -322,9 +373,18 @@ export function BoardCardAutomation(props: {
     inPlanning: props.inPlanning,
     planningFinished: props.planningFinished,
   });
+  const strip = boardAutomationStrip({
+    rows,
+    pastPlanning: boardAutomationPastPlanning(props.stages, props.card.stage),
+  });
   return (
-    <BoardCollapsibleSection summary={boardAutomationRowsSummary(rows)} title="Automation">
-      <CardAutomationRows card={props.card} environmentId={props.environmentId} rows={rows} />
+    <BoardCollapsibleSection summary={<AutomationStripView strip={strip} />} title="Automation">
+      <CardAutomationRows
+        card={props.card}
+        environmentId={props.environmentId}
+        handsOffPatch={boardMakeHandsOffPatch(resolved)}
+        rows={rows}
+      />
     </BoardCollapsibleSection>
   );
 }
@@ -332,8 +392,10 @@ export function BoardCardAutomation(props: {
 function GroupAutomationSection(props: GroupAutomationProps) {
   const { rows } = groupAutomation(props);
   const [pending, setPending] = useState<PendingGroupChange | null>(null);
+  // A group's Plan gate is its children's, so it never settles with the group's stage.
+  const strip = boardAutomationStrip({ rows, pastPlanning: false });
   return (
-    <BoardCollapsibleSection summary={boardAutomationRowsSummary(rows)} title="Automation">
+    <BoardCollapsibleSection summary={<AutomationStripView strip={strip} />} title="Automation">
       <BoardGroupAutomationPanel {...props} requestConfirm={setPending} />
       <GroupChangeConfirmDialog
         groupKey={props.group.key}

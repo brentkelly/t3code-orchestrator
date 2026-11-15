@@ -39,6 +39,7 @@ describe("boardShellMergesIntoIntegrationBranch (T3O-31)", () => {
     autoBuild: false,
     autoMerge: false,
     autoPlan: false,
+    autoSignOff: false,
     started: false,
     placed: "planning" as BoardStageId,
     prevStage: null,

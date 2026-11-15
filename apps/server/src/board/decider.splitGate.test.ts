@@ -60,6 +60,7 @@ function makeCard(
     baseBranch: null,
     scheduledStartAt: null,
     autoPlanSetting: null,
+    autoSignOffSetting: null,
     autoBuildSetting: null,
     autoMergeSetting: null,
     autoMergeHold: null,
@@ -184,12 +185,16 @@ const approve = (input?: {
   readonly cardId?: string;
   readonly autoBuild?: boolean;
   readonly mergeTarget?: BoardCardGroupTarget;
+  readonly autoPlan?: boolean;
+  readonly autoSignOff?: boolean;
 }): BoardCommand => ({
   type: "board.plans.approve",
   commandId: CommandId.make("cmd-approve"),
   cardId: BoardCardId.make(input?.cardId ?? "card-parent"),
   ...(input?.autoBuild === undefined ? {} : { autoBuild: input.autoBuild }),
   ...(input?.mergeTarget === undefined ? {} : { mergeTarget: input.mergeTarget }),
+  ...(input?.autoPlan === undefined ? {} : { autoPlan: input.autoPlan }),
+  ...(input?.autoSignOff === undefined ? {} : { autoSignOff: input.autoSignOff }),
   createdAt: NOW,
 });
 
@@ -219,6 +224,7 @@ const ownGroup = makeCard({
     autoBuild: true,
     autoMerge: false,
     autoPlan: false,
+    autoSignOff: false,
     started: true,
     placed: BOARD_SEED_STAGE_IDS.ready,
     prevStage: BOARD_SEED_STAGE_IDS.planning,
@@ -453,7 +459,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("split gate (T3O-
     Effect.gen(function* () {
       const approved = approvedEvent(
         yield* decideEvents(
-          approve({ autoBuild: true, mergeTarget: "own" }),
+          approve({ autoBuild: true, mergeTarget: "own", autoPlan: true, autoSignOff: true }),
           makeBoard({
             parent: {
               splitRationale: WHY,
@@ -466,8 +472,25 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("split gate (T3O-
       expect(approved.payload.card.group).toMatchObject({
         target: "own",
         autoBuild: true,
+        autoPlan: true,
+        autoSignOff: true,
         started: false,
       });
+    }),
+  );
+
+  it.effect("carries the card's own Auto-plan and Auto sign-off to the group by default", () =>
+    Effect.gen(function* () {
+      const plans = [makePlan({ key: "p1", ordinal: 0 }), makePlan({ key: "p2", ordinal: 1 })];
+      const handsOff = approvedEvent(
+        yield* decideEvents(
+          approve(),
+          makeBoard({ parent: { autoPlanSetting: true, autoSignOffSetting: true }, plans }),
+        ),
+      );
+      expect(handsOff.payload.card.group).toMatchObject({ autoPlan: true, autoSignOff: true });
+      const manual = approvedEvent(yield* decideEvents(approve(), makeBoard({ plans })));
+      expect(manual.payload.card.group).toMatchObject({ autoPlan: false, autoSignOff: false });
     }),
   );
 

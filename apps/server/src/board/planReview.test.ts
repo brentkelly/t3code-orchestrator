@@ -49,6 +49,7 @@ const card = (overrides: Partial<BoardCard> = {}): BoardCard => ({
   baseBranch: null,
   scheduledStartAt: null,
   autoPlanSetting: null,
+  autoSignOffSetting: null,
   autoBuildSetting: null,
   autoMergeSetting: null,
   autoMergeHold: null,

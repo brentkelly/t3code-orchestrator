@@ -77,6 +77,7 @@ export function boardShellGroup(shells: Shells, card: BoardCardShell): BoardCard
     autoBuild: true,
     autoMerge: false,
     autoPlan: false,
+    autoSignOff: false,
     started: false,
     placed: card.stage,
     prevStage: card.stage,
@@ -486,6 +487,7 @@ export interface BoardGroupSettingsVm {
   /** Why the target cannot change, or null. */
   readonly targetLockReason: string | null;
   readonly autoPlan: { readonly on: boolean; readonly note: string };
+  readonly autoSignOff: { readonly on: boolean; readonly note: string };
   readonly autoBuild: { readonly on: boolean; readonly note: string };
   /** The children's merge, into `resolvedTarget`. Locked on while the
       board-wide setting merges every card. */
@@ -533,10 +535,14 @@ export function boardGroupSettingsVm(
     autoPlan: {
       on: group.autoPlan,
       note: group.autoPlan
-        ? group.autoBuild
-          ? "Children entering Planning are planned by the agent, and their plans are approved and built."
-          : "Children entering Planning are planned by the agent; their plans wait for your approval."
+        ? "Children entering Planning are planned by the agent without asking you."
         : "Children entering Planning are planned with you.",
+    },
+    autoSignOff: {
+      on: group.autoSignOff,
+      note: group.autoSignOff
+        ? "Approve each child's plan without you. A proposed split still waits for you."
+        : "Off: each child's plan waits for you.",
     },
     autoBuild: {
       on: group.autoBuild,
