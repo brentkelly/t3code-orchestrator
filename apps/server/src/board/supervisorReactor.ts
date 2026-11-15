@@ -8973,6 +8973,39 @@ const make = Effect.gen(function* () {
   });
 
   /**
+   * T3o: a split a human approved during the plan review, applied now the planning step has
+   * completed (T3O-105). A refusal clears it with a note, so the split gate asks again.
+   */
+  const fireDeferredSplitApproval = Effect.fn("board-supervisor-fireDeferredSplitApproval")(
+    function* (cardId: BoardCardId) {
+      const card = yield* readCard(cardId);
+      const approval = card?.pendingSplitApproval;
+      if (approval === undefined) return;
+      const refused = yield* dispatchRefusal({
+        type: "board.plans.approve",
+        commandId: yield* commandId("split-approved-after-review"),
+        cardId,
+        autoBuild: approval.autoBuild,
+        mergeTarget: approval.mergeTarget,
+        ...(approval.autoPlan === undefined ? {} : { autoPlan: approval.autoPlan }),
+        ...(approval.autoSignOff === undefined ? {} : { autoSignOff: approval.autoSignOff }),
+        ...(approval.autoMerge === undefined ? {} : { autoMerge: approval.autoMerge }),
+        createdAt: yield* nowIso,
+      });
+      // A fault rather than a refusal leaves the approval on the card; clear it all the same.
+      const after = refused === null ? yield* readCard(cardId) : null;
+      if (refused === null && after?.pendingSplitApproval === undefined) return;
+      yield* dispatchOptional({
+        type: "board.split.record-approval-refused",
+        commandId: yield* commandId("split-approval-refused"),
+        cardId,
+        detail: refused ?? "The split could not be approved.",
+        createdAt: yield* nowIso,
+      });
+    },
+  );
+
+  /**
    * The sign-off gate: approve an automated planning run's single plan only when the card's Auto
    * sign-off is on; otherwise it waits at the human gate with the run record pending. A split is
    * never approved here. Approval moves the card to Ready, and Auto-build takes it from there.
@@ -9599,6 +9632,8 @@ const make = Effect.gen(function* () {
           }
           return;
         }
+        // T3o: a split approved after review fires first, then the sign-off gate (T3O-105).
+        if (stageRole === "plan") yield* fireDeferredSplitApproval(card.id);
         // The sign-off gate owns an auto-planned card's plan: it is approved when Auto sign-off
         // authorises it and otherwise waits for a human, so the stage's own auto-advance must
         // not move it.
@@ -11600,6 +11635,8 @@ const make = Effect.gen(function* () {
       // A rounds change sends nothing mid-turn: the agent reads the target at its next round,
       // and an idle thread is told once.
       case "board.plan-review-rounds-changed":
+      // T3o: a split approved after review, or undone, is review policy too (T3O-105).
+      case "board.split-approval-changed":
         return steerPlanReviewPolicy(event.payload.cardId, { idleOnly: true }).pipe(Effect.asVoid);
       case "board.card-step-awaiting-input":
       case "board.card-step-paused":
