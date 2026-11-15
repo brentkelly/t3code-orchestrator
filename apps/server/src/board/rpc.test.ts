@@ -19,6 +19,7 @@ import { assert, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 
 import type { AuthenticatedSession } from "../auth/EnvironmentAuth.ts";
@@ -287,18 +288,14 @@ it.layer(makeBoardRpcTestLayer("t3o-board-rpc-test-"))("board.subscribeCard", (i
       });
       const handlers = yield* makeHandlers([AuthOrchestrationReadScope]);
 
-      const collected = yield* Deferred.make<ReadonlyArray<BoardCardDetailStreamItem>>();
-      const firstFrame = yield* Deferred.make<void>();
+      const frames = yield* Queue.unbounded<BoardCardDetailStreamItem>();
       yield* Effect.forkScoped(
         handlers["board.subscribeCard"]({ cardId: subject }).pipe(
-          Stream.tap(() => Deferred.succeed(firstFrame, undefined)),
-          Stream.take(3),
-          Stream.runCollect,
-          Effect.flatMap((items) => Deferred.succeed(collected, Array.from(items))),
+          Stream.runForEach((item) => Queue.offer(frames, item)),
           Effect.scoped,
         ),
       );
-      yield* Deferred.await(firstFrame);
+      const initial = yield* Queue.take(frames);
       // A related card changing nothing the detail shows: a re-read, but no frame.
       yield* engine.dispatch({
         type: "board.card.reorder",
@@ -322,6 +319,9 @@ it.layer(makeBoardRpcTestLayer("t3o-board-rpc-test-"))("board.subscribeCard", (i
         title: "Dependency renamed",
         createdAt: t0,
       });
+      // Taken before the next dispatch, so the frames cannot coalesce. Had the
+      // reorder or the unrelated rename emitted, that frame would arrive here.
+      const dependencyFrame = yield* Queue.take(frames);
       yield* engine.dispatch({
         type: "board.card.update",
         commandId: CommandId.make("cmd-rel-subject-brief"),
@@ -330,11 +330,11 @@ it.layer(makeBoardRpcTestLayer("t3o-board-rpc-test-"))("board.subscribeCard", (i
         createdAt: t0,
       });
 
-      const [initial, dependencyFrame, subjectFrame] = yield* Deferred.await(collected);
-      assert.strictEqual(initial?.detail.dependencies[0]?.title, "Dependency");
-      assert.strictEqual(dependencyFrame?.detail.dependencies[0]?.title, "Dependency renamed");
-      assert.strictEqual(dependencyFrame?.detail.brief, null);
-      assert.strictEqual(subjectFrame?.detail.brief, "Subject brief.");
+      const subjectFrame = yield* Queue.take(frames);
+      assert.strictEqual(initial.detail.dependencies[0]?.title, "Dependency");
+      assert.strictEqual(dependencyFrame.detail.dependencies[0]?.title, "Dependency renamed");
+      assert.strictEqual(dependencyFrame.detail.brief, null);
+      assert.strictEqual(subjectFrame.detail.brief, "Subject brief.");
     }),
   );
 });
