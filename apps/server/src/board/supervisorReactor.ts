@@ -2923,7 +2923,22 @@ const make = Effect.gen(function* () {
           ),
           Effect.orElseSucceed(() => false),
         );
-      if (!answered) return false;
+      // A step parked by a prose turn end has no request to answer: it gets a turn instead.
+      const delivered =
+        answered ||
+        (shell?.awaitingUserInput !== true &&
+          (yield* optional(
+            "thread.send",
+            threads.send({
+              commandId: yield* commandId("plan-review-policy"),
+              threadId: owed.threadId,
+              text,
+              attachments: [],
+              runtimeMode: owed.state.runtimeMode,
+              interactionMode: "default",
+            }),
+          )));
+      if (!delivered) return false;
       yield* recordPlanReviewPolicySent(owed.state, owed.fingerprint);
       if (owed.state.status === "awaiting-input") yield* resumeParkedStep(owed.threadId);
       return true;
@@ -8970,13 +8985,7 @@ const make = Effect.gen(function* () {
     const board = yield* readBoard;
     const resolved = automationIn(board, card);
     const plans = boardCardPlans(board, card.id);
-    if (by === "review" && plans.length !== 1) {
-      yield* autoPlanNote(
-        card.id,
-        "Plan review finished. The proposed split waits for your approval.",
-      );
-      return;
-    }
+    // Callers pass "review" only for a single waiting plan (`isBoardCardReviewSignOffPending`).
     if (by === "review" && !resolved.autoSignOff.value) {
       yield* autoPlanNote(card.id, "Plan review finished. The plan waits for your approval.");
       return;
@@ -9011,7 +9020,13 @@ const make = Effect.gen(function* () {
       createdAt: yield* nowIso,
     });
     if (toReady !== null) {
-      yield* endAutoPlan(card.id, `Auto-plan could not approve the plan: ${toReady}`);
+      // A review-driven card has no auto-plan run to end, so the note is written directly.
+      yield* by === "review"
+        ? autoPlanNote(
+            card.id,
+            `Plan review finished, but Auto sign-off could not approve the plan: ${toReady}`,
+          )
+        : endAutoPlan(card.id, `Auto-plan could not approve the plan: ${toReady}`);
       return;
     }
     const buildStage = boardStageWithRole(board, "build");
@@ -10115,8 +10130,18 @@ const make = Effect.gen(function* () {
     // A paused step is not told: the turn would resume it through `resumeParkedStep` and overturn
     // the human's Stop. The stance still lands on the row below. Awaiting-input and stalled steps
     // are told, and resuming them is intended.
-    // A plan review's stance rides its policy message, sent by the policy steer.
-    const reviewDriven = state.planReviewStartedAt !== undefined && state.stepId === card.stage;
+    const owedPolicy =
+      state.planReviewStartedAt !== undefined && state.stepId === card.stage
+        ? yield* owedPlanReviewPolicy(card.id)
+        : null;
+    // The review's own Unattended flip rides the policy steer's message; any other flip (the
+    // card's own override) gets the stance turn.
+    const reviewDriven =
+      owedPolicy !== null &&
+      owedPolicy.policy.unattended === !desired &&
+      !(owedPolicy.state.planReviewPolicySent ?? "").includes(
+        `unattended=${owedPolicy.policy.unattended};`,
+      );
     if (state.threadId !== null && state.status !== "paused" && !reviewDriven) {
       const text = desired
         ? `Switching to human-in-the-loop: ask me anything you need directly, and it is fine to end a turn waiting on my answer. Call board_complete_step when the work is done.`

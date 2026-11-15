@@ -441,6 +441,63 @@ it.effect("Unattended turned on while parked on a question answers it once and r
   ),
 );
 
+const cardUpdated = (card: BoardCard, sequence: number): HarnessEvent =>
+  ({
+    type: "board.card-updated",
+    sequence,
+    payload: { cardId: card.id, card },
+  }) as unknown as HarnessEvent;
+
+it.effect("Unattended turned on while parked in prose sends the policy and resumes", () =>
+  withGovernor(fixture("prose"), (h) =>
+    Effect.gen(function* () {
+      const id = BoardCardId.make("prose");
+      yield* h.pumpDomain(cardMoved(planningCard("prose"), "sprint", "planning", 1));
+      yield* h.pumpDomain(reviewStarted(boardCardStepState(yield* h.board, id)!, 2, false));
+      const threadId = boardCardStepState(yield* h.board, id)!.threadId!;
+      // The agent ends its turn on a question in prose: no runtime request is pending.
+      yield* setShell(h, threadId, fakeThreadState(threadId));
+      yield* h.pumpRuntime(turnCompleted(ThreadId.make(threadId), "turn-1"));
+      assert.strictEqual(boardCardStepState(yield* h.board, id)?.status, "awaiting-input");
+      const before = sends(yield* h.commands).length;
+
+      const card = (yield* h.board).cards.find((candidate) => candidate.id === id)!;
+      yield* h.pumpDomain(
+        cardUpdated({ ...card, planReview: { enabled: true, rounds: 2, unattended: true } }, 4),
+      );
+
+      const after = sends(yield* h.commands);
+      assert.strictEqual(after.length, before + 1);
+      assert.include(after.at(-1)?.text, "The review is now unattended");
+      const state = boardCardStepState(yield* h.board, id)!;
+      assert.strictEqual(state.status, "running");
+      assert.include(state.planReviewPolicySent ?? "", "unattended=true");
+    }),
+  ),
+);
+
+it.effect("the card's own stance toggle mid-review still gets the stance turn", () =>
+  withGovernor(fixture("own-stance"), (h) =>
+    Effect.gen(function* () {
+      const id = BoardCardId.make("own-stance");
+      yield* h.pumpDomain(cardMoved(planningCard("own-stance"), "sprint", "planning", 1));
+      yield* h.pumpDomain(reviewStarted(boardCardStepState(yield* h.board, id)!, 2, false));
+      const running = boardCardStepState(yield* h.board, id)!;
+      assert.isTrue(running.humanInLoop);
+      yield* setShell(h, running.threadId!, fakeThreadState(running.threadId!));
+      const before = sends(yield* h.commands).length;
+
+      const card = (yield* h.board).cards.find((candidate) => candidate.id === id)!;
+      yield* h.pumpDomain(cardUpdated({ ...card, humanInLoop: false }, 3));
+
+      const after = sends(yield* h.commands);
+      assert.strictEqual(after.length, before + 1);
+      assert.include(after.at(-1)?.text, "Switching to unattended");
+      assert.isFalse(boardCardStepState(yield* h.board, id)?.humanInLoop);
+    }),
+  ),
+);
+
 it.effect("an attended review never answers the human's pending question about a finding", () =>
   withGovernor(fixture("attended"), (h) =>
     Effect.gen(function* () {

@@ -27,6 +27,7 @@ import * as Duration from "effect/Duration";
 import * as Ref from "effect/Ref";
 import * as TestClock from "effect/testing/TestClock";
 
+import { BoardCommandInvariantError } from "./errors.ts";
 import { ThreadCommandRefusedError, UNKNOWN_THREAD_STATE } from "./ThreadGateway.ts";
 import type {
   BoardThreadState,
@@ -1771,6 +1772,42 @@ it.effect("an unattended review's plan waits without sign-off; turning it on app
         );
         yield* setAutomation(h, id, { autoSignOff: true }, 4);
         assert.strictEqual(cardStage(yield* h.board, id), BOARD_SEED_STAGE_IDS.ready);
+      }),
+  );
+});
+
+it.effect("a refused approval after an unattended review leaves a note on the card", () => {
+  const card = planningCard("refused-review", {
+    planReview: unattendedReview,
+    autoSignOffSetting: true,
+  });
+  return withGovernor(
+    {
+      board: {
+        cards: [card],
+        plans: [plan("refused-review", "one", 0)],
+        nextCardNumberByProject: {},
+      },
+      settings,
+      onDispatch: (command) =>
+        command.type === "board.card.move" && command.cardId === card.id
+          ? (Effect.fail(
+              new BoardCommandInvariantError({
+                commandType: command.type,
+                detail: "Ready is full.",
+              }),
+            ) as unknown as Effect.Effect<void>)
+          : Effect.void,
+    },
+    (h) =>
+      Effect.gen(function* () {
+        const id = BoardCardId.make("refused-review");
+        yield* reviewedUnattended(h, id, card);
+        assert.strictEqual(cardStage(yield* h.board, id), BOARD_SEED_STAGE_IDS.planning);
+        assert.include(
+          autoPlanNotes(yield* h.commands),
+          "Plan review finished, but Auto sign-off could not approve the plan: Ready is full.",
+        );
       }),
   );
 });
