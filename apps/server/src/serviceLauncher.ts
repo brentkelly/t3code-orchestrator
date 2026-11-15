@@ -80,7 +80,7 @@ export async function databaseBaseNames(dbPath: string): Promise<ReadonlyArray<s
   const secondaries: Array<string> = [];
   for (const entry of discovered) {
     if (entry === primary) continue;
-    if ((await restoreTarget(NodePath.join(directory, entry))) === primaryTarget) continue;
+    if ((await resolvedOrSelf(NodePath.join(directory, entry))) === primaryTarget) continue;
     secondaries.push(entry);
   }
   // The primary database is included even when the directory read fails, so a
@@ -95,8 +95,11 @@ async function databaseFilePath(
   suffix: (typeof DB_FILE_SUFFIXES)[number],
 ): Promise<string> {
   const main = NodePath.join(directory, baseName);
-  return suffix === "" ? main : `${await restoreTarget(main)}${suffix}`;
+  return suffix === "" ? main : `${await resolvedOrSelf(main)}${suffix}`;
 }
+
+// T3o: an unresolvable entry (ELOOP, EACCES) is treated as its own file, so it cannot wedge a rollback.
+const resolvedOrSelf = (path: string): Promise<string> => restoreTarget(path).catch(() => path);
 
 // T3o: copies every database but the primary; only called while the server is stopped.
 async function copySecondaryDatabases(dbPath: string, destinationDir: string): Promise<void> {

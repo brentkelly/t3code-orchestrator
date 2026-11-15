@@ -941,9 +941,10 @@ across 113. The WM class markers went from `DesktopEnvironment.ts` and
 upstream made redundant. `welcome.tsx` +1 (the route context read), `knip.jsonc` +1, and the
 Effect override moved from `tsconfig.base.json` to `tsconfig.effect.json`.
 
-After the `v0.1.9` sync (`T3O-102`): **437 markers across 164 upstream-owned files**, from 431
-across 164 the moment before it. `serviceLauncher.ts` +5 (10, the online backup's per-database
-names and secondary copy, and the symlink-aware sidecar path) and `serviceLauncher.test.ts` +1 (2).
+After the `v0.1.9` sync (`T3O-102`): **439 markers across 164 upstream-owned files**, from 431
+across 164 the moment before it. `serviceLauncher.ts` +6 (11, the online backup's per-database
+names and secondary copy, the symlink-aware sidecar path, and the fallback for an entry that
+cannot be resolved) and `serviceLauncher.test.ts` +2 (3).
 
 For reference, the `v0.0.38` sync stood at 121 markers across 44 files. Counts recorded then that
 differ from their rows in the table below:
@@ -1253,7 +1254,7 @@ files (see [Seam grammar](#seam-grammar-since-t3o-02a)).
 | `apps/server/src/mcp/McpSessionRegistry.test.ts`                                | `t3o-08`          | Every thread session carries `"board"`                                                                                                                                                                                             | marked fork expectation                                                      |
 | `apps/server/src/cloud/serviceProtocol.ts`                                      | `T3O-54`          | `SERVICE_LAUNCHER_PROTOCOL = 4` (upstream's 3 + multi-database snapshot)                                                                                                                                                           | constant + comment (re-check every sync)                                     |
 | `apps/server/src/cloud/servicePreflight.test.ts`                                | `T3O-54`          | Protocol 3 is blocked too: upstream's protocol-3 launcher snapshots only `state.sqlite`                                                                                                                                            | marked fork expectation                                                      |
-| `apps/server/src/serviceLauncher.ts`                                            | `t3o-26`          | Update backup and restore cover every database in the state dir (`databaseBaseNames`), the online backup included (`T3O-102`)                                                                                                      | one helper + two loops                                                       |
+| `apps/server/src/serviceLauncher.ts`                                            | `t3o-26`          | Update backup and restore cover every database in the state dir (`databaseBaseNames`), the online backup included (`T3O-102`)                                                                                                      | helpers + backup, online-backup and restore loops                            |
 | `apps/server/src/serviceLauncher.test.ts`                                       | `t3o-26`          | Import and exercise the multi-database backup helpers; upstream's online-backup test seeds a `boards.sqlite`                                                                                                                       | import + fork tests                                                          |
 | `docs/internals/server-updates.md`                                              | `t3o-26`          | "Every database, not just `state.sqlite`" section                                                                                                                                                                                  | Self-contained section                                                       |
 | `apps/web/src/index.css`                                                        | `T3O-67`          | `@import` of `board/board-theme.css`, the board-only design tokens                                                                                                                                                                 | one import line                                                              |

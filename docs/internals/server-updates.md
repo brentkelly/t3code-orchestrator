@@ -58,6 +58,11 @@ one's `-wal` and `-shm` sidecars. The set is discovered from disk rather than na
 added later is covered without the launcher having to know what it is for — today that means
 `state.sqlite` and t3o's `boards.sqlite`.
 
+When the filesystem cannot clone, upstream's online backup copies the primary's main file while the
+old child still runs, under a held read snapshot, then its WAL once the child exits; no `-shm` is
+taken. Every other database is copied only after the child has exited, in the same per-database
+layout. If the online path fails, the offline snapshot above runs instead.
+
 Restoring covers the union of what was backed up and what is live. A database the trial update
 _created_ has no snapshot entry and is **deleted** on restore, because leaving it would let the
 reverted build read a database from the future — migrated by the newer version, with a migration

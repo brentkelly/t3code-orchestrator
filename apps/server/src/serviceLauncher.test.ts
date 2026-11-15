@@ -870,6 +870,9 @@ it.effect("snapshots every database in the state directory and restores them", (
     yield* fs.writeFileString(dbPath, "state-v2");
     yield* fs.writeFileString(boardsPath, "boards-v2");
     yield* fs.writeFileString(path.join(stateDir, "extra.sqlite"), "extra-v2");
+    // An entry that cannot be resolved (ELOOP) must not wedge every rollback attempt.
+    const loopPath = path.join(stateDir, "loop.sqlite");
+    yield* Effect.sync(() => NodeFS.symlinkSync("loop.sqlite", loopPath));
 
     yield* Effect.promise(() => restoreDatabaseBackup(baseDir, pending));
 
@@ -881,6 +884,7 @@ it.effect("snapshots every database in the state directory and restores them", (
     // A database the trial CREATED has no snapshot entry and must not survive,
     // or the reverted build reads a database from the future.
     assert.isFalse(yield* fs.exists(path.join(stateDir, "extra.sqlite")));
+    assert.notInclude(NodeFS.readdirSync(stateDir), "loop.sqlite");
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
