@@ -19,8 +19,10 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Ref from "effect/Ref";
+import * as TestClock from "effect/testing/TestClock";
 
 import { aliveThread, fakeThreadState } from "./threadGateway.testkit.ts";
 
@@ -371,6 +373,75 @@ it.effect("a policy change still owed at a restart is delivered once to the idle
         }),
     );
   }),
+);
+
+/** A planning thread with a running review, carried over a restart with `edit` applied to its
+    step row: what boot finds after an upgrade or once the review has ended. */
+const bootWithReview = (
+  id: string,
+  edit: (state: BoardCardStepState) => BoardCardStepState,
+  shells: (threadId: string) => ReadonlyMap<string, ReturnType<typeof fakeThreadState>>,
+  body: (h: Parameters<Parameters<typeof withGovernor>[1]>[0]) => Effect.Effect<void>,
+) =>
+  Effect.gen(function* () {
+    let seeded: { board: BoardState; threadId: string } | undefined;
+    yield* withGovernor(fixture(id), (h) =>
+      Effect.gen(function* () {
+        const cardId = BoardCardId.make(id);
+        yield* h.pumpDomain(cardMoved(planningCard(id), "sprint", "planning", 1));
+        yield* h.pumpDomain(reviewStarted(boardCardStepState(yield* h.board, cardId)!, 2, false));
+        const board = yield* h.board;
+        seeded = {
+          board: {
+            ...board,
+            stepStates: (board.stepStates ?? []).map((state) =>
+              state.cardId === cardId ? edit(state) : state,
+            ),
+          },
+          threadId: boardCardStepState(board, cardId)!.threadId!,
+        };
+      }),
+    );
+    const { board, threadId } = seeded!;
+    yield* withGovernor({ board, settings, initialShells: shells(threadId) }, body);
+  });
+
+it.effect("a review running before the policy was stored is recorded at boot, not steered", () =>
+  bootWithReview(
+    "upgraded",
+    ({ planReviewPolicySent: _sent, ...state }) => state,
+    (threadId) => new Map([[threadId, fakeThreadState(threadId)]]),
+    (h) =>
+      Effect.gen(function* () {
+        yield* h.reactor.drain;
+        const steered = sends(yield* h.commands).filter((send) =>
+          send.text.startsWith("Plan review update"),
+        );
+        assert.lengthOf(steered, 0);
+        assert.strictEqual(
+          boardCardStepState(yield* h.board, BoardCardId.make("upgraded"))?.planReviewPolicySent,
+          "rounds=2;unattended=false;split=false",
+        );
+      }),
+  ),
+);
+
+it.effect("a respawned planning thread is not told to run a review that has ended", () =>
+  bootWithReview(
+    "ended",
+    (state) => ({ ...state, planReviewRound: 3, planReviewDoneAt: NOW }),
+    () => new Map(),
+    (h) =>
+      Effect.gen(function* () {
+        yield* h.reactor.drain;
+        yield* TestClock.adjust(Duration.minutes(5));
+        yield* h.reactor.fireRetries;
+        yield* h.reactor.drain;
+        const spawn = (yield* h.commands).find((command) => command.type === "thread.spawn");
+        assert.isDefined(spawn);
+        assert.notInclude(spawn?.text ?? "", "up to 2 rounds");
+      }),
+  ),
 );
 
 const unattendedCard = (id: string): BoardCard => ({

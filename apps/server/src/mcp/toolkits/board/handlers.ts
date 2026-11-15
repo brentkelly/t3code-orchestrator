@@ -1049,7 +1049,7 @@ export const boardHandlers = {
     const settings = yield* readBoardSettings;
     const reviewStep = runningPlanReviewStep({ board, card, settings });
     const planReview = (() => {
-      if (reviewStep === null) return null;
+      if (reviewStep === null || reviewStep.planReviewDoneAt !== undefined) return null;
       const review = planReviewInstructions({ board, card, settings, state: reviewStep });
       if (review === null || reviewStep.planReviewRound === undefined) return review;
       return { ...review, round: reviewStep.planReviewRound };

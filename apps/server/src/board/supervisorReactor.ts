@@ -2799,6 +2799,7 @@ const make = Effect.gen(function* () {
     card: BoardCard,
     state: BoardCardStepState,
   ) {
+    if (state.planReviewDoneAt !== undefined) return null;
     const board = yield* readBoard;
     const settings = yield* boardSettings;
     if (runningPlanReviewStep({ board, card, settings }) === null) return null;
@@ -2904,6 +2905,11 @@ const make = Effect.gen(function* () {
   ) {
     const owed = yield* owedPlanReviewPolicy(cardId);
     if (owed === null) return false;
+    // A review started before the fingerprint existed was told its policy at start: record, don't steer.
+    if (owed.state.planReviewPolicySent === undefined) {
+      yield* recordPlanReviewPolicySent(owed.state, owed.fingerprint);
+      return false;
+    }
     const shell = yield* liveThread(owed.threadId).pipe(Effect.orElseSucceed(() => undefined));
     const text = planReviewPolicyMessage(owed.policy, owed.state.planReviewPolicySent);
     if (owed.state.status === "awaiting-input" || shell?.awaitingUserInput === true) {

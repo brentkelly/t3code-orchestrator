@@ -323,6 +323,9 @@ it.layer(layer)("plan review through the board tools", (it) => {
         unattended: false,
         splitApprovedAfterReview: false,
       });
+      // An ended review's instructions are not handed out again.
+      const context = yield* boardHandlers.board_get_card_context().pipe(as(threadId));
+      assert.strictEqual(context.planReview, undefined);
     }),
   );
 
