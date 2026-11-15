@@ -14,6 +14,7 @@ import type {
   PullRequestUpdateInput,
 } from "@t3tools/contracts";
 import {
+  GitCommandError,
   PullRequestOperationError,
   PullRequestUnavailableError,
   SourceControlProviderKind,
@@ -116,6 +117,8 @@ function makeGateway(
     readonly runActionError?: unknown;
     /** `remote.origin.url`. Absent is a checkout with no origin. */
     readonly originUrl?: string;
+    /** The first `remote.origin.url` read fails, as a spawn error would. */
+    readonly originReadFailsOnce?: boolean;
   } = {},
 ) {
   const calls: string[] = [];
@@ -136,11 +139,21 @@ function makeGateway(
         }),
         Layer.mock(GitVcsDriver.GitVcsDriver)({
           readConfigValue: (cwd, key) =>
-            Effect.sync(() => {
+            Effect.suspend(() => {
               configReads.push(`${cwd}:${key}`);
-              return cwd === "/repo" && key === "remote.origin.url"
-                ? (options.originUrl ?? null)
-                : null;
+              if (options.originReadFailsOnce === true && configReads.length === 1) {
+                return Effect.fail(
+                  new GitCommandError({
+                    operation: "git.readConfigValue",
+                    command: "git config",
+                    cwd,
+                    detail: "spawn failed",
+                  }),
+                );
+              }
+              return Effect.succeed(
+                cwd === "/repo" && key === "remote.origin.url" ? (options.originUrl ?? null) : null,
+              );
             }),
         }),
         Layer.succeed(
@@ -289,6 +302,24 @@ describe("BoardPullRequestGateway origin", () => {
       yield* gateway.merge({ projectId: PROJECT, number: 110, method: "squash" });
       yield* gateway.merge({ projectId: PROJECT, number: 111, method: "squash" });
       assert.deepStrictEqual(configReads, ["/repo:remote.origin.url"]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("does not keep a failed origin read, so the next call reaches the fork", () => {
+    const { calls, configReads, layer } = makeGateway({
+      repository: "pingdotgg/t3code",
+      originUrl: "git@github.com:brentkelly/t3code-orchestrator.git",
+      originReadFailsOnce: true,
+    });
+    return Effect.gen(function* () {
+      const gateway = yield* BoardPullRequestGateway.BoardPullRequestGateway;
+      yield* gateway.merge({ projectId: PROJECT, number: 110, method: "squash" });
+      yield* gateway.merge({ projectId: PROJECT, number: 111, method: "squash" });
+      assert.deepStrictEqual(configReads, ["/repo:remote.origin.url", "/repo:remote.origin.url"]);
+      assert.deepStrictEqual(calls, [
+        "runAction:pingdotgg/t3code:110:merge:squash",
+        "runAction:host=github.com:brentkelly/t3code-orchestrator:111:merge:squash",
+      ]);
     }).pipe(Effect.provide(layer));
   });
 });

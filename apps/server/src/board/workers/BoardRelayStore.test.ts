@@ -39,3 +39,18 @@ it.effect("serves a thread's central from memory, and re-reads after its own wri
     assert.strictEqual(yield* store.relayedThreadCentral(thread), centralA);
   }).pipe(Effect.provide(layer)),
 );
+
+it.effect("bounds the memo, dropping its oldest answer first", () =>
+  Effect.gen(function* () {
+    const store = yield* BoardRelayStore;
+    const sql = yield* SqlClient.SqlClient;
+    yield* store.recordRelayedThread(thread, centralA);
+    assert.strictEqual(yield* store.relayedThreadCentral(thread), centralA);
+    yield* sql`DELETE FROM board_relayed_threads WHERE thread_id = ${thread}`;
+    for (let index = 0; index < 1024; index += 1) {
+      yield* store.relayedThreadCentral(ThreadId.make(`thread-other-${index}`));
+    }
+    // Evicted, so this is a fresh read of the row deleted behind the store's back.
+    assert.isNull(yield* store.relayedThreadCentral(thread));
+  }).pipe(Effect.provide(layer)),
+);

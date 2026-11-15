@@ -12314,9 +12314,9 @@ const make = Effect.gen(function* () {
       // Checked last, so only overdue steps pay.
       if (yield* supersededByPendingTurn(state)) continue;
       // A thread on a permission prompt or a secret request is waiting on a human and emits
-      // nothing; nudging it would replace the violet wait with a stall. Read last, so only overdue
-      // steps pay. The subagent half repeats this sweep's earlier read on purpose: it closes the
-      // gap if a child just asked.
+      // nothing; nudging it would replace the violet wait with a stall. Only overdue steps reach
+      // this. Its thread half reuses the state this tick already read; the subagent half reads
+      // afresh on purpose, closing the gap if a child just asked.
       if (state.threadId !== null && (yield* threadAwaitingHuman(state, state.threadId))) {
         permissionHeldAt.set(String(state.threadId), now);
         continue;

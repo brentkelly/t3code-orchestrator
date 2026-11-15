@@ -237,11 +237,14 @@ export const layer: Layer.Layer<
       const now = yield* Clock.currentTimeMillis;
       const known = originByCheckout.get(workspaceRoot);
       if (known !== undefined && now - known.at < ORIGIN_URL_TTL_MS) return known.url;
-      const url = yield* git
-        .readConfigValue(workspaceRoot, "remote.origin.url")
-        .pipe(Effect.orElseSucceed(() => null));
-      originByCheckout.set(workspaceRoot, { at: now, url });
-      return url;
+      // A failed read answers null for this call only: caching it would send a fork's forge
+      // calls to the identity's `upstream` for the whole TTL.
+      return yield* git.readConfigValue(workspaceRoot, "remote.origin.url").pipe(
+        Effect.tap((url) =>
+          Effect.sync(() => originByCheckout.set(workspaceRoot, { at: now, url })),
+        ),
+        Effect.orElseSucceed(() => null),
+      );
     });
 
     const repository = (projectId: ProjectId, operation = "repository") =>

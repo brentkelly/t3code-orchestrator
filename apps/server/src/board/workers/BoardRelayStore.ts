@@ -69,6 +69,8 @@ const decodeOutcome = Schema.decodeUnknownEffect(OutcomeJson);
     happens while the worker still waits on the call, which it gives up on
     within a minute. */
 const RELAY_CALL_RETENTION_MS = 24 * 60 * 60 * 1000;
+/** Comfortably above the busy-thread count a capacity reading asks about. */
+const RELAYED_CENTRAL_MEMO_LIMIT = 1024;
 
 export const BoardRelayStoreLive = Layer.effect(
   BoardRelayStore,
@@ -118,7 +120,13 @@ export const BoardRelayStoreLive = Layer.effect(
             Effect.map((rows) => (rows[0]?.central ?? null) as EnvironmentId | null),
             Effect.tap((central) =>
               Effect.sync(() => {
-                if (writes === seen) centralByThread.set(threadId, central);
+                if (writes !== seen) return;
+                // Most answers are null (threads never relayed); drop the oldest past the cap.
+                if (centralByThread.size >= RELAYED_CENTRAL_MEMO_LIMIT) {
+                  const oldest = centralByThread.keys().next();
+                  if (oldest.done !== true) centralByThread.delete(oldest.value);
+                }
+                centralByThread.set(threadId, central);
               }),
             ),
             failed("relayedThreadCentral"),
