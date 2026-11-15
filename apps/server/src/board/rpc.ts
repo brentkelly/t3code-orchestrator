@@ -132,7 +132,11 @@ export const boardRpcHandlers = Effect.fn("boardRpc.handlers")(function* (
   // Built once per connection, so the actor-name caches live as long as it does.
   const workspaces = yield* BoardWorkspaces;
   const threads = yield* ThreadGateway;
-  const stampActor = boardActorStamp({ threads, boardQueries, workspaces });
+  const stampActor = boardActorStamp({
+    threads,
+    readModel: boardEngine.getReadModel,
+    workspaces,
+  });
   const projectActorName = boardProjectActorName({ threads, workspaces });
   // The subscription's services, provided here so the handler's stream needs
   // only the RPC scope.
@@ -268,6 +272,13 @@ function makeBoardRpcHandlers(
             cause,
           }),
       ),
+    );
+
+  /** A card off the in-memory board, archived included; null when it does not exist. */
+  const readCard = (cardId: BoardCardId) =>
+    Effect.map(
+      boardEngine.getReadModel,
+      (model) => model.board?.cards.find((card) => card.id === cardId) ?? null,
     );
 
   /** The RPC promises `BoardCardAttachmentError` and nothing else: a storage
@@ -546,17 +557,8 @@ function makeBoardRpcHandlers(
         Effect.gen(function* () {
           const config = yield* ServerConfig.ServerConfig;
           const crypto = yield* SecureRandom.SecureRandom;
-          const detail = yield* readDetail(input.cardId).pipe(
-            Effect.mapError(
-              (cause) =>
-                new BoardCardAttachmentError({
-                  code: "internal",
-                  message: cause.message,
-                  cause,
-                }),
-            ),
-          );
-          if (detail === null) {
+          const card = yield* readCard(input.cardId);
+          if (card === null) {
             return yield* new BoardCardAttachmentError({
               code: "rejected",
               message: `Card ${input.cardId} was not found.`,
@@ -566,7 +568,7 @@ function makeBoardRpcHandlers(
           const attachment = yield* claimBoardCardAttachment({
             stateDir: config.stateDir,
             attachmentsDir: config.attachmentsDir,
-            card: detail.card,
+            card,
             pendingAttachmentId: input.pendingAttachmentId,
             attachmentId: BoardCardAttachmentId.make(yield* crypto.uuidV4()),
             name: input.name,
@@ -632,20 +634,11 @@ function makeBoardRpcHandlers(
         Effect.gen(function* () {
           const config = yield* ServerConfig.ServerConfig;
           const crypto = yield* SecureRandom.SecureRandom;
-          const detail = yield* readDetail(input.cardId).pipe(
-            Effect.mapError(
-              (cause) =>
-                new BoardCardAttachmentError({
-                  code: "internal",
-                  message: cause.message,
-                  cause,
-                }),
-            ),
-          );
-          const attachment = detail?.card.attachments.find(
+          const card = yield* readCard(input.cardId);
+          const attachment = card?.attachments.find(
             (candidate) => candidate.id === input.attachmentId,
           );
-          if (detail === null || attachment === undefined) {
+          if (attachment === undefined) {
             return yield* new BoardCardAttachmentError({
               code: "rejected",
               message: `Attachment ${input.attachmentId} is not on card ${input.cardId}.`,
@@ -776,26 +769,18 @@ function makeBoardRpcHandlers(
  */
 export function boardActorStamp(deps: {
   readonly threads: Pick<ThreadGatewayShape, "project">;
-  readonly boardQueries: BoardQueriesShape;
+  readonly readModel: BoardEngineShape["getReadModel"];
   readonly workspaces: Pick<BoardWorkspacesShape, "localProject" | "forCard">;
 }): (command: BoardCommand) => Effect.Effect<void> {
-  const projectByCard = new Map<string, ProjectId>();
   const projectName = boardProjectActorName(deps);
 
+  // The card's project off the in-memory board: before the command is decided, so a
+  // `board.card.set-project` still reads as the project the human acted in.
   const resolveName = Effect.fn("board-activity-actor-name")(function* (cardId: BoardCardId) {
-    let projectId = projectByCard.get(String(cardId));
-    if (projectId === undefined) {
-      const detail = yield* deps.boardQueries
-        .boardCardDetail(cardId)
-        .pipe(Effect.catchCause(() => Effect.succeed(null)));
-      if (detail === null) return BOARD_HUMAN_ACTOR_FALLBACK_NAME;
-      // Cacheable until the card MOVES project, which the stamp
-      // below invalidates — it is the same call path, so the eviction cannot
-      // be missed.
-      projectId = detail.card.projectId;
-      projectByCard.set(String(cardId), projectId);
-    }
-    return yield* projectName(projectId, cardId);
+    const model = yield* deps.readModel;
+    const card = model.board?.cards.find((candidate) => candidate.id === cardId);
+    if (card === undefined) return BOARD_HUMAN_ACTOR_FALLBACK_NAME;
+    return yield* projectName(card.projectId, cardId);
   });
 
   return (command) =>
@@ -803,10 +788,6 @@ export function boardActorStamp(deps: {
       const cardId = (command as { readonly cardId?: BoardCardId }).cardId;
       if (cardId === undefined) return;
       stampBoardActivityActor(command.commandId, boardHumanActor(yield* resolveName(cardId)));
-      // A project change invalidates the cached card->project mapping. Evicted AFTER the stamp:
-      // the command is not decided yet, so this row keeps the old project's identity and the
-      // next command resolves against the new one.
-      if (command.type === "board.card.set-project") projectByCard.delete(String(cardId));
     }).pipe(Effect.ignoreCause);
 }
 

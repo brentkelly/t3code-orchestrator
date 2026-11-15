@@ -4438,10 +4438,9 @@ const make = Effect.gen(function* () {
       );
       return;
     }
-    const detail = yield* boardQueries
-      .boardCardDetail(card.id)
-      .pipe(Effect.catchCause(() => Effect.succeed(null)));
-    const passes = detail?.ciPasses ?? [];
+    const passes = yield* boardQueries
+      .boardCardCiPasses(card.id)
+      .pipe(Effect.catchCause(() => Effect.succeed([])));
     const latestEntry = passes.reduce((highest, pass) => Math.max(highest, pass.entry), 0);
     // A human's fresh retry is a new entry, so the passes group by it.
     const entry =
@@ -4638,10 +4637,10 @@ const make = Effect.gen(function* () {
         rows: boardCiPassStepsFromSnapshot(known.steps),
       };
     }
-    const detail = yield* boardQueries
-      .boardCardDetail(cardId)
-      .pipe(Effect.catchCause(() => Effect.succeed(null)));
-    const pass = detail?.ciPasses.find((candidate) => candidate.runId === runId);
+    const passes = yield* boardQueries
+      .boardCardCiPasses(cardId)
+      .pipe(Effect.catchCause(() => Effect.succeed([])));
+    const pass = passes.find((candidate) => candidate.runId === runId);
     if (pass?.snapshot == null) return { steps: null, ordinal: 1, rows: [] };
     rememberCiSnapshot(cardId, runId, pass.snapshot, pass.ordinal);
     return { steps: pass.snapshot, ordinal: pass.ordinal, rows: pass.steps };
@@ -4805,10 +4804,10 @@ const make = Effect.gen(function* () {
     cardId: BoardCardId,
     runId: string,
   ) {
-    const detail = yield* boardQueries
-      .boardCardDetail(cardId)
-      .pipe(Effect.catchCause(() => Effect.succeed(null)));
-    const pass = detail?.ciPasses.find((candidate) => candidate.runId === runId);
+    const passes = yield* boardQueries
+      .boardCardCiPasses(cardId)
+      .pipe(Effect.catchCause(() => Effect.succeed([])));
+    const pass = passes.find((candidate) => candidate.runId === runId);
     if (pass === undefined) return null;
     const failures: BoardCiFailure[] = [];
     for (const [index, step] of pass.steps.entries()) {

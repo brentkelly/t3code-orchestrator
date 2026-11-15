@@ -4799,6 +4799,10 @@ export interface BoardQueriesShape {
     cardId: BoardCardId,
     board?: BoardState,
   ) => Effect.Effect<BoardCardDetail | null, ProjectionRepositoryError>;
+  /** A card's CI passes, oldest first: the detail's `ciPasses` alone, for the CI handlers. */
+  readonly boardCardCiPasses: (
+    cardId: BoardCardId,
+  ) => Effect.Effect<ReadonlyArray<BoardCiPass>, ProjectionRepositoryError>;
   /** A card's activity log for `board_get_card_context`. */
   readonly boardCardActivity: (
     cardId: BoardCardId,
@@ -4903,6 +4907,10 @@ export function makeBoardQueries(sql: SqlClient.SqlClient): BoardQueriesShape {
     boardArchivedCards: () => boardArchivedShellCards(queries),
     // Board-only detail reader for board.subscribeCard.
     boardCardDetail: makeBoardCardDetailLoader(queries),
+    boardCardCiPasses: (cardId) =>
+      queries
+        .listBoardCiPassRowsForCard(cardId)
+        .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.ciPasses:query"))),
     // Board-only readers for the MCP context / plan tools.
     boardCardActivity: makeBoardCardActivityLoader(queries),
     boardPlanBody: makeBoardPlanBodyLoader(queries),

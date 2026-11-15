@@ -819,14 +819,11 @@ export function withGovernor(
     const boardQueriesStub = {
       // The reactor's todo signal + boot sweep have something to call;
       // `boardThreadTodo` is fixture-driven, the rest are inert.
-      boardCardDetail: (cardId: BoardCardId) =>
-        Effect.succeed(
-          input.ciPassesUnreadable === true
-            ? null
-            : {
-                ciPasses: [...ciPassRows.values()].filter((pass) => pass.cardId === cardId),
-              },
-        ),
+      // No `boardCardDetail`: the supervisor reads CI passes alone, never the whole detail.
+      boardCardCiPasses: (cardId: BoardCardId) =>
+        input.ciPassesUnreadable === true
+          ? Effect.die("CI pass rows unreadable")
+          : Effect.succeed([...ciPassRows.values()].filter((pass) => pass.cardId === cardId)),
       boardCardActivity: () => Effect.succeed([]),
       boardCardBrief: () => Effect.succeed(null),
       boardPlanBody: () => Effect.succeed(null),
