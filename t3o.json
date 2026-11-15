@@ -1,6 +1,11 @@
 {
   "version": 2,
   "resources": {
+    "baseline": {
+      "cpuCores": 1,
+      "ramGiB": 4,
+      "diskGB": 5
+    },
     "readiness": {
       "path": "scripts/t3o-ready.sh",
       "timeoutSeconds": 120
