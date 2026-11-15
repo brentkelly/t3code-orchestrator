@@ -281,6 +281,8 @@ export interface ThreadSpawnInput {
     readonly cardId: string;
     readonly files: ReadonlyArray<{ readonly name: string; readonly path: string }>;
   };
+  /** A human's Start now: the worker's agent cap doesn't hold the spawn. */
+  readonly force?: boolean;
 }
 
 export interface ThreadSendInput {

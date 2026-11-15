@@ -22,6 +22,7 @@ import {
   buildingCard,
   cardMoved,
   type HarnessEvent,
+  forceStartRequested,
   codexStep,
   makeBoardCard,
   movedToBuilding,
@@ -605,4 +606,29 @@ it.effect(
           }),
       );
     }),
+);
+
+it.effect("Start now runs a step past the worker's agent cap", () =>
+  Effect.flatMap(makeFakeCapacity(roomForCards(4)), (capacity) => {
+    capacity.agentCap = "This worker runs at most 1 agents at once.";
+    return withGovernor(
+      {
+        board: { cards: [sprintCard()], nextCardNumberByProject: {} },
+        settings: settingsWith({
+          building: [codexStep],
+          planning: codexStep,
+          globalMaxConcurrent: 3,
+        }),
+        capacity,
+      },
+      ({ pumpDomain, board }) =>
+        Effect.gen(function* () {
+          yield* pumpDomain(movedToPlanning(1));
+          const held = boardCardStepState(yield* board, cardId);
+          assert.strictEqual(held?.queuedBy, "agent-cap");
+          yield* pumpDomain(forceStartRequested(held!, 2));
+          assert.strictEqual(boardCardStepState(yield* board, cardId)?.status, "running");
+        }),
+    );
+  }),
 );

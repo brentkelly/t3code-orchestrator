@@ -261,6 +261,7 @@ export const makeRemoteThreadGateway = (
           // the brief's files from where they were staged instead.
           attachments: [],
           centralEnvironmentId: deps.centralEnvironmentId,
+          ...(input.force === true ? { force: true } : {}),
         })
         .pipe(Effect.mapError(fromWireCommandError("spawn", input.threadId)));
     }),

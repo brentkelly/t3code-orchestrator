@@ -203,10 +203,12 @@ export interface BoardWorkerCapacityShape {
   /**
    * The cap check and the start in one: unless refused, counts the thread as running until it
    * shows running (or a grace passes), so boards starting turns at once can't pass the cap.
+   * `force` (a human's Start now) is never refused, but still counts.
    */
   readonly reserveAgent: (
     threadId: string,
     providerInstanceId: string | null,
+    force?: boolean,
   ) => Effect.Effect<string | null>;
   /** A reserved start that never happened. */
   readonly releaseAgent: (threadId: string) => Effect.Effect<void>;
@@ -840,11 +842,15 @@ export const makeBoardWorkerCapacity = Effect.fn("makeBoardWorkerCapacity")(func
     }
     return null;
   });
-  const reserveAgent: BoardWorkerCapacityShape["reserveAgent"] = (threadId, providerInstanceId) =>
+  const reserveAgent: BoardWorkerCapacityShape["reserveAgent"] = (
+    threadId,
+    providerInstanceId,
+    force = false,
+  ) =>
     agentLock.withPermits(1)(
       Effect.gen(function* () {
         startingAgents.delete(threadId);
-        const refusal = yield* agentCapRefusal(providerInstanceId);
+        const refusal = force ? null : yield* agentCapRefusal(providerInstanceId);
         if (refusal === null) {
           startingAgents.set(threadId, { providerInstanceId, at: yield* Clock.currentTimeMillis });
         }

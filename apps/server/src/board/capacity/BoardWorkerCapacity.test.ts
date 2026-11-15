@@ -169,6 +169,12 @@ it.effect("an admitted start counts against the cap until its thread shows runni
     assert.isNull(yield* service.reserveAgent("y", "claude"));
     yield* service.releaseAgent("y");
     assert.isNull(yield* service.agentCapRefusal("claude"));
+    // A human's Start now passes a full cap, and still counts against it.
+    fakes.threads.push(thread({ threadId: "b", boardId: "board-b" }));
+    assert.isNotNull(yield* service.reserveAgent("z", "claude"));
+    assert.isNull(yield* service.reserveAgent("z", "claude", true));
+    fakes.threads = [thread({ threadId: "a", boardId: "board-a" })];
+    assert.isNotNull(yield* service.agentCapRefusal("claude"));
   }).pipe(Effect.provide(TestClock.layer()), (effect) => withMachine(makeFakes())(effect)),
 );
 

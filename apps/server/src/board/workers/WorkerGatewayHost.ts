@@ -379,11 +379,12 @@ export const makeWorkerGatewayHost = Effect.gen(function* () {
     operation: string,
     threadId: string,
     providerInstanceId: string | null,
+    force = false,
   ) =>
     Option.match(capacity, {
       onNone: () => Effect.void,
       onSome: (service) =>
-        service.reserveAgent(threadId, providerInstanceId).pipe(
+        service.reserveAgent(threadId, providerInstanceId, force).pipe(
           Effect.flatMap((refusal) =>
             refusal === null
               ? Effect.void
@@ -504,7 +505,7 @@ export const makeWorkerGatewayHost = Effect.gen(function* () {
 
   return {
     spawn: Effect.fn("WorkerGatewayHost.spawn")(function* (
-      { centralEnvironmentId, ...input },
+      { centralEnvironmentId, force, ...input },
       caller,
     ) {
       if (caller.boardId === null) return yield* noBoard("spawn");
@@ -519,7 +520,12 @@ export const makeWorkerGatewayHost = Effect.gen(function* () {
       yield* relay
         .claim(centralEnvironmentId, caller.sessionId)
         .pipe(Effect.mapError(refused("spawn", input.threadId)));
-      yield* refuseOverAgentCap("spawn", input.threadId, input.modelSelection.instanceId);
+      yield* refuseOverAgentCap(
+        "spawn",
+        input.threadId,
+        input.modelSelection.instanceId,
+        force === true,
+      );
       // Anything that stops the spawn hands its agent slot back.
       yield* Effect.gen(function* () {
         // Recorded first: the agent's first tool call can arrive before the

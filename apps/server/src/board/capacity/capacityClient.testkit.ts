@@ -210,7 +210,8 @@ export const makeFakeCapacity = Effect.fn("makeFakeCapacity")(function* (
         }),
       all: Effect.sync(() => new Map()),
       changes: Stream.fromPubSub(pubsub),
-      localAgentCapRefusal: () => Effect.sync(() => fake.agentCap),
+      localAgentCapRefusal: (_threadId, _providerInstanceId, force) =>
+        Effect.sync(() => (force === true ? null : fake.agentCap)),
       connectionChanged: () => Effect.void,
       provisionLocally: (_claim, _branch, run) => run,
       runSetup: () => Stream.empty,

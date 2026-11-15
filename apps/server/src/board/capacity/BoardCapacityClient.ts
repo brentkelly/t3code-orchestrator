@@ -88,6 +88,7 @@ export interface BoardCapacityClientShape {
   readonly localAgentCapRefusal: (
     threadId: string,
     providerInstanceId: string | null,
+    force?: boolean,
   ) => Effect.Effect<string | null>;
   /** Section 5, on a card's worker: its setup, and a project's readiness. A worker out of
       reach fails the stream or answers null. */
@@ -338,8 +339,8 @@ const makeBoardCapacityClient = Effect.gen(function* () {
     latest: (workerId) => Effect.sync(() => snapshots.get(workerId) ?? null),
     all: Effect.sync(() => new Map(snapshots)),
     changes: Stream.fromPubSub(pubsub),
-    localAgentCapRefusal: (threadId, providerInstanceId) =>
-      localCapacity.reserveAgent(threadId, providerInstanceId),
+    localAgentCapRefusal: (threadId, providerInstanceId, force) =>
+      localCapacity.reserveAgent(threadId, providerInstanceId, force),
     provisionLocally: (claim, branch, run) =>
       provisionUnderClaim(localCapacity, localBoardId, "provisionWorktree", claim, branch, run),
     runSetup: (workerId, input) =>

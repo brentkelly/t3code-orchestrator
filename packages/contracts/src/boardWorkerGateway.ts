@@ -243,6 +243,9 @@ export const BoardGatewaySpawnInput = Schema.Struct({
   /** The central server spawning it. The worker records the thread as
       relayed to that board, so its board tools forward there. */
   centralEnvironmentId: EnvironmentId,
+  /** A human's Start now: the worker's agent cap doesn't hold it. Optional, so either side
+      may be older. */
+  force: Schema.optional(Schema.Boolean),
 });
 export type BoardGatewaySpawnInput = typeof BoardGatewaySpawnInput.Type;
 

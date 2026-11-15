@@ -2563,6 +2563,8 @@ const make = Effect.gen(function* () {
       readonly runtimeMode: BoardCardStepState["runtimeMode"];
       /** Frozen run-row model options (reasoning/effort). */
       readonly modelOptions: BoardCardStepState["modelOptions"];
+      /** A human's Start now: the worker's agent cap doesn't hold the spawn either. */
+      readonly forceStart?: boolean;
     };
     /** Where the thread runs: the card's worktree for a `build`-mode step, the
         project workspace root for a `plan`-mode step (no worktree). */
@@ -2613,6 +2615,7 @@ const make = Effect.gen(function* () {
       const refusal = yield* capacityClient.value.localAgentCapRefusal(
         threadId,
         step.providerInstanceId,
+        step.forceStart === true,
       );
       if (refusal !== null) return "agent-cap" as const;
     }
@@ -2643,6 +2646,7 @@ const make = Effect.gen(function* () {
         ...(remoteWorker === null
           ? {}
           : { workerId: remoteWorker, stageAttachments: stagedBriefFiles(card) }),
+        ...(step.forceStart === true ? { force: true } : {}),
       })
       .pipe(
         Effect.as("spawned" as const),
@@ -3226,6 +3230,7 @@ const make = Effect.gen(function* () {
           mode: state.mode,
           runtimeMode: state.runtimeMode,
           modelOptions: state.modelOptions,
+          forceStart: state.forceStart,
         },
         worktreePath: input.worktreePath,
         branch: card.worktree?.branch ?? null,
@@ -3333,6 +3338,7 @@ const make = Effect.gen(function* () {
         mode: state.mode,
         runtimeMode: state.runtimeMode,
         modelOptions: state.modelOptions,
+        forceStart: state.forceStart,
       },
       worktreePath: cwd,
       branch: null,
