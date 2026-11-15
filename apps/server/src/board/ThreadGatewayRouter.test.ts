@@ -117,6 +117,8 @@ describe("the thread gateway router's batch read", () => {
         const sweep = yield* router.openThreadIds([LOCAL_THREAD, WORKER_THREAD, REMOVED_THREAD]);
         assert.deepStrictEqual([...sweep.open], [WORKER_THREAD]);
         assert.deepStrictEqual([...sweep.unanswered], [REMOVED_THREAD]);
+        // Settled is finished, but a new turn reopens it: never reported as deleted.
+        assert.strictEqual(sweep.deleted.size, 0);
       }),
     ),
   );

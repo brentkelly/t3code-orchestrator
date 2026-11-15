@@ -1037,6 +1037,11 @@ const make = Effect.gen(function* () {
     return shell?.activeTurnRef === runId;
   });
 
+  /** Released threads the sweep found deleted, so later passes stop asking (over the wire, for a
+      worker's). Only deleted: a thread has no undelete, while unarchive and idle compaction reopen
+      a thread without a signal. Any signal for an id still evicts it. Empty at boot. */
+  const knownDeletedThreads = new Set<string>();
+
   /**
    * The board's only settle. It re-derives the released set each pass, since an agent completes
    * its step mid-turn, when a settle is refused. One batch read of the still-open threads, then
@@ -1044,9 +1049,19 @@ const make = Effect.gen(function* () {
    */
   const releaseFinishedThreads = Effect.gen(function* () {
     const board = yield* readBoard;
-    const released = [...boardReleasedThreadIds(board, abandonedThreads)];
+    const released: Array<ThreadId> = [];
+    for (const threadId of boardReleasedThreadIds(board, abandonedThreads)) {
+      if (!knownDeletedThreads.has(String(threadId))) {
+        released.push(threadId);
+        continue;
+      }
+      steeredThreads.delete(String(threadId));
+      deferredSteers.delete(String(threadId));
+      abandonedThreads.delete(String(threadId));
+    }
     if (released.length === 0) return;
-    const { open, unanswered } = yield* threads.openThreadIds(released);
+    const { open, unanswered, deleted } = yield* threads.openThreadIds(released);
+    for (const threadId of deleted) knownDeletedThreads.add(String(threadId));
     for (const threadId of released) {
       steeredThreads.delete(String(threadId));
       deferredSteers.delete(String(threadId));
@@ -12533,6 +12548,7 @@ const make = Effect.gen(function* () {
     // turn interrupt — and the todo signals feed the todo cache, not this.
     yield* forkParked(
       Stream.runForEach(threads.observe, (signal) => {
+        knownDeletedThreads.delete(String(signal.threadId));
         if (signal.type === "session-started" && !orphanedThreads.has(String(signal.threadId))) {
           return Effect.void;
         }

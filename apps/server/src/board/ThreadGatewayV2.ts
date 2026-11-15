@@ -742,7 +742,7 @@ const makeThreadGatewayV2 = Effect.gen(function* () {
    * release sweep asks after every thread the board ever released. Ids go as one JSON array, past
    * SQLite's bound-parameter cap. A deleted thread reads as deleted only, as the shell read did.
    */
-  const threadRecordRows = (threadIds: ReadonlyArray<ThreadId>, openOnly: boolean) =>
+  const threadRecordRows = (threadIds: ReadonlyArray<ThreadId>, openOrDeleted: boolean) =>
     threadIds.length === 0
       ? Effect.succeed([])
       : sql<{
@@ -761,11 +761,11 @@ const makeThreadGatewayV2 = Effect.gen(function* () {
               AS "settlementDecided"
           FROM orchestration_v2_projection_threads t
           WHERE t.thread_id IN (SELECT value FROM json_each(${JSON.stringify(threadIds)}))${
-            openOnly
+            openOrDeleted
               ? sql`
-            AND t.deleted_at IS NULL
-            AND json_extract(t.payload_json, '$.archivedAt') IS NULL
-            AND json_extract(t.payload_json, '$.settledOverride') IS NULL`
+            AND (t.deleted_at IS NOT NULL
+              OR (json_extract(t.payload_json, '$.archivedAt') IS NULL
+                AND json_extract(t.payload_json, '$.settledOverride') IS NULL))`
               : sql``
           }
         `.pipe(NodeSqliteClient.readOnly);
@@ -1094,10 +1094,10 @@ const makeThreadGatewayV2 = Effect.gen(function* () {
     openThreadIds: Effect.fn("ThreadGatewayV2.openThreadIds")(
       function* (threadIds) {
         const rows = yield* threadRecordRows(threadIds, true);
-        return {
-          open: new Set(rows.map((row) => ThreadId.make(row.threadId))),
-          unanswered: new Set<ThreadId>(),
-        };
+        const open = new Set<ThreadId>();
+        const deleted = new Set<ThreadId>();
+        for (const row of rows) (row.deleted === 1 ? deleted : open).add(ThreadId.make(row.threadId));
+        return { open, unanswered: new Set<ThreadId>(), deleted };
       },
       Effect.mapError(readError("openThreadIds")),
     ),

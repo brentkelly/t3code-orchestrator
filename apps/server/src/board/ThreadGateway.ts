@@ -173,6 +173,8 @@ export interface BoardOpenThreads {
   readonly open: ReadonlySet<ThreadId>;
   /** On a worker that could not be asked; nothing is known about them. */
   readonly unanswered: ReadonlySet<ThreadId>;
+  /** Deleted: finished for good, since a thread has no undelete. */
+  readonly deleted: ReadonlySet<ThreadId>;
 }
 
 /** A thread whose cwd is a given worktree — what retiring the worktree stops. */
