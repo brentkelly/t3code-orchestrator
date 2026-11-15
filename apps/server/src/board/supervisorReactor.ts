@@ -179,6 +179,7 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as FiberSet from "effect/FiberSet";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -652,6 +653,9 @@ type SupervisorInput =
       readonly runId: string;
       readonly probe: ForgeProbe;
     };
+
+/** How long one forge-checks read may take before it counts as a failed read. */
+const FORGE_PROBE_TIMEOUT = Duration.minutes(2);
 
 /** One forge read of a pull request's merge state, or why it could not be read. */
 interface ForgeProbe {
@@ -5274,6 +5278,15 @@ const make = Effect.gen(function* () {
       forgeProbesInFlight.add(done);
       const runId = entry.runId;
       yield* probeMergeState(card).pipe(
+        // A forge that never answers counts as a failed read, so the step's own limits still apply.
+        Effect.timeoutOrElse({
+          duration: FORGE_PROBE_TIMEOUT,
+          orElse: () =>
+            Effect.succeed<ForgeProbe>({
+              state: null,
+              failure: "the forge did not answer within 2 minutes",
+            }),
+        }),
         Effect.flatMap((probe) => worker.enqueue({ source: "forge-probe", cardId, runId, probe })),
         Effect.onExit((exit) =>
           Effect.sync(() => {
@@ -5287,7 +5300,7 @@ const make = Effect.gen(function* () {
           }),
         ),
         Effect.ignoreCause,
-        Effect.forkDetach,
+        FiberSet.run(forgeProbeFibers, { startImmediately: false }),
       );
     },
     Effect.catchCause((cause) =>
@@ -12430,6 +12443,8 @@ const make = Effect.gen(function* () {
     );
 
   const worker = yield* makeDrainableWorker(processInputSafely);
+  // Made after the worker, so shutdown interrupts a forge read still out before the worker closes.
+  const forgeProbeFibers = yield* FiberSet.make<void>();
   // Coalesced: one capacity pass waits in the queue at most, whatever the snapshot rate.
   const enqueueCapacityPass = Effect.suspend(() => {
     if (capacityPassQueued) return Effect.void;
