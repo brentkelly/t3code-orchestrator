@@ -492,17 +492,6 @@ export const makeBoardWorkerCapacity = Effect.fn("makeBoardWorkerCapacity")(func
     earlyStartFraction: settings.holdEarlyStartFraction,
     maxMinutes: settings.holdMaxMinutes,
   });
-  const withinCapacity = Effect.gen(function* () {
-    const now = yield* Clock.currentTimeMillis;
-    const headroom = computeHeadroom({
-      state,
-      declared: yield* declared,
-      activity: activityOf(yield* ports.threads),
-      machine: yield* machineReading,
-      now,
-    });
-    return !headroom.over.cpuRam;
-  });
 
   const decide = Effect.fn("BoardWorkerCapacity.decide")(function* (
     boardId: string,
@@ -514,7 +503,11 @@ export const makeBoardWorkerCapacity = Effect.fn("makeBoardWorkerCapacity")(func
     const threads = yield* ports.threads;
     const notReady = yield* ports.notReady(boardId, input.repositoryKey, input.projectId);
     const holdSettings = holdSettingsOf(settings);
-    const within = yield* withinCapacity;
+    // One reading of each for the hold tick and the decision: the claim runs under the lock.
+    const total = yield* declared;
+    const machine = yield* machineReading;
+    const activity = activityOf(threads);
+    const within = !computeHeadroom({ state, declared: total, activity, machine, now }).over.cpuRam;
     holds = tickHolds(holds, { now, withinCapacity: within, settings: holdSettings });
     const record = state.records.some(
       (candidate) => candidate.boardId === boardId && candidate.cardId === input.cardId,
@@ -552,9 +545,9 @@ export const makeBoardWorkerCapacity = Effect.fn("makeBoardWorkerCapacity")(func
         : holds.placement?.boardId === boardId && holds.placement.cardId === input.cardId);
     const decision = decideClaim(state, input, {
       boardId,
-      declared: yield* declared,
-      activity: activityOf(threads),
-      machine: yield* machineReading,
+      declared: total,
+      activity,
+      machine,
       now,
       quotaExhausted: quotaFor(providers, settings, now),
       notReady: () => notReady,
