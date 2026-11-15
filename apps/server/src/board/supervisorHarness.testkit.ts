@@ -1289,6 +1289,8 @@ export function withGovernor(
           // changed mid-review.
           event.type === "board.plan-review-started" ||
           event.type === "board.plan-review-rounds-changed" ||
+          // And turned off: the card edit's other event, which clears the review off the step.
+          event.type === "board.plan-review-stopped" ||
           // T3o: a split approved after review, a client command (T3O-105).
           event.type === "board.split-approval-changed" ||
           // T3o: a delete leaves the board, so the card's room goes back to its worker

@@ -301,6 +301,9 @@ import {
 import { keepsPlanningThreadOnExit, keptPlanningThreadId } from "./planningThreadKeep.ts";
 import { boardReleasedThreadIds } from "./threadRelease.ts";
 
+const BOARD_HUMAN_IN_LOOP_SWITCH_INSTRUCTION =
+  "Switching to human-in-the-loop: ask me anything you need directly, and it is fine to end a turn waiting on my answer. Call board_complete_step when the work is done.";
+
 const decodeReviewPayload = Schema.decodeUnknownOption(BoardReviewPayload);
 
 /** What a Merge click did, for the RPC to turn into a toast. */
@@ -2807,27 +2810,55 @@ const make = Effect.gen(function* () {
   });
 
   /** A human turned a running plan review off (plan review): tell the
-      planning thread to wrap up. A paused step is not told, for the reason
-      the human-in-the-loop retune gives: the turn would un-pause it. */
+      planning thread to wrap up, and hand an unattended review's step back the
+      stance it would hold without the review. A paused step is not told, for the
+      reason the human-in-the-loop retune gives: the turn would un-pause it. */
   const handlePlanReviewStopped = Effect.fn("board-supervisor-handlePlanReviewStopped")(function* (
     event: Extract<BoardEvent, { type: "board.plan-review-stopped" }>,
   ) {
-    const state = boardCardStepState(yield* readBoard, event.payload.cardId);
+    const board = yield* readBoard;
+    const card = board.cards.find((candidate) => candidate.id === event.payload.cardId);
+    const state = boardCardStepState(board, event.payload.cardId);
     if (
+      card === undefined ||
       state === null ||
       state.stepId !== event.payload.stepId ||
-      state.threadId === null ||
-      state.status === "paused" ||
       isBoardTerminalStepStatus(state.status)
     ) {
       return;
     }
-    yield* sendTurn({
-      threadId: state.threadId,
-      text: BOARD_PLAN_REVIEW_STOP_INSTRUCTION,
-      runtimeMode: state.runtimeMode,
-      delivery: "steer",
-    });
+    // The card update in the same decision sees the review already cleared, so its stance arm
+    // cannot tell an unattended review ended; the retune is this handler's.
+    const settings = yield* boardSettings;
+    const exec = resolveBoardStageExecution(
+      settings,
+      card.stage,
+      boardProjectStageConfig(board, card.projectId),
+    );
+    const desired =
+      stanceOverride(board, settings, card, state) ??
+      resolveHumanInLoop(board, settings, card, exec);
+    const handBack = desired && !state.humanInLoop;
+    if (state.threadId !== null && state.status !== "paused") {
+      yield* sendTurn({
+        threadId: state.threadId,
+        text: handBack
+          ? `${BOARD_PLAN_REVIEW_STOP_INSTRUCTION} ${BOARD_HUMAN_IN_LOOP_SWITCH_INSTRUCTION}`
+          : BOARD_PLAN_REVIEW_STOP_INSTRUCTION,
+        runtimeMode: state.runtimeMode,
+        delivery: "steer",
+      });
+    }
+    if (handBack) {
+      yield* dispatch({
+        type: "board.card.retune-step",
+        commandId: yield* commandId("review-stopped-stance"),
+        cardId: card.id,
+        stepId: state.stepId,
+        humanInLoop: true,
+        createdAt: yield* nowIso,
+      });
+    }
   });
 
   /** A human turned plan review on after the plan was posted:
@@ -10203,7 +10234,7 @@ const make = Effect.gen(function* () {
       );
     if (state.threadId !== null && state.status !== "paused" && !reviewDriven) {
       const text = desired
-        ? `Switching to human-in-the-loop: ask me anything you need directly, and it is fine to end a turn waiting on my answer. Call board_complete_step when the work is done.`
+        ? BOARD_HUMAN_IN_LOOP_SWITCH_INSTRUCTION
         : isReviewDecidingStep(state)
           ? `Switching to unattended: do not stop to ask permission: make every reasonable decision yourself and proceed. Call board_complete_step when the step is finished. ${boardBlockedInstruction(state.stepId)}`
           : `Switching to unattended: do not stop to ask permission: make every reasonable decision yourself and proceed. Call board_complete_step when the step is finished; if you are truly blocked, ${BOARD_ENVELOPE_QUESTION_MECHANISM}, and never end a turn with an unanswered question in prose.`;

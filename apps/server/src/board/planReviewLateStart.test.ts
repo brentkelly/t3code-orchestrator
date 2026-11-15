@@ -521,6 +521,53 @@ it.effect.each([false, true])(
   },
 );
 
+it.effect("turning an unattended review off hands the step back to the human", () =>
+  withGovernor(
+    {
+      board: { cards: [unattendedCard("off")], plans: [plan("off")], nextCardNumberByProject: {} },
+      settings,
+    },
+    (h) =>
+      Effect.gen(function* () {
+        const id = BoardCardId.make("off");
+        yield* h.pumpDomain(cardMoved(unattendedCard("off"), "sprint", "planning", 1));
+        yield* h.pumpDomain(reviewStarted(boardCardStepState(yield* h.board, id)!, 2, false));
+        const running = boardCardStepState(yield* h.board, id)!;
+        assert.isFalse(running.humanInLoop);
+        yield* setShell(h, running.threadId!, fakeThreadState(running.threadId!));
+        const before = sends(yield* h.commands).length;
+        // The decider emits both in one decision; the stopped state has already cleared the
+        // review's start and its delivered policy when the card update is handled.
+        const {
+          planReviewStartedAt: _startedAt,
+          planReviewRounds: _rounds,
+          planReviewPolicySent: _policy,
+          ...cleared
+        } = running;
+        yield* h.pumpDomain({
+          type: "board.plan-review-stopped",
+          sequence: 3,
+          payload: {
+            cardId: id,
+            stepId: running.stepId,
+            threadId: running.threadId,
+            state: cleared,
+          },
+        } as unknown as HarnessEvent);
+        const live = (yield* h.board).cards.find((candidate) => candidate.id === id)!;
+        yield* h.pumpDomain(
+          cardUpdated({ ...live, planReview: { enabled: false, rounds: 2, unattended: true } }, 4),
+        );
+
+        const after = sends(yield* h.commands);
+        assert.isTrue(boardCardStepState(yield* h.board, id)?.humanInLoop);
+        assert.strictEqual(after.length, before + 1);
+        assert.include(after.at(-1)?.text ?? "", BOARD_PLAN_REVIEW_STOP_INSTRUCTION);
+        assert.include(after.at(-1)?.text ?? "", "human-in-the-loop");
+      }),
+  ),
+);
+
 it.effect("Unattended turned on while parked on a question answers it once and resumes", () =>
   withGovernor(fixture("handover"), (h) =>
     Effect.gen(function* () {

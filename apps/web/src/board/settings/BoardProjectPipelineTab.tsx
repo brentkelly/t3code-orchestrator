@@ -57,30 +57,26 @@ const report = (title: string) => (result: { readonly _tag: string }) => {
 };
 
 /** The settings a project may override, per stage kind. */
+type OverrideControl =
+  | { readonly kind: "boolean"; readonly label: string }
+  | { readonly kind: "number"; readonly label: string; readonly min: number; readonly max: number }
+  | { readonly kind: "text"; readonly label: string };
+
 type OverrideField =
-  | { readonly key: "autoExecute" | "autoMerge"; readonly kind: "boolean"; readonly label: string }
-  | {
-      readonly key: "rounds" | "maxFixAttempts";
-      readonly kind: "number";
-      readonly label: string;
-      readonly min: number;
-      readonly max: number;
-    }
-  | { readonly key: "prompt"; readonly kind: "text"; readonly label: string };
+  | ({ readonly key: "autoExecute" | "autoMerge" } & Extract<OverrideControl, { kind: "boolean" }>)
+  | ({ readonly key: "rounds" | "maxFixAttempts" } & Extract<OverrideControl, { kind: "number" }>)
+  | ({ readonly key: "prompt" } & Extract<OverrideControl, { kind: "text" }>);
 
 const PROMPT: OverrideField = { key: "prompt", kind: "text", label: "Prompt" };
 
 /** The planning stage's new-card plan review, each overridable on its own. */
 const PLAN_REVIEW_FIELDS: ReadonlyArray<{
   readonly key: BoardPlanReviewOverrideKey;
-  readonly field: OverrideField;
+  readonly field: OverrideControl;
 }> = [
-  { key: "enabled", field: { key: "autoExecute", kind: "boolean", label: "Auto-review plans" } },
-  {
-    key: "rounds",
-    field: { key: "rounds", kind: "number", label: "Plan review rounds", min: 1, max: 20 },
-  },
-  { key: "unattended", field: { key: "autoExecute", kind: "boolean", label: "Run unattended" } },
+  { key: "enabled", field: { kind: "boolean", label: "Auto-review plans" } },
+  { key: "rounds", field: { kind: "number", label: "Plan review rounds", min: 1, max: 20 } },
+  { key: "unattended", field: { kind: "boolean", label: "Run unattended" } },
 ];
 const AUTO: OverrideField = { key: "autoExecute", kind: "boolean", label: "Auto execute" };
 
@@ -317,7 +313,7 @@ function StageRow(props: {
 }
 
 function OverrideRow(props: {
-  readonly field: OverrideField;
+  readonly field: OverrideControl;
   readonly value: unknown;
   readonly global: unknown;
   readonly loaded: boolean;
