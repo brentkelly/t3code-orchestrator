@@ -314,6 +314,65 @@ it.effect("a settled thread is not settled again by the next sweep", () =>
   ),
 );
 
+// A deleted thread never reopens, so the sweep stops asking about it (over the wire, for a
+// worker's thread) until a signal says otherwise. Any other finished state can reopen without a
+// signal (unarchive, idle compaction), so only deleted is remembered; unanswered never is.
+it.effect("the release sweep stops asking about a deleted thread until a signal names it", () => {
+  const asked: Array<ReadonlyArray<string>> = [];
+  const answers = new Map<string, "open" | "deleted" | "settled" | "unanswered">([
+    ["thread-open", "open"],
+    ["thread-deleted", "deleted"],
+    ["thread-settled", "settled"],
+    ["thread-unanswered", "unanswered"],
+  ]);
+  const idsIn = (state: string, threadIds: ReadonlyArray<ThreadId>) =>
+    new Set(threadIds.filter((threadId) => answers.get(String(threadId)) === state));
+  return withGovernor(
+    {
+      board: {
+        cards: [
+          {
+            ...makeBoardCard({ id: "card-1", stage: "merge", orderKey: "m" }),
+            threadLinks: [...answers.keys()].map((threadId) =>
+              link(threadId, String(BOARD_SEED_STAGE_IDS.building)),
+            ),
+          },
+        ],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+      // Mid-turn, so no sweep settles it and it stays open.
+      initialShells: shellsFor([["thread-open", aliveThreadShell("thread-open")]]),
+      gateway: (local) => ({
+        ...local,
+        openThreadIds: (threadIds) => {
+          asked.push(threadIds.map(String).toSorted());
+          return Effect.succeed({
+            open: idsIn("open", threadIds),
+            unanswered: idsIn("unanswered", threadIds),
+            deleted: idsIn("deleted", threadIds),
+          });
+        },
+      }),
+    },
+    ({ reactor, pumpRuntime }) =>
+      Effect.gen(function* () {
+        yield* reactor.drain;
+        yield* reactor.releaseThreads;
+        const all = [...answers.keys()].toSorted();
+        const withoutDeleted = all.filter((threadId) => threadId !== "thread-deleted");
+        assert.deepStrictEqual(asked[0], all, "the first sweep asks about every released thread");
+        assert.deepStrictEqual(asked.at(-1), withoutDeleted, "later sweeps skip the deleted one");
+
+        asked.length = 0;
+        yield* pumpRuntime(turnCompleted(ThreadId.make("thread-deleted")));
+        yield* reactor.releaseThreads;
+        assert.deepStrictEqual(asked[0], all, "a signal for it makes the sweep ask again");
+        assert.deepStrictEqual(asked.at(-1), withoutDeleted);
+      }),
+  );
+});
+
 // ── Graduation ──────────────────────────────────────────────────────────────
 it.effect("a forward stage move settles the thread the card is finished with", () =>
   withGovernor(

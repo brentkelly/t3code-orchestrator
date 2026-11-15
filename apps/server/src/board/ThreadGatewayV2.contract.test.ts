@@ -407,7 +407,9 @@ it.layer(makeBoardStackTestLayer("t3o-thread-gateway-contract-"))(
         });
         assert.notInclude(yield* threads.listBusyThreadIds(), threadId);
         assert.isTrue((yield* threads.threadRecords([threadId])).get(threadId)!.archived);
-        assert.strictEqual((yield* threads.openThreadIds([threadId])).open.size, 0);
+        // Archived is finished but not for good: unarchive reopens it.
+        const archivedSweep = yield* threads.openThreadIds([threadId]);
+        assert.strictEqual(archivedSweep.open.size + archivedSweep.deleted.size, 0);
 
         // The turn the spawn asked for reads as the BOARD's, never a human's.
         const requested = signalsOf(yield* loggedSince(before)).filter(
@@ -961,7 +963,9 @@ it.layer(makeBoardStackTestLayer("t3o-thread-gateway-contract-"))(
           archived: false,
           settlementDecided: false,
         });
-        assert.strictEqual((yield* threads.openThreadIds([threadId])).open.size, 0);
+        const sweep = yield* threads.openThreadIds([threadId]);
+        assert.strictEqual(sweep.open.size, 0);
+        assert.deepStrictEqual([...sweep.deleted], [threadId]);
 
         const after = yield* threads.todoLogHead;
         const logged = yield* Stream.runCollect(threads.readTodoLog(before, after));

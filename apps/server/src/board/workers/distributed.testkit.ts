@@ -86,6 +86,11 @@ export const makeInProcessWorker = (
     /** Runs before each call the worker's thread engine takes. */
     readonly onThreadCall?: FakeThreadGatewayOptions["onCall"];
     readonly subagentAwaitingApproval?: FakeThreadGatewayOptions["subagentAwaitingApproval"];
+    /** More checkouts on the worker, beside the board's own repository. */
+    readonly extraProjects?: ReadonlyArray<{
+      readonly projectId: ProjectId;
+      readonly canonicalKey: string;
+    }>;
   } = {},
 ) =>
   Effect.gen(function* () {
@@ -132,6 +137,12 @@ export const makeInProcessWorker = (
         workspaceRoot: WORKER_ROOT,
         repositoryIdentity: REPOSITORY,
       },
+      ...(options.extraProjects ?? []).map(({ projectId, canonicalKey }) => ({
+        projectId,
+        title: String(projectId),
+        workspaceRoot: `/home/worker/${projectId}`,
+        repositoryIdentity: { ...REPOSITORY, canonicalKey },
+      })),
     ];
     worker.providers = [WORKER_PROVIDER];
     yield* kit.secrets.store.set(workerSecretName(WORKER_ID), encodeWorkerToken("token-1"));

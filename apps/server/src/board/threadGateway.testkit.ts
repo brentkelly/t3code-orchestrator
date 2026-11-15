@@ -396,6 +396,9 @@ export const makeFakeThreadGateway = (options: FakeThreadGatewayOptions = {}) =>
               }),
             ),
             unanswered: new Set<ThreadId>(),
+            deleted: new Set(
+              threadIds.filter((threadId) => current.get(String(threadId))?.deleted === true),
+            ),
           })),
         ),
       threadsInWorktree: (worktreePath) =>
@@ -518,7 +521,8 @@ export const inertThreadGateway = (
   unlinkPullRequest: () => Effect.void,
   threadState: () => Effect.succeed(null),
   threadRecords: () => Effect.succeed(new Map()),
-  openThreadIds: () => Effect.succeed({ open: new Set(), unanswered: new Set() }),
+  openThreadIds: () =>
+    Effect.succeed({ open: new Set(), unanswered: new Set(), deleted: new Set() }),
   threadsInWorktree: () => Effect.succeed([]),
   latestAssistantMessage: () => Effect.succeed(null),
   lastSignalAt: () => Effect.succeed(null),

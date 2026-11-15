@@ -174,6 +174,7 @@ import {
 } from "@t3tools/contracts";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
@@ -1037,6 +1038,11 @@ const make = Effect.gen(function* () {
     return shell?.activeTurnRef === runId;
   });
 
+  /** Released threads the sweep found deleted, so later passes stop asking (over the wire, for a
+      worker's). Only deleted: a thread has no undelete, while unarchive and idle compaction reopen
+      a thread without a signal. Any signal for an id still evicts it. Empty at boot. */
+  const knownDeletedThreads = new Set<string>();
+
   /**
    * The board's only settle. It re-derives the released set each pass, since an agent completes
    * its step mid-turn, when a settle is refused. One batch read of the still-open threads, then
@@ -1044,9 +1050,25 @@ const make = Effect.gen(function* () {
    */
   const releaseFinishedThreads = Effect.gen(function* () {
     const board = yield* readBoard;
-    const released = [...boardReleasedThreadIds(board, abandonedThreads)];
+    const released: Array<ThreadId> = [];
+    const releasedNow = boardReleasedThreadIds(board, abandonedThreads);
+    // A thread the board no longer releases is never asked about, so forget it.
+    const stillReleased = new Set(releasedNow.map(String));
+    for (const threadId of knownDeletedThreads) {
+      if (!stillReleased.has(threadId)) knownDeletedThreads.delete(threadId);
+    }
+    for (const threadId of releasedNow) {
+      if (!knownDeletedThreads.has(String(threadId))) {
+        released.push(threadId);
+        continue;
+      }
+      steeredThreads.delete(String(threadId));
+      deferredSteers.delete(String(threadId));
+      abandonedThreads.delete(String(threadId));
+    }
     if (released.length === 0) return;
-    const { open, unanswered } = yield* threads.openThreadIds(released);
+    const { open, unanswered, deleted } = yield* threads.openThreadIds(released);
+    for (const threadId of deleted) knownDeletedThreads.add(String(threadId));
     for (const threadId of released) {
       steeredThreads.delete(String(threadId));
       deferredSteers.delete(String(threadId));
@@ -1498,7 +1520,8 @@ const make = Effect.gen(function* () {
         folderless.push(workspace);
         continue;
       }
-      const resolved = yield* resolveDefaultBranch(workspace);
+      const checkout = checkoutKey(candidate.workerId, card.projectId);
+      const resolved = yield* passDefaultBranch(checkout, workspace);
       if (resolved.unavailable) continue;
       const { defaultBranch } = resolved;
       const baseRefName = resolveBoardCardBaseRef({
@@ -1533,7 +1556,7 @@ const make = Effect.gen(function* () {
       }
       // The base must exist locally: `measureBaseTip`, `pullMergedBaseBranch` and the rebase all
       // use it as a local name and break silently on a remote-qualified one.
-      const baseExists = yield* ensureLocalBaseBranch(workspace, baseRefName);
+      const baseExists = yield* passEnsureLocalBaseBranch(checkout, workspace, baseRefName);
       if (baseExists === "unavailable") continue;
       if (!baseExists) {
         // Never fall back to the default. A card pinned to `release/2.4` that
@@ -1861,6 +1884,8 @@ const make = Effect.gen(function* () {
         readonly kind: "placement" | "grow";
         readonly input: BoardCapacityHoldInput;
         readonly until: string | null;
+        /** When the worker last granted it (epoch ms), or null for a hold adopted unasked. */
+        readonly askedAt: number | null;
       }
     >
   >();
@@ -1895,6 +1920,7 @@ const make = Effect.gen(function* () {
       readonly kind: "placement" | "grow";
       readonly input: BoardCapacityHoldInput;
       readonly until: string | null;
+      readonly askedAt: number | null;
     },
   ) => {
     let byWorker = boardHolds.get(cardId);
@@ -1920,6 +1946,30 @@ const make = Effect.gen(function* () {
     }
     if (keep !== null) forgetHold(cardId, keep);
   });
+
+  /** A hold the card already has, granted for this same ask within one refresh interval: its
+      lapse is at least `HOLD_LAPSE_MS - HOLD_REFRESH_MS` ahead and the refresh fiber renews it,
+      so a scheduling pass need not ask again. */
+  const holdFresh = (
+    cardId: string,
+    workerId: BoardWorkerId,
+    input: BoardCapacityHoldInput,
+    now: number,
+  ) => {
+    const entry = boardHolds.get(cardId)?.get(workerId);
+    return (
+      entry !== undefined &&
+      entry.kind === input.kind &&
+      entry.askedAt !== null &&
+      now - entry.askedAt < HOLD_REFRESH_MS &&
+      (entry.until === null || Date.parse(entry.until) - now > HOLD_REFRESH_MS) &&
+      entry.input.providerInstanceId === input.providerInstanceId &&
+      entry.input.repositoryKey === input.repositoryKey &&
+      entry.input.profile.cpuCores === input.profile.cpuCores &&
+      entry.input.profile.ramGiB === input.profile.ramGiB &&
+      entry.input.profile.diskGB === input.profile.diskGB
+    );
+  };
 
   /** The card holding `workerId` for placement, other than `card`. */
   const placementHolderOn = (card: BoardCard, workerId: BoardWorkerId): string | null => {
@@ -1963,12 +2013,18 @@ const make = Effect.gen(function* () {
       profile: card.resources?.grant?.profile ?? requestedProfileOf(board, card),
       kind: "grow",
     };
+    if (holdFresh(String(card.id), workerId, input, yield* Clock.currentTimeMillis)) return true;
     const answer = yield* capacityClient.value.hold(workerId, input);
     if (answer === null || answer.outcome === "refused") {
       forgetHold(String(card.id), workerId);
       return false;
     }
-    noteHold(String(card.id), workerId, { kind: "grow", input, until: answer.until });
+    noteHold(String(card.id), workerId, {
+      kind: "grow",
+      input,
+      until: answer.until,
+      askedAt: yield* Clock.currentTimeMillis,
+    });
     return true;
   });
 
@@ -2094,7 +2150,9 @@ const make = Effect.gen(function* () {
       profile: context.profile,
       kind: "placement",
     };
+    const now = yield* Clock.currentTimeMillis;
     for (const workerId of [...ask, ...signal]) {
+      if (holdFresh(card.id, workerId, input, now)) continue;
       // A later card's hold passes to this one only if this request succeeds.
       const later = ask.includes(workerId) ? laterHolderOn(card, workerId, pass) : null;
       const answer = yield* client.hold(
@@ -2116,7 +2174,7 @@ const make = Effect.gen(function* () {
         continue;
       }
       if (later !== null) forgetHold(later, workerId);
-      noteHold(card.id, workerId, { kind: "placement", input, until: answer.until });
+      noteHold(card.id, workerId, { kind: "placement", input, until: answer.until, askedAt: now });
     }
     // Holds that fell out of the card's top two go.
     for (const workerId of holding) {
@@ -2125,8 +2183,8 @@ const make = Effect.gen(function* () {
         forgetHold(card.id, workerId);
       }
     }
-    const now = placementHoldsOf(card.id);
-    const first = ranked.find((workerId) => now.has(workerId)) ?? [...now][0];
+    const held = placementHoldsOf(card.id);
+    const first = ranked.find((workerId) => held.has(workerId)) ?? [...held][0];
     return first === undefined
       ? null
       : ({
@@ -2396,16 +2454,66 @@ const make = Effect.gen(function* () {
       Effect.succeed(new Set<BoardWorkerId>() as ReadonlySet<BoardWorkerId>),
   });
   let repositoryKeyMemo: Map<string, string | null> | null = null;
-  /** Runs `effect` as one scheduling pass for `projectRepositoryKey`; a nested pass joins it. */
+  /** Per scheduling pass, per `worker|project` checkout: what git already answered. Only
+      successes are kept, so a failure is retried by the next card that asks. */
+  let passGitMemo: {
+    readonly defaultBranch: Map<string, Effect.Success<ReturnType<typeof resolveDefaultBranch>>>;
+    /** `worker|project|base` keys whose base exists locally. */
+    readonly baseExists: Set<string>;
+    /** Checkouts fetched for planning this pass. */
+    readonly fetched: Set<string>;
+  } | null = null;
+  /** Runs `effect` as one scheduling pass for `projectRepositoryKey` and the git memo; a nested
+      pass joins it. */
   const withRepositoryKeyMemo = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     Effect.suspend(() => {
       if (repositoryKeyMemo !== null) return effect;
       const memo = new Map<string, string | null>();
+      const gitMemo = {
+        defaultBranch: new Map(),
+        baseExists: new Set<string>(),
+        fetched: new Set<string>(),
+      };
       repositoryKeyMemo = memo;
+      passGitMemo = gitMemo;
       return effect.pipe(
         Effect.ensuring(
           Effect.sync(() => {
             if (repositoryKeyMemo === memo) repositoryKeyMemo = null;
+            if (passGitMemo === gitMemo) passGitMemo = null;
+          }),
+        ),
+      );
+    });
+  const checkoutKey = (workerId: BoardWorkerId, projectId: ProjectId) => `${workerId}|${projectId}`;
+  /** `resolveDefaultBranch`, once per checkout while a scheduling pass runs. */
+  const passDefaultBranch = (checkout: string, workspace: BoardCardWorkspace) =>
+    Effect.suspend(() => {
+      const memo = passGitMemo;
+      const known = memo?.defaultBranch.get(checkout);
+      if (known !== undefined) return Effect.succeed(known);
+      return resolveDefaultBranch(workspace).pipe(
+        Effect.tap((resolved) =>
+          Effect.sync(() => {
+            if (resolved.defaultBranch !== "") memo?.defaultBranch.set(checkout, resolved);
+          }),
+        ),
+      );
+    });
+  /** `ensureLocalBaseBranch`, once per checkout and base while a scheduling pass runs. */
+  const passEnsureLocalBaseBranch = (
+    checkout: string,
+    workspace: BoardCardWorkspace,
+    base: string,
+  ) =>
+    Effect.suspend(() => {
+      const memo = passGitMemo;
+      const key = `${checkout}|${base}`;
+      if (memo?.baseExists.has(key) === true) return Effect.succeed<boolean | "unavailable">(true);
+      return ensureLocalBaseBranch(workspace, base).pipe(
+        Effect.tap((exists) =>
+          Effect.sync(() => {
+            if (exists === true) memo?.baseExists.add(key);
           }),
         ),
       );
@@ -2561,7 +2669,8 @@ const make = Effect.gen(function* () {
       detail: { workerId: BOARD_LOCAL_WORKER_ID, serverCheckout },
     });
     if (root === null) return checkoutProblem("missing");
-    const resolved = yield* resolveDefaultBranch(workspace);
+    const checkout = checkoutKey(BOARD_LOCAL_WORKER_ID, card.projectId);
+    const resolved = yield* passDefaultBranch(checkout, workspace);
     if (resolved.defaultBranch === "" && !resolved.detachedHead && resolved.unbornBranch === "") {
       const entries = yield* fileSystem
         .readDirectory(root)
@@ -2580,11 +2689,12 @@ const make = Effect.gen(function* () {
         };
       }
     }
-    // Fetch before planning: the plan reads the remote's latest base.
-    if (resolved.defaultBranch !== "") {
+    // Fetch before planning: the plan reads the remote's latest base. Once a pass per checkout.
+    if (resolved.defaultBranch !== "" && passGitMemo?.fetched.has(checkout) !== true) {
       yield* workspace
         .measureBaseTip({ baseRefName: resolved.defaultBranch })
         .pipe(Effect.ignoreCause);
+      passGitMemo?.fetched.add(checkout);
     }
     return null;
   });
@@ -2677,7 +2787,8 @@ const make = Effect.gen(function* () {
     readonly branch: string | null;
     /** Whether to run the worktree setup script — build only. */
     readonly runSetup: boolean;
-    readonly text: string;
+    /** Composed only once the agent cap has let the spawn through. */
+    readonly text: Effect.Effect<string>;
   }) {
     const { card, step } = input;
     const threadId = yield* freshThreadId;
@@ -2704,6 +2815,16 @@ const make = Effect.gen(function* () {
         return "no-agent-model" as const;
       }
     }
+    // T3o: this server's own agent cap holds a board-started turn too (T3O-86). Checked
+    // before any git, so a step held on it costs no worker call per pass.
+    if (remoteWorker === null && Option.isSome(capacityClient)) {
+      const refusal = yield* capacityClient.value.localAgentCapRefusal(
+        threadId,
+        step.providerInstanceId,
+        step.forceStart === true,
+      );
+      if (refusal !== null) return "agent-cap" as const;
+    }
     // T3o: pin the agent's gh to origin on every build-mode spawn,
     // not only at provisioning, so a worktree that predates the pin gets it
     // before its next agent runs. Idempotent and never fails the spawn.
@@ -2713,15 +2834,7 @@ const make = Effect.gen(function* () {
         Effect.ignoreCause,
       );
     }
-    // T3o: this server's own agent cap holds a board-started turn too (T3O-86).
-    if (remoteWorker === null && Option.isSome(capacityClient)) {
-      const refusal = yield* capacityClient.value.localAgentCapRefusal(
-        threadId,
-        step.providerInstanceId,
-        step.forceStart === true,
-      );
-      if (refusal !== null) return "agent-cap" as const;
-    }
+    const text = yield* input.text;
     // A refused spawn leaves no thread. An unreachable worker was sent nothing, so the step waits.
     // A mid-call drop may have created the thread: it is linked and run as spawned, so the worker's
     // reconcile watches or recovers it, never a second agent in the worktree.
@@ -2741,7 +2854,7 @@ const make = Effect.gen(function* () {
         interactionMode: "default",
         branch: input.branch,
         worktreePath: input.worktreePath,
-        text: input.text,
+        text,
         // The brief's attachments on a build/plan spawn (t3o-32, K4). A worker
         // gets none: its gateway sends no attachments, so central copies would
         // only be orphaned; its thread reads the files staged there instead.
@@ -3141,7 +3254,10 @@ const make = Effect.gen(function* () {
     if (card.baseBranch !== null) return card.baseBranch;
     const workspace = yield* workspaceFor(card);
     if (workspace.checkoutPath === null) return null;
-    const { defaultBranch } = yield* resolveDefaultBranch(workspace);
+    const { defaultBranch } = yield* passDefaultBranch(
+      checkoutKey(workspace.workerId, card.projectId),
+      workspace,
+    );
     return resolveBoardCardEffectiveBase({
       card,
       cards: (yield* readBoard).cards,
@@ -3467,7 +3583,7 @@ const make = Effect.gen(function* () {
         worktreePath: input.worktreePath,
         branch: card.worktree?.branch ?? null,
         runSetup: true,
-        text: yield* stepPromptFor(card, state),
+        text: stepPromptFor(card, state),
       });
       if (threadId === null || threadId === "no-agent-model") {
         yield* escalateSpawnFailure({ card, state, ...spawnFailureError(threadId) });
@@ -3575,7 +3691,7 @@ const make = Effect.gen(function* () {
       worktreePath: cwd,
       branch: null,
       runSetup: false,
-      text: yield* stepPromptFor(card, state),
+      text: stepPromptFor(card, state),
     });
     // A plan step holds no slot, so a failed spawn leaks no capacity — but it
     // must still not be admitted against a thread that was never created.
@@ -3719,6 +3835,17 @@ const make = Effect.gen(function* () {
         // T3o: planning on the board server needs its checkout and the provider signed in
         // there (T3O-87); never CPU or RAM.
         if (placed.workerId === BOARD_LOCAL_WORKER_ID) {
+          // A fresh spawn the agent cap would refuse waits before any git or fetch: the
+          // spawn itself still reserves under the cap.
+          if (
+            state.threadId === null &&
+            state.forceStart !== true &&
+            Option.isSome(capacityClient) &&
+            (yield* capacityClient.value.localAgentCapFull(state.providerInstanceId)) !== null
+          ) {
+            yield* holdQueued(state, "agent-cap");
+            continue;
+          }
           const problem = yield* serverPlanningProblem(card, state.providerInstanceId);
           if (problem !== null) {
             yield* holdQueued(state, problem.queuedBy, problem.detail);
@@ -3872,10 +3999,15 @@ const make = Effect.gen(function* () {
   // input to `planNext` and the crossing/merge-click interceptions.
   const resolveBaseStale = Effect.fn("board-supervisor-resolveBaseStale")(function* (
     card: BoardCard,
+    /** The card's `resolveBaseRetargetTarget`, when the caller already has it. */
+    retargetedTo?: string | null,
   ) {
     // A retarget counts at any level: the stated base and the actual cut point disagree, so a pull
     // request would show commits nobody wrote. This lets even a top-level card get a sync step.
-    if (yield* resolveBaseRetargeted(card)) return true;
+    if (
+      (retargetedTo === undefined ? yield* resolveBaseRetargetTarget(card) : retargetedTo) !== null
+    )
+      return true;
     // Tip movement counts only for sub-board children: siblings are created to collide on their
     // shared base, while a top-level base moving is ordinary trunk development.
     if (card.parentCardId === null) return false;
@@ -3924,10 +4056,14 @@ const make = Effect.gen(function* () {
     },
   );
 
-  const resolveBaseRetargeted = Effect.fn("board-supervisor-resolveBaseRetargeted")(function* (
+  /** `baseStale` and `baseRetargetedTo` for a plan, resolving the retarget once. */
+  const resolveBaseDrift = Effect.fn("board-supervisor-resolveBaseDrift")(function* (
     card: BoardCard,
+    skipStale = false,
   ) {
-    return (yield* resolveBaseRetargetTarget(card)) !== null;
+    const baseRetargetedTo = yield* resolveBaseRetargetTarget(card);
+    const baseStale = skipStale ? false : yield* resolveBaseStale(card, baseRetargetedTo);
+    return { baseStale, baseRetargetedTo };
   });
 
   // Measured fresh when the plan starts a review round (`recordBaseTip`), else carried forward
@@ -4159,8 +4295,7 @@ const make = Effect.gen(function* () {
         completedStepIds: [],
         liveStepId: null,
         settledStepId: null,
-        baseStale: yield* resolveBaseStale(card),
-        baseRetargetedTo: yield* resolveBaseRetargetTarget(card),
+        ...(yield* resolveBaseDrift(card)),
       },
     });
     // CI: entering the stage, or restarting it, runs the steps.
@@ -6423,8 +6558,7 @@ const make = Effect.gen(function* () {
         completedStepIds,
         liveStepId: null,
         settledStepId: state.stepId,
-        baseStale: yield* resolveBaseStale(card),
-        baseRetargetedTo: yield* resolveBaseRetargetTarget(card),
+        ...(yield* resolveBaseDrift(card)),
       },
     });
     switch (plan.kind) {
@@ -6559,8 +6693,7 @@ const make = Effect.gen(function* () {
         completedStepIds,
         liveStepId: null,
         settledStepId: null,
-        baseStale: options.resume === true ? false : yield* resolveBaseStale(card),
-        baseRetargetedTo: yield* resolveBaseRetargetTarget(card),
+        ...(yield* resolveBaseDrift(card, options.resume === true)),
       },
     });
     if (plan.kind !== "run") return;
@@ -12173,7 +12306,13 @@ const make = Effect.gen(function* () {
         }
         if (answer === null) continue;
         if (answer.outcome === "refused") forgetHold(cardId, workerId);
-        else noteHold(cardId, workerId, { ...entry, until: answer.until });
+        else {
+          noteHold(cardId, workerId, {
+            ...entry,
+            until: answer.until,
+            askedAt: yield* Clock.currentTimeMillis,
+          });
+        }
       }
     }
     const board = yield* readBoard;
@@ -12213,6 +12352,7 @@ const make = Effect.gen(function* () {
           kind: "placement",
         },
         until: null,
+        askedAt: null,
       });
     }
     // Only a waiting card can be adopted again, so its guard goes with its wait.
@@ -12533,6 +12673,7 @@ const make = Effect.gen(function* () {
     // turn interrupt — and the todo signals feed the todo cache, not this.
     yield* forkParked(
       Stream.runForEach(threads.observe, (signal) => {
+        knownDeletedThreads.delete(String(signal.threadId));
         if (signal.type === "session-started" && !orphanedThreads.has(String(signal.threadId))) {
           return Effect.void;
         }

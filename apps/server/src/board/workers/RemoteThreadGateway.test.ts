@@ -21,6 +21,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as Base64 from "effect/encoding/Base64";
 
 import * as ServerConfig from "../../config.ts";
@@ -41,7 +42,11 @@ import {
   WORKER_PROJECT_ID,
   WORKER_ROOT,
 } from "./distributed.testkit.ts";
-import { CardFilesNotStaged, makeRemoteThreadGateway } from "./RemoteThreadGateway.ts";
+import {
+  CardFilesNotStaged,
+  CENTRAL_PROJECT_MEMO_TTL_MS,
+  makeRemoteThreadGateway,
+} from "./RemoteThreadGateway.ts";
 import { WorkerConnections } from "./WorkerConnections.ts";
 import { helloFor } from "./workers.testkit.ts";
 import { makeWorkerSignalFeed } from "./WorkerSignalFeed.ts";
@@ -202,6 +207,133 @@ describe("the remote thread gateway", () => {
         if (state === null || state === UNKNOWN_THREAD_STATE) return;
         assert.strictEqual(state.projectId, CENTRAL_PROJECT_ID);
         assert.isTrue(state.alive);
+      }),
+    ),
+  );
+
+  it.effect("remote thread reads walk the central projects once, not once per read", () =>
+    inCentral(
+      Effect.gen(function* () {
+        const { central, connections, threads } = yield* setup();
+        let walks = 0;
+        const gateway = makeRemoteThreadGateway({
+          workerId: WORKER_ID,
+          connections,
+          local: {
+            projects: () => {
+              walks += 1;
+              return central.gateway.projects();
+            },
+            project: central.gateway.project,
+          },
+          centralEnvironmentId: CENTRAL_ID,
+          fileSystem: yield* FileSystem.FileSystem,
+          digest: yield* Digest.Digest,
+        });
+        const ids = ["thread-a", "thread-b", "thread-c"].map((id) => ThreadId.make(id));
+        yield* Ref.update(threads.states, (states) => {
+          const next = new Map(states);
+          for (const id of ids) next.set(id, aliveThread(id, { projectId: WORKER_PROJECT_ID }));
+          return next;
+        });
+
+        for (const id of ids) {
+          const state = yield* gateway.threadState(id);
+          assert.isTrue(state !== null && state !== UNKNOWN_THREAD_STATE);
+          if (state === null || state === UNKNOWN_THREAD_STATE) return;
+          assert.strictEqual(state.projectId, CENTRAL_PROJECT_ID);
+        }
+        assert.strictEqual(walks, 1);
+
+        yield* TestClock.adjust(CENTRAL_PROJECT_MEMO_TTL_MS);
+        yield* gateway.threadState(ids[0]!);
+        assert.strictEqual(walks, 2);
+      }),
+    ),
+  );
+
+  it.effect("a worker checkout no board project matches costs one walk, not one per read", () =>
+    inCentral(
+      Effect.gen(function* () {
+        const unmatched = [ProjectId.make("worker-x"), ProjectId.make("worker-y")];
+        const { central, connections, threads } = yield* setup(new Map(), {
+          extraProjects: unmatched.map((projectId) => ({
+            projectId,
+            canonicalKey: `github.com/acme/${projectId}`,
+          })),
+        });
+        let walks = 0;
+        const gateway = makeRemoteThreadGateway({
+          workerId: WORKER_ID,
+          connections,
+          local: {
+            projects: () => {
+              walks += 1;
+              return central.gateway.projects();
+            },
+            project: central.gateway.project,
+          },
+          centralEnvironmentId: CENTRAL_ID,
+          fileSystem: yield* FileSystem.FileSystem,
+          digest: yield* Digest.Digest,
+        });
+        const ids = unmatched.map((projectId) => ThreadId.make(`thread-${projectId}`));
+        yield* Ref.update(threads.states, (states) => {
+          const next = new Map(states);
+          ids.forEach((id, index) =>
+            next.set(id, aliveThread(id, { projectId: unmatched[index]! })),
+          );
+          return next;
+        });
+
+        // Alternating reads: each key's first miss walks once, and neither forgets the other.
+        for (const _ of [1, 2, 3]) {
+          for (const [index, id] of ids.entries()) {
+            const state = yield* gateway.threadState(id);
+            assert.isTrue(state !== null && state !== UNKNOWN_THREAD_STATE);
+            if (state === null || state === UNKNOWN_THREAD_STATE) return;
+            assert.strictEqual(state.projectId, unmatched[index]);
+          }
+        }
+        assert.strictEqual(walks, 2);
+      }),
+    ),
+  );
+
+  it.effect("a deleted board project never claims a worker checkout", () =>
+    inCentral(
+      Effect.gen(function* () {
+        const { central, connections, threads } = yield* setup();
+        const deletedTwin = {
+          id: ProjectId.make("project-deleted"),
+          title: "repo (old)",
+          workspaceRoot: "/home/central/old",
+          deleted: true,
+          scripts: [],
+        };
+        const gateway = makeRemoteThreadGateway({
+          workerId: WORKER_ID,
+          connections,
+          local: {
+            projects: () =>
+              central.gateway.projects().pipe(Effect.map((all) => [deletedTwin, ...all])),
+            project: (projectId) =>
+              projectId === deletedTwin.id
+                ? Effect.succeed({ ...deletedTwin, repositoryIdentity: REPOSITORY })
+                : central.gateway.project(projectId),
+          },
+          centralEnvironmentId: CENTRAL_ID,
+          fileSystem: yield* FileSystem.FileSystem,
+          digest: yield* Digest.Digest,
+        });
+        const threadId = ThreadId.make("thread-twin");
+        yield* Ref.update(threads.states, (states) =>
+          new Map(states).set(threadId, aliveThread(threadId, { projectId: WORKER_PROJECT_ID })),
+        );
+        const state = yield* gateway.threadState(threadId);
+        assert.isTrue(state !== null && state !== UNKNOWN_THREAD_STATE);
+        if (state === null || state === UNKNOWN_THREAD_STATE) return;
+        assert.strictEqual(state.projectId, CENTRAL_PROJECT_ID);
       }),
     ),
   );

@@ -219,9 +219,12 @@ export const makeThreadGatewayRouter = (deps: ThreadGatewayRouterDeps): ThreadGa
         else ids.push(threadId);
       }
       const open = new Set<ThreadId>();
+      const deleted = new Set<ThreadId>();
       for (const [workerId, ids] of byWorker) {
         if (workerId === BOARD_LOCAL_WORKER_ID) {
-          for (const threadId of (yield* local.openThreadIds(ids)).open) open.add(threadId);
+          const answer = yield* local.openThreadIds(ids);
+          for (const threadId of answer.open) open.add(threadId);
+          for (const threadId of answer.deleted) deleted.add(threadId);
           continue;
         }
         const remote = yield* Effect.result(deps.remote(workerId).threadRecords(ids));
@@ -231,9 +234,10 @@ export const makeThreadGatewayRouter = (deps: ThreadGatewayRouterDeps): ThreadGa
         }
         for (const record of remote.success.values()) {
           if (isOpenThreadRecord(record)) open.add(record.threadId);
+          else if (record.deleted) deleted.add(record.threadId);
         }
       }
-      return { open, unanswered };
+      return { open, unanswered, deleted };
     }),
     // Worktree retirement on a worker is not routed: worktrees are this server's.
     threadsInWorktree: local.threadsInWorktree,

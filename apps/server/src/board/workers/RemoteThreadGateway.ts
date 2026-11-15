@@ -12,6 +12,7 @@ import {
   type ProjectId,
   type ThreadId,
 } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -75,6 +76,9 @@ export class CardFilesNotStaged extends Schema.TaggedError<CardFilesNotStaged>()
   "CardFilesNotStaged",
   { cause: Schema.Defect() },
 ) {}
+
+/** How long the central project memo answers before one walk refreshes it. */
+export const CENTRAL_PROJECT_MEMO_TTL_MS = 60_000;
 
 const isWorkerUnavailable = Schema.is(WorkerUnavailable);
 
@@ -169,6 +173,28 @@ export const makeRemoteThreadGateway = (
     return { checkout, centralRoot: detail.workspaceRoot };
   });
 
+  /** Repository key -> board project, from one walk of the central projects.
+      A key the walk didn't find rebuilds it once (a project added since); the
+      whole memo is rebuilt after `CENTRAL_PROJECT_MEMO_TTL_MS`, so a deleted
+      or re-keyed project falls out. */
+  let projectMemo: {
+    readonly builtAt: number;
+    readonly byKey: ReadonlyMap<string, ProjectId>;
+    readonly missed: Set<string>;
+  } | null = null;
+
+  const walkCentralProjects = Effect.fn("RemoteThreadGateway.walkCentralProjects")(function* () {
+    const byKey = new Map<string, ProjectId>();
+    for (const project of yield* local.projects()) {
+      if (project.deleted) continue;
+      const detail = yield* local.project(project.id);
+      if (detail === null || detail.deleted) continue;
+      const key = boardRepositoryGroupingKey(detail.repositoryIdentity);
+      if (key !== null && !byKey.has(key)) byKey.set(key, project.id);
+    }
+    return byKey;
+  });
+
   /** The board project a worker project is a checkout of, or the worker's own
       id when none matches — a thread never loses its project. */
   const centralProjectOf = Effect.fn("RemoteThreadGateway.centralProjectOf")(function* (
@@ -178,12 +204,26 @@ export const makeRemoteThreadGateway = (
       (yield* checkouts).find((checkout) => checkout.projectId === workerProjectId)
         ?.repositoryKey ?? null;
     if (key === null) return workerProjectId;
-    for (const project of yield* local.projects()) {
-      const detail = yield* local.project(project.id);
-      if (detail !== null && boardRepositoryGroupingKey(detail.repositoryIdentity) === key) {
-        return project.id;
-      }
+    const now = yield* Clock.currentTimeMillis;
+    const fresh =
+      projectMemo !== null && now - projectMemo.builtAt < CENTRAL_PROJECT_MEMO_TTL_MS
+        ? projectMemo
+        : null;
+    if (fresh !== null) {
+      const hit = fresh.byKey.get(key);
+      if (hit !== undefined) return hit;
+      if (fresh.missed.has(key)) return workerProjectId;
     }
+    const byKey = yield* walkCentralProjects();
+    // A rebuild for one key keeps the other misses it didn't resolve, until the TTL rebuild.
+    const missed = new Set(
+      fresh === null ? [] : [...fresh.missed].filter((missedKey) => !byKey.has(missedKey)),
+    );
+    const memo = { builtAt: fresh?.builtAt ?? now, byKey, missed };
+    projectMemo = memo;
+    const found = memo.byKey.get(key);
+    if (found !== undefined) return found;
+    memo.missed.add(key);
     return workerProjectId;
   });
 
