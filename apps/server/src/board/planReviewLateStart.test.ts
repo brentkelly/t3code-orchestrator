@@ -770,3 +770,54 @@ it.effect("an approval owed at a restart is told once, and fires when the review
     );
   }),
 );
+
+it.effect("an approval a restart cut off after the step settled fires at boot", () =>
+  Effect.gen(function* () {
+    let seeded: BoardState | undefined;
+    yield* withGovernor(splitFixture("deferred-missed"), (h) =>
+      Effect.gen(function* () {
+        yield* approvedDuringReview(h, "deferred-missed");
+        seeded = yield* h.board;
+      }),
+    );
+    // The step settled succeeded, and the stop landed before the approval fired.
+    const board: BoardState = {
+      ...seeded!,
+      stepStates: (seeded!.stepStates ?? []).map((state) =>
+        state.cardId === BoardCardId.make("deferred-missed")
+          ? { ...state, status: "succeeded" as const }
+          : state,
+      ),
+    };
+    assert.isDefined(cardOf(board, "deferred-missed")?.pendingSplitApproval);
+    yield* withGovernor({ board, settings }, (h) =>
+      Effect.gen(function* () {
+        yield* h.reactor.drain;
+        const after = yield* h.board;
+        assert.strictEqual(children(after, "deferred-missed").length, 2);
+        assert.isUndefined(cardOf(after, "deferred-missed")?.pendingSplitApproval);
+      }),
+    );
+  }),
+);
+
+it.effect("a re-delivered planning success fires an approval the first delivery missed", () =>
+  withGovernor(splitFixture("deferred-redelivered"), (h) =>
+    Effect.gen(function* () {
+      yield* approvedDuringReview(h, "deferred-redelivered");
+      const cardId = BoardCardId.make("deferred-redelivered");
+      // The first delivery settled the step and stopped before the approval fired.
+      yield* Ref.update(h.model, (model) => ({
+        ...model,
+        board: {
+          ...model.board!,
+          stepStates: (model.board!.stepStates ?? []).map((state) =>
+            state.cardId === cardId ? { ...state, status: "succeeded" as const } : state,
+          ),
+        },
+      }));
+      yield* h.pumpDomain(stepCompleted(cardId, "succeeded", 4, "planning"));
+      assert.strictEqual(children(yield* h.board, "deferred-redelivered").length, 2);
+    }),
+  ),
+);

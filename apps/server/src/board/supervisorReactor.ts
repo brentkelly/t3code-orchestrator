@@ -8972,6 +8972,15 @@ const make = Effect.gen(function* () {
     );
   });
 
+  /** T3o: a deferred split approval is due once its card's planning step has succeeded (T3O-105). */
+  const deferredSplitApprovalDue = (board: BoardState, card: BoardCard): boolean => {
+    if (card.archivedAt !== null || card.pendingSplitApproval === undefined) return false;
+    const stage = boardStageById(board, card.stage);
+    if (stage === null || effectiveBoardStageRole(stage) !== "plan") return false;
+    const state = boardCardStepState(board, card.id);
+    return state !== null && state.stepId === card.stage && state.status === "succeeded";
+  };
+
   /**
    * T3o: a split a human approved during the plan review, applied now the planning step has
    * completed (T3O-105). A refusal clears it with a note, so the split gate asks again.
@@ -9540,6 +9549,8 @@ const make = Effect.gen(function* () {
       if (completion.outcome === "succeeded" && settledReviewPhase(board, card, state)) {
         yield* replanSettledStage(card, { resume: true });
       }
+      // T3o: a re-delivered success fires a split approval the first delivery missed (T3O-105).
+      if (deferredSplitApprovalDue(board, card)) yield* fireDeferredSplitApproval(card.id);
       return;
     }
     // Refresh trigger: a step boundary in the review stage. The review loop
@@ -11162,6 +11173,10 @@ const make = Effect.gen(function* () {
     switch (decision.kind) {
       case "advance":
         yield* settleStep({ card, state, outcome: "succeeded" });
+        // T3o: a planning step that finished during downtime fires its deferred split (T3O-105).
+        if (deferredSplitApprovalDue(yield* readBoard, card)) {
+          yield* fireDeferredSplitApproval(card.id);
+        }
         // Ask the executor what runs next: advance a finished single-step
         // stage, or resume the next round-scoped step of a multi-step loop
         // whose phase settled during downtime.
@@ -11383,6 +11398,8 @@ const make = Effect.gen(function* () {
     for (const card of quiet.cards) {
       if (card.archivedAt !== null) continue;
       const state = boardCardStepState(quiet, card.id);
+      // T3o: a deferred split whose firing a restart cut off, settled but never applied (T3O-105).
+      if (deferredSplitApprovalDue(quiet, card)) yield* fireDeferredSplitApproval(card.id);
       if (state === null || !settledReviewPhase(quiet, card, state)) continue;
       yield* replanSettledStage(card, { resume: true });
     }

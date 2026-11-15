@@ -200,6 +200,15 @@ function ActivityIcon({
     case "plan-review-rounds-changed":
     case "plan-review-finished":
       return <ScanSearchIcon className={className} />;
+    // An approval waiting on the review claims nothing; a refused one is a failure.
+    case "split-approval":
+      return payload?.splitApproval === "refused" ? (
+        <TriangleAlertIcon className={cn(className, "text-destructive-foreground")} />
+      ) : payload?.splitApproval === "approved" ? (
+        <LayersIcon className={className} />
+      ) : (
+        <Undo2Icon className={className} />
+      );
   }
 }
 
@@ -588,6 +597,29 @@ function activitySentence(
             : `, ${payload.planReviewFindings} ${payload.planReviewFindings === 1 ? "finding" : "findings"}`}
         </>
       );
+    }
+    case "split-approval": {
+      const round =
+        payload.planReviewRound === undefined ? "" : ` in round ${payload.planReviewRound}`;
+      switch (payload.splitApproval) {
+        case "approved":
+          return <>approved the split; its cards are created when planning completes</>;
+        case "undone":
+          return <>undid the split approval</>;
+        case "dropped":
+          return <>dropped the split approval: the review changed the split{round}</>;
+        case "refused":
+          return payload.detail === undefined ? (
+            <>could not create the approved split</>
+          ) : (
+            <>
+              could not create the approved split
+              <span className="block text-destructive-foreground">{payload.detail}</span>
+            </>
+          );
+        default:
+          return <>changed the split approval</>;
+      }
     }
   }
 }
