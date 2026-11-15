@@ -21,7 +21,7 @@ It is a supervisor, not a view.
 decisions with their rationale and rejected alternatives. Per-feature specs are the numbered
 `.plans/t3o-NN-*.md` files from `t3o-01` onwards; the build order and dependency waves are in the overview.
 
-**Status:** the board is built and in use. Upstream is synced to `v0.1.8` (`T3O-62`); the
+**Status:** the board is built and in use. Upstream is synced to `v0.1.9` (`T3O-102`); the
 board reaches threads only through `board/ThreadGatewayV2.ts`. The
 seam inventory and sync runbook are in `docs/t3o/seams.md`. The distributed board (`T3O-60`,
 overview D19–D22) is built: one central server hosts the board and dials other T3o servers as
@@ -183,7 +183,7 @@ An empty database is a bad test. Seed your worktree's `.t3` with a copy of real 
 - [Testing](docs/internals/testing.md) carries these same test rules, plus review guidance, for review bots. Change both together.
 - **Do not run repo-wide checks.** No `vp check`, no `vp run -r test`, no `vp run -r typecheck` unless I ask; `vp run knip:check` is the one exception. The board's CI stage owns the full suite. <!-- T3o: knip carve-out and "board's CI stage" (T3O-88). -->
 - Backend behavior changes ship with focused tests for that behavior.
-- Proof for a bug fix depends on the bug. Logic, data, state, and protocol bugs get a failing test first (the fewest that fail on `main` for that reason, in an existing case of the module's test file where one fits), then the fix. Purely visual bugs (spacing, colour, alignment, a layout shift) get before/after captures as their proof and no test: do not add UI tests for nitpicks, and do not ask for one in review when a capture already shows it. A server-only fix with no visible surface ships the test plus a short runtime transcript.
+- Proof for a bug fix depends on the bug. Logic, data, state, and protocol bugs get a failing test first (the fewest that fail on `main` for that reason, in an existing case of the module's test file where one fits), then the fix. Purely visual bugs (spacing, colour, alignment, a layout shift) get before/after captures as their proof and no test: do not add UI tests for nitpicks, and do not ask for one in review when a capture already shows it. A server-only fix with no visible surface ships the test plus a short runtime transcript. For a bug a user can reproduce in the web client, `vp run scenarios:prove` shows it failing on base and passing on the fix in the real app; see [Scenarios](docs/operations/scenarios.md).
 - The server is event-sourced, and side effects run after the command commits. In tests, drain the effect worker (`OrchestrationEffectWorkerV2.drain`) or await the specific persisted event or `Deferred` that marks the milestone. Never wait on sleeps or polling. A test that needs a timeout to pass is wrong. Concretely:
   - `it.effect` runs on a `TestClock`; `Effect.sleep` only advances through `TestClock.adjust`. `it.live` is wall-clock and only for subprocess or network fixtures.
   - No `yieldNow` or `sleep` polling loops. Await the `Deferred`, take from the `Queue`, or drain the worker.

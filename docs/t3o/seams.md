@@ -278,6 +278,11 @@ git push origin main vX.Y.Z                         # the fast-forwarded mirror 
 git fetch origin && git merge-base --is-ancestor vX.Y.Z origin/t3o && echo ok  # must print ok
 ```
 
+The mirror push is safe before the PR merges too, since it only fast-forwards `origin/main`. But
+GitHub runs `push` workflows from the pushed commit's own YAML, so a workflow upstream added
+(`mobile-dev-client.yml` on `v0.1.9`) fires on that push. Cancel the run, and disable the workflow
+then: having run, it is listed.
+
 Landing by hand (`gh pr merge --merge`, or `git checkout t3o && git merge --no-ff
 sync/upstream-vX.Y.Z && git push`) still works when the sync has no card or the override is
 unavailable; run the same ancestry check afterwards. The board default stays squash on purpose:
@@ -341,6 +346,7 @@ settles it is a few merges done by hand. `t3o-02` is the first place that gets w
 | 2026-10-27 | 2,264 commits to tag `v0.1.3` (`d2c440312`); card `T3O-74`                                                                                              | **70 files** (67 content, 3 modify/delete: `GitHubApi.ts`, `settings.connections.tsx`, the MCP worktree `registration.test.ts`). The GitHub package rewrite and the settings modal needed thought; desktop and server tests were mostly upstream's test cull meeting marked fork expectations; `routeTree.gen.ts` and `pnpm-lock.yaml` regenerated.                                                                                                                                                                                                                                                  | Upstream's code with seams re-seated (see decisions). After the merge: board migration 031 failed on a fresh database (upstream 063 drops `projection_state`), fixed with a test; ~2,200 lint findings and ~170 Effect diagnostics in fork code from new upstream rules, deferred by override to `T3O-67`; a dozen web/server type errors from removed helpers; 2 board tests (bare-repo guard, sweep timing) and 2 background-wait tests following upstream #24610.                                                                                                                                                                                                                                                                                                                                                         | One session. Verification: 7 package typechecks, both lint passes, 2,816 server / 1,055 web board / 3,700 package / 153 desktop tests, the boot-time database sequence twice against `VACUUM INTO` copies of real data (upstream 62 → 69, board 45 → 50, second boot ran nothing).                                                                                                                                                                                                                                                                                                                                   |
 | 2026-11-02 | 807 commits, 2,861 files outside `.repos/` to tag `v0.1.6` (`2359643cf`); card `T3O-79`                                                                 | **16 files** after re-grafting `v0.1.3`, which PR #199 had squashed (the graft diff was empty). 3 needed thought (`GitHubRequestPolicy.ts`'s gitenv seam against upstream's GitHub app sign-in, `ChatView.tsx`'s embedded chrome beside upstream's side-chat `embedded`, `McpHttpServer.ts`'s new `layerTools`); the rest were import or registry keep-both, two removed `subscribeBackgroundPolicy` rows, and `thread-sidebar.md`.                                                                                                                                                                  | Upstream's code with seams re-seated (see decisions). After the merge: 13 web and 6 server type errors from removed upstream exports and parameters (fixed in fork files or with marked re-exports); 25 `no-unreasoned-state-sync` findings in board UI, deferred by override to `T3O-67`; 2 test harnesses gained upstream's new services; the agent-context budget re-measured.                                                                                                                                                                                                                                                                                                                                                                                                                                            | One session. Verification: 8 package typechecks (contracts, shared, client-runtime, web, server, desktop, mobile, source-control-github), both lint passes, 2,162 server (board, MCP, settings, auth, assets, cloud) / 1,580 client-runtime / 1,180 shared / 532 contracts / 369 GitHub / 951 desktop / 1,296 web tests, the boot-time database sequence twice against `VACUUM INTO` copies of real data (upstream 62 → 76, board 45 → 50, second boot ran nothing). No web pass: the host's AppArmor blocks T3's browser sandbox.                                                                                   |
 | 2026-11-10 | 1,169 commits, 3,235 files outside `.repos/` to tag `v0.1.8` (`bf469bb19`); card `T3O-62`                                                               | **22 files**, no graft needed (`v0.1.6` was still an ancestor). 6 needed thought (`McpHttpServer.ts`'s transport now taking the tools layer, `GitHubPullRequestApi.ts`'s core read rebuilt around `readRequestedReviewers`, `welcome.tsx`'s single Welcome page, `VcsProcess.ts`'s `LANGUAGE: "C"`, the desktop WM class, `tsconfig.base.json`'s Effect config moving to `tsconfig.effect.json`); the rest were keep-both (`runOnWorktreeRemove` beside `stopOnSettle` in six files, `t3oProjectTokens` beside `starRepository`) or registries; `routeTree.gen.ts` and `pnpm-lock.yaml` regenerated. | Upstream's code with seams re-seated (see decisions). After the merge: ~1,600 server type errors that were almost all one cause, effect's `Crypto` module replaced by `effect/crypto` (`SecureRandom`, `Digest`) and no longer in `NodeServices` (23 fork files, 30 test layers gained `NodeCrypto`); 48 more server and 6 web errors and Effect-rule findings, all fixed (no new overrides); 124 unused fork exports from upstream's new knip export check; 3 lint findings; 1 test following upstream's hashed worktree folders.                                                                                                                                                                                                                                                                                           | One session. Verification: 10 package typechecks (contracts, shared, client-runtime, source-control-core, source-control-github, server, web, desktop, mobile), both lint passes, both knip checks, 3,046 server (board, MCP, auth, settings, VCS) / 1,186 web (board, settings, routes, project scripts) / 1,925 client-runtime / 1,541 shared / 711 contracts / 402 GitHub / 57 source-control-core / 1,051 desktop tests, the boot-time database sequence twice against `VACUUM INTO` copies of real data (upstream 76 → 80, board steady at 61, 4,226 threads and 384 cards read back, second boot ran nothing). |
+| 2026-11-15 | 198 commits, 765 files outside `.repos/` to tag `v0.1.9` (`24e77473e`); card `T3O-102`                                                                  | **6 files**, no graft needed (`v0.1.8` was still an ancestor). 1 needed thought (`serviceLauncher.ts`: upstream's new online backup, which copies the primary database while the server runs); `ProjectionStore.ts` was one import beside the board filter; `package.json` and the badge browser test keep-both; `agentContextBudget.json` re-measured; `routeTree.gen.ts` regenerated.                                                                                                                                                                                                              | Upstream's code with seams re-seated (see decisions). After the merge: no type errors, no new lint findings, no knip findings; one test (upstream's online-backup test) moved to the fork's per-database backup names and gained a `boards.sqlite`; the budget re-measured (+82 bytes, as before).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | One session. Verification: 10 package typechecks (contracts, shared, client-runtime, source-control-core, source-control-github, server, web, desktop, mobile), both lint passes (only the 56 findings `t3o` already had), both knip checks, board / launcher / ProjectionStore / migration / MCP server tests and the badge browser test, the boot-time database sequence twice against `VACUUM INTO` copies of real data (upstream 80 → 81, board steady at 75, 1,870 threads and 460 cards read back, second boot ran nothing).                                                                                   |
 
 Notes from the first run: the merge was executed against a scratch branch carrying the full `t3o-02`
 seam set (a merge against bare `t3o` would not have exercised the seams). Every other seamed file —
@@ -814,6 +820,29 @@ integration is `T3O-63`.
   under a global `url.insteadOf`, and desktop's `browser-secret-native.test.mjs` without
   `pkg-config`.
 
+### Decisions recorded on the `v0.1.9` sync (`T3O-102`)
+
+Parity again: nothing new upstream offers is adopted.
+
+- **No graft.** `v0.1.8` was still an ancestor of `t3o`.
+- **Online database backup.** Upstream now copies the main database file while the server still
+  runs, holding a read snapshot, and copies its WAL once the server stops. As shipped, it wrote
+  only the primary under upstream's `database` names, so a fork rollback would have read it as a
+  legacy snapshot and left `boards.sqlite` alone. The online copy now uses the fork's
+  per-database names and copies every other database after the server stops. Sidecars are read
+  and restored beside the file a symlinked database resolves to, and a symlink to the primary no
+  longer counts as a second database.
+- **Migrations.** Upstream adds `081_ProjectionMessageSearchText`. The board has its own ledger,
+  so nothing moved.
+- **Workflows.** One new file, `mobile-dev-client.yml`, which fires on push to `main`. The mirror
+  push started a run, which skipped itself, and the workflow was disabled straight after. The three
+  `v0.1.6` rows had never been disabled (`agent-context-budget.yml` was still running on every
+  PR), so they were disabled then too. `ci.yml` and four `mobile-*` files changed, and all of them
+  were already off.
+- **Known failures, not this sync's.** On `t3o` already, `vp lint` reports 55 design-token and
+  restyle findings in `board/usage/BoardUsagePopovers.tsx` (`T3O-77`) and 1 long comment in
+  `board/supervisor.ts`.
+
 ### Unmarked edits (debt)
 
 Upstream-owned files the fork changes **without** a `T3o` marker, measured after the `v0.0.45`
@@ -911,6 +940,11 @@ across 113. The WM class markers went from `DesktopEnvironment.ts` and
 `DesktopEarlyElectronStartup.ts` (−1 each), and `contracts/settings.ts` lost an import marker
 upstream made redundant. `welcome.tsx` +1 (the route context read), `knip.jsonc` +1, and the
 Effect override moved from `tsconfig.base.json` to `tsconfig.effect.json`.
+
+After the `v0.1.9` sync (`T3O-102`): **439 markers across 164 upstream-owned files**, from 431
+across 164 the moment before it. `serviceLauncher.ts` +6 (11, the online backup's per-database
+names and secondary copy, the symlink-aware sidecar path, and the fallback for an entry that
+cannot be resolved) and `serviceLauncher.test.ts` +2 (3).
 
 For reference, the `v0.0.38` sync stood at 121 markers across 44 files. Counts recorded then that
 differ from their rows in the table below:
@@ -1220,8 +1254,8 @@ files (see [Seam grammar](#seam-grammar-since-t3o-02a)).
 | `apps/server/src/mcp/McpSessionRegistry.test.ts`                                | `t3o-08`          | Every thread session carries `"board"`                                                                                                                                                                                             | marked fork expectation                                                      |
 | `apps/server/src/cloud/serviceProtocol.ts`                                      | `T3O-54`          | `SERVICE_LAUNCHER_PROTOCOL = 4` (upstream's 3 + multi-database snapshot)                                                                                                                                                           | constant + comment (re-check every sync)                                     |
 | `apps/server/src/cloud/servicePreflight.test.ts`                                | `T3O-54`          | Protocol 3 is blocked too: upstream's protocol-3 launcher snapshots only `state.sqlite`                                                                                                                                            | marked fork expectation                                                      |
-| `apps/server/src/serviceLauncher.ts`                                            | `t3o-26`          | Update backup and restore cover every database in the state dir (`databaseBaseNames`)                                                                                                                                              | one helper + two loops                                                       |
-| `apps/server/src/serviceLauncher.test.ts`                                       | `t3o-26`          | Import and exercise the multi-database backup helpers                                                                                                                                                                              | import + fork tests                                                          |
+| `apps/server/src/serviceLauncher.ts`                                            | `t3o-26`          | Update backup and restore cover every database in the state dir (`databaseBaseNames`), the online backup included (`T3O-102`)                                                                                                      | helpers + backup, online-backup and restore loops                            |
+| `apps/server/src/serviceLauncher.test.ts`                                       | `t3o-26`          | Import and exercise the multi-database backup helpers; upstream's online-backup test seeds a `boards.sqlite`                                                                                                                       | import + fork tests                                                          |
 | `docs/internals/server-updates.md`                                              | `t3o-26`          | "Every database, not just `state.sqlite`" section                                                                                                                                                                                  | Self-contained section                                                       |
 | `apps/web/src/index.css`                                                        | `T3O-67`          | `@import` of `board/board-theme.css`, the board-only design tokens                                                                                                                                                                 | one import line                                                              |
 | `apps/web/src/lib/utils.ts`                                                     | `T3O-67`          | `cn()` extends tailwind-merge with `mergeBoardTailwindTheme`, so board tokens merge by kind                                                                                                                                        | import + one argument                                                        |
@@ -1553,8 +1587,8 @@ file we do not otherwise care about. The YAML never says whether a workflow is o
 `gh workflow list` in a worktree can resolve to the `upstream` remote and report pingdotgg's state.
 
 Recorded here so a future reader knows what was switched off deliberately and what was not. The
-state below was read off the fork on the `v0.1.6` sync (2026-11-02). The three `v0.1.6` rows are
-disabled once the sync lands, because GitHub lists a workflow only after it reaches the default branch.
+state below was read off the fork on the `v0.1.9` sync (2026-11-15). A new workflow can be disabled
+only once GitHub lists it, which is after it reaches the default branch or has run.
 
 **Off — deliberately:**
 
@@ -1577,9 +1611,10 @@ disabled once the sync lands, because GitHub lists a workflow only after it reac
 | `agent-context-budget.yml`        | (since `v0.1.6`) Fails a PR that grows the agent-context budget without upstream's label. CI is off on the fork, and the budget test runs locally with the server suite.                                                                           |
 | `mobile-eas-preview-fork.yml`     | (since `v0.1.6`) Builds EAS previews for labelled fork PRs on `pull_request_target`. Same missing EAS credentials as `mobile-eas-preview.yml` (D17).                                                                                               |
 | `mobile-fingerprint-label.yml`    | (since `v0.1.6`) Labels PRs after `mobile-fingerprint-check.yml` runs. That workflow is off, so this one has nothing to follow.                                                                                                                    |
+| `mobile-dev-client.yml`           | (since `v0.1.9`) Builds mobile dev clients into upstream's native-client cache on push to `main` and on PRs that touch it. Mobile is out of scope (D17). Disabled right after the mirror push started its first run.                               |
 
 **On:** only `Dependency Graph`, GitHub's own. `issue-labels.yml` shows as disabled too (state read
-on the `v0.1.6` sync, 2026-11-02).
+on the `v0.1.9` sync, 2026-11-15).
 
 **Cannot fire on their own,** so they need nothing: `publish-aur.yml` (since `v0.0.38`),
 `release-desktop.yml` (since `v0.0.42`) — both `workflow_call`-only; `windows-tests.yml` (since
