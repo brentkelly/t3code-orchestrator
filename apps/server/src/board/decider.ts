@@ -3003,9 +3003,10 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         const state = boardCardStepState(board, card.id);
         return state === null || state.planReviewAwaitingStart !== undefined ? null : state;
       })();
-      // Turning an armed review off disarms it.
+      // Turning an armed review off disarms it, and so does a reset to the Settings
+      // default: Start review checks the card's own setting, so an armed reset could never start.
       const disarmedStep = (() => {
-        if (command.planReview?.enabled !== false) return null;
+        if (command.planReview !== null && command.planReview?.enabled !== false) return null;
         const state = boardCardStepState(board, card.id);
         return state === null || state.planReviewAwaitingStart === undefined ? null : state;
       })();

@@ -572,6 +572,12 @@ it.effect("turning an armed review off disarms it, and Start review is then refu
     const progressed = events[1]!;
     assert.ok(progressed.type === "board.plan-review-progressed");
     assert.strictEqual(progressed.payload.state.planReviewAwaitingStart, undefined);
+    // A reset to the Settings default disarms it too, or Start review would be stuck refused.
+    const reset = yield* decide(
+      update(null),
+      readModel({ card: makeCard({ planReview: { enabled: true, rounds: 2 } }), state: armed }),
+    );
+    assert.deepStrictEqual(types(reset), ["board.card-updated", "board.plan-review-progressed"]);
     // Nothing armed, or the card's own setting is off: refused.
     yield* decideFail(startReview, readModel({ card: makeCard({ planReview: ON }) }));
     yield* decideFail(

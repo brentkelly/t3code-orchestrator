@@ -1989,8 +1989,9 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
   });
 
   // Returns a tail plus every `card-input-requested` entry, since an outstanding
-  // human gate must never age out of view. UNION dedupes; the outer ORDER restores
-  // log order.
+  // human gate must never age out of view, plus the latest plan-review marker, so the
+  // sidebar's "Reviewed" row survives a long Planning stay. UNION dedupes; the outer
+  // ORDER restores log order.
   const listBoardCardActivityRowsForCard = SqlSchema.findAll({
     Request: BoardCardId,
     Result: BoardCardActivityDbRow,
@@ -2009,6 +2010,25 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
           created_at AS "createdAt"
         FROM board_card_activity
         WHERE card_id = ${cardId} AND kind = 'card-input-requested'
+        UNION
+        SELECT * FROM (
+          SELECT
+            activity_id AS "activityId",
+            card_id AS "cardId",
+            kind,
+            payload,
+            actor_kind AS "actorKind",
+            actor_name AS "actorName",
+            actor_provider_instance_id AS "actorProviderInstanceId",
+            actor_thread_id AS "actorThreadId",
+            thread_id AS "threadId",
+            created_at AS "createdAt"
+          FROM board_card_activity
+          WHERE card_id = ${cardId}
+            AND kind IN ('plan-review-started', 'plan-review-finished', 'card-moved')
+          ORDER BY created_at DESC, activity_id DESC
+          LIMIT 1
+        )
         UNION
         SELECT * FROM (
           SELECT
