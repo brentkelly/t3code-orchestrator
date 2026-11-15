@@ -169,6 +169,12 @@ import {
 import type { EnvironmentShellState } from "./shell.ts";
 import { boardCapacityAction, boardCapacityViewStream } from "./boardCapacity.ts";
 import {
+  boardCardLinkedThreadIds,
+  type BoardCardThreadShells,
+  EMPTY_BOARD_CARD_THREAD_SHELLS,
+  projectBoardCardThreadShells,
+} from "./boardCardThreadShells.ts";
+import {
   createEnvironmentCommand,
   createEnvironmentRpcQueryAtomFamily,
   createEnvironmentRpcSubscriptionAtomFamily,
@@ -182,6 +188,7 @@ import {
 } from "./boardCiLog.ts";
 import { pinOrderKeyBetween, planPinnedReorder } from "./threadSort.ts";
 
+export * from "./boardCardThreadShells.ts";
 export * from "./boardReducer.ts";
 export * from "./boardSubscription.ts";
 
@@ -224,22 +231,13 @@ export type {
   UpdateBoardLabelInput,
 };
 
-type ThreadShellLookup = (threadId: ThreadId) => OrchestrationV2ThreadShell | undefined;
+type ThreadShellLookup = (
+  threadId: ThreadId,
+) => (BoardThreadShellFields & { readonly id: ThreadId }) | undefined;
 
-/** Every live-linked thread id of a card. Falls back to `activeThreadId` when
-    `boardCardThreads` has not arrived, so the aggregate degrades rather than empties. */
-function liveCardThreadIds(
-  card: BoardCardShell,
-  cardThreads: ReadonlyArray<BoardCardThreadShell> | undefined,
-): ReadonlyArray<ThreadId> {
-  const linked = (cardThreads ?? [])
-    .filter((entry) => entry.cardId === card.cardId)
-    .map((entry) => entry.threadId);
-  if (linked.length > 0) return linked;
-  return card.activeThreadId === null ? [] : [card.activeThreadId];
-}
-
-/** `liveCardThreadIds` for many cards: indexes the links once instead of per card. */
+/** Every live-linked thread id of a card, with the links indexed once for many cards. Falls
+    back to `activeThreadId` when `boardCardThreads` has not arrived, so the aggregate
+    degrades rather than empties. */
 export function indexLiveCardThreadIds(
   cardThreads: ReadonlyArray<BoardCardThreadShell> | undefined,
 ): (card: BoardCardShell) => ReadonlyArray<ThreadId> {
@@ -259,10 +257,10 @@ export function indexLiveCardThreadIds(
 function withDerivedThreadFields(
   card: BoardCardShell,
   threadById: ThreadShellLookup,
-  cardThreads: ReadonlyArray<BoardCardThreadShell> | undefined,
+  liveThreadIdsOf: (card: BoardCardShell) => ReadonlyArray<ThreadId>,
   subagentRequests: ReadonlyMap<ThreadId, PendingSubagentRequest>,
 ): BoardCardShell {
-  const threads = liveCardThreadIds(card, cardThreads).map((threadId) => {
+  const threads = liveThreadIdsOf(card).map((threadId) => {
     const thread = threadById(threadId);
     return thread === undefined
       ? undefined
@@ -442,17 +440,28 @@ function pushColumn(
  */
 export function withBoardThreadFields(
   board: BoardShellSnapshot,
-  threads: ReadonlyArray<OrchestrationV2ThreadShell>,
+  threads:
+    | ReadonlyArray<OrchestrationV2ThreadShell>
+    | ReadonlyMap<ThreadId, BoardThreadShellFields & { readonly id: ThreadId }>,
   subagentRequests: ReadonlyMap<ThreadId, PendingSubagentRequest> = NO_SUBAGENT_REQUESTS,
 ): BoardShellSnapshot {
   if (board.cards.length === 0) return board;
-  const threadsById = new Map(threads.map((thread) => [thread.id, thread]));
+  const threadsById =
+    threads instanceof Map
+      ? threads
+      : new Map(
+          (threads as ReadonlyArray<OrchestrationV2ThreadShell>).map((thread) => [
+            thread.id,
+            thread,
+          ]),
+        );
+  const liveThreadIdsOf = indexLiveCardThreadIds(board.cardThreads);
   let changed = false;
   const cards = board.cards.map((card) => {
     const next = withDerivedThreadFields(
       card,
       (threadId) => threadsById.get(threadId),
-      board.cardThreads,
+      liveThreadIdsOf,
       subagentRequests,
     );
     if (next !== card) changed = true;
@@ -724,17 +733,62 @@ export function createBoardEnvironmentAtoms<R, ER>(
     ) => Atom.Atom<ReadonlyMap<ThreadId, PendingSubagentRequest>>;
   },
 ) {
-  /** The board, with thread-derived card fields overlaid from the live thread
-      shells — null until the board's first snapshot arrives. Every view of the
-      cards reads this, so they all agree on a card's thread state. */
+  const EMPTY_CARD_THREAD_LINKS: ReadonlyArray<BoardCardThreadShell> = [];
+  /** The snapshot's live card-thread links; keeps its identity across deltas that do not
+      touch them (usage, workers, stages), so its readers skip those. */
+  const cardThreadLinksAtom = Atom.family((environmentId: EnvironmentId) =>
+    Atom.make(
+      (get) =>
+        get(options.boardSnapshotValueAtom(environmentId))?.cardThreads ?? EMPTY_CARD_THREAD_LINKS,
+    ).pipe(Atom.withLabel(`environment-board-card-thread-links:${environmentId}`)),
+  );
+
+  /** The board fields of card-linked threads only (`projectBoardCardThreadShells`). Its
+      identity holds across shell pushes for unlinked threads and fields the board does
+      not read, which is what keeps the board views still while agents stream. */
+  const cardThreadShellsAtom = Atom.family((environmentId: EnvironmentId) => {
+    let previous: BoardCardThreadShells = EMPTY_BOARD_CARD_THREAD_SHELLS;
+    let linkedFor: {
+      readonly cards: ReadonlyArray<BoardCardShell>;
+      readonly links: ReadonlyArray<BoardCardThreadShell>;
+      readonly ids: ReadonlySet<ThreadId>;
+    } | null = null;
+    return Atom.make((get): BoardCardThreadShells => {
+      const board = get(options.boardSnapshotValueAtom(environmentId));
+      if (board === null) {
+        previous = EMPTY_BOARD_CARD_THREAD_SHELLS;
+        return previous;
+      }
+      if (linkedFor?.cards !== board.cards || linkedFor.links !== board.cardThreads) {
+        linkedFor = {
+          cards: board.cards,
+          links: board.cardThreads,
+          ids: boardCardLinkedThreadIds(board.cards, board.cardThreads),
+        };
+      }
+      const shell = get(options.shellStateValueAtom(environmentId));
+      previous = projectBoardCardThreadShells({
+        linkedThreadIds: linkedFor.ids,
+        threads: Option.match(shell.snapshot, {
+          onNone: () => [],
+          onSome: (value) => value.threads,
+        }),
+        previous,
+      });
+      return previous;
+    }).pipe(Atom.withLabel(`environment-board-card-thread-shells:${environmentId}`));
+  });
+
+  /** The board with thread-derived card fields overlaid, null until the first snapshot. Every
+      view of the cards reads this, so they agree on a card's thread state. It reads the
+      card-linked projection, not the raw shell, so an unrelated thread's push skips it. */
   const boardAtom = Atom.family((environmentId: EnvironmentId) =>
     Atom.make((get): BoardShellSnapshot | null => {
       const board = get(options.boardSnapshotValueAtom(environmentId));
       if (board === null) return null;
-      const shell = get(options.shellStateValueAtom(environmentId));
       return withBoardThreadFields(
         board,
-        Option.match(shell.snapshot, { onNone: () => [], onSome: (value) => value.threads }),
+        get(cardThreadShellsAtom(environmentId)),
         get(options.pendingSubagentRequestsAtom(environmentId)),
       );
     }).pipe(Atom.withLabel(`environment-board:${environmentId}`)),
@@ -760,7 +814,7 @@ export function createBoardEnvironmentAtoms<R, ER>(
   > = new Map();
   const cardThreadsByCardAtom = Atom.family((environmentId: EnvironmentId) =>
     Atom.make((get) => {
-      const entries = get(options.boardSnapshotValueAtom(environmentId))?.cardThreads ?? [];
+      const entries = get(cardThreadLinksAtom(environmentId));
       if (entries.length === 0) return EMPTY_CARD_THREADS;
       const byCard = new Map<BoardCardId, BoardCardThreadShell[]>();
       for (const entry of entries) {
@@ -885,6 +939,7 @@ export function createBoardEnvironmentAtoms<R, ER>(
 
   return {
     boardAtom,
+    cardThreadShellsAtom,
     capacityAtom,
     capacityAction: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:capacity-action",

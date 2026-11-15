@@ -20,18 +20,8 @@ import type { EnvironmentRegistry } from "../connection/registry.ts";
 import * as ConnectionWakeups from "../connection/wakeups.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
 import { subscribeDynamic } from "../rpc/client.ts";
-import { applyBoardShellStreamItem } from "./boardReducer.ts";
+import { applyBoardShellStreamItems } from "./boardReducer.ts";
 import { followStreamInEnvironment } from "./runtime.ts";
-
-/** Fold a received batch of board items, oldest first. */
-export function applyBoardShellStreamItems(
-  snapshot: BoardShellSnapshot | null,
-  items: ReadonlyArray<BoardShellStreamItem>,
-): BoardShellSnapshot | null {
-  let next = snapshot;
-  for (const item of items) next = applyBoardShellStreamItem(next, item);
-  return next;
-}
 
 /** The subscription input for a client holding `snapshot`. */
 function boardSubscribeInput(snapshot: BoardShellSnapshot | null) {
