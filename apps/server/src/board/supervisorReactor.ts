@@ -2456,43 +2456,39 @@ const make = Effect.gen(function* () {
       service.beingRemoved ??
       Effect.succeed(new Set<BoardWorkerId>() as ReadonlySet<BoardWorkerId>),
   });
-  let repositoryKeyMemo: Map<string, string | null> | null = null;
-  /** Per scheduling pass, per `worker|project` checkout: what git already answered. Only
-      successes are kept, so a failure is retried by the next card that asks. */
-  let passGitMemo: {
+  /** One scheduling pass's memo. Git answers keep only successes, so a failure is retried by
+      the next card that asks; a planning fetch is recorded once attempted, failed or not, so an
+      unreachable remote costs one timeout per checkout per pass, not one per card. */
+  interface PassMemo {
+    readonly repositoryKeys: Map<string, string | null>;
     readonly defaultBranch: Map<string, Effect.Success<ReturnType<typeof resolveDefaultBranch>>>;
     /** `worker|project|base` keys whose base exists locally. */
     readonly baseExists: Set<string>;
-    /** Checkouts fetched for planning this pass. */
+    /** Checkouts whose base a planning fetch was attempted for this pass. */
     readonly fetched: Set<string>;
-  } | null = null;
+  }
+  // Fiber-scoped, not a shared variable: the hold-refresh fiber runs beside a scheduling pass,
+  // and each must see only its own pass's memo.
+  const PassMemoRef = Context.Reference<PassMemo | null>("t3/board/SupervisorPassMemo", {
+    defaultValue: () => null,
+  });
   /** Runs `effect` as one scheduling pass for `projectRepositoryKey` and the git memo; a nested
       pass joins it. */
   const withRepositoryKeyMemo = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-    Effect.suspend(() => {
-      if (repositoryKeyMemo !== null) return effect;
-      const memo = new Map<string, string | null>();
-      const gitMemo = {
-        defaultBranch: new Map(),
-        baseExists: new Set<string>(),
-        fetched: new Set<string>(),
-      };
-      repositoryKeyMemo = memo;
-      passGitMemo = gitMemo;
-      return effect.pipe(
-        Effect.ensuring(
-          Effect.sync(() => {
-            if (repositoryKeyMemo === memo) repositoryKeyMemo = null;
-            if (passGitMemo === gitMemo) passGitMemo = null;
+    Effect.flatMap(PassMemoRef, (current) =>
+      current !== null
+        ? effect
+        : Effect.provideService(effect, PassMemoRef, {
+            repositoryKeys: new Map(),
+            defaultBranch: new Map(),
+            baseExists: new Set(),
+            fetched: new Set(),
           }),
-        ),
-      );
-    });
+    );
   const checkoutKey = (workerId: BoardWorkerId, projectId: ProjectId) => `${workerId}|${projectId}`;
   /** `resolveDefaultBranch`, once per checkout while a scheduling pass runs. */
   const passDefaultBranch = (checkout: string, workspace: BoardCardWorkspace) =>
-    Effect.suspend(() => {
-      const memo = passGitMemo;
+    Effect.flatMap(PassMemoRef, (memo) => {
       const known = memo?.defaultBranch.get(checkout);
       if (known !== undefined) return Effect.succeed(known);
       return resolveDefaultBranch(workspace).pipe(
@@ -2509,8 +2505,7 @@ const make = Effect.gen(function* () {
     workspace: BoardCardWorkspace,
     base: string,
   ) =>
-    Effect.suspend(() => {
-      const memo = passGitMemo;
+    Effect.flatMap(PassMemoRef, (memo) => {
       const key = `${checkout}|${base}`;
       if (memo?.baseExists.has(key) === true) return Effect.succeed<boolean | "unavailable">(true);
       return ensureLocalBaseBranch(workspace, base).pipe(
@@ -2524,13 +2519,14 @@ const make = Effect.gen(function* () {
   /** The board project's repository key, which names its checkout on a worker. Read once per
       project while a scheduling pass runs (T3O-108); a pass-scoped memo needs no invalidation. */
   const projectRepositoryKey = (projectId: ProjectId): Effect.Effect<string | null> =>
-    Effect.suspend(() => {
-      const memo = repositoryKeyMemo;
-      if (memo?.has(projectId) === true) return Effect.succeed(memo.get(projectId) ?? null);
+    Effect.flatMap(PassMemoRef, (memo) => {
+      if (memo?.repositoryKeys.has(projectId) === true) {
+        return Effect.succeed(memo.repositoryKeys.get(projectId) ?? null);
+      }
       return threads.project(projectId).pipe(
         Effect.map((project) => boardRepositoryGroupingKey(project?.repositoryIdentity)),
         Effect.catchCause(() => Effect.succeed(null)),
-        Effect.tap((key) => Effect.sync(() => memo?.set(projectId, key))),
+        Effect.tap((key) => Effect.sync(() => memo?.repositoryKeys.set(projectId, key))),
       );
     });
   /** T3o: capacity claims, grows and the phase rule, when the board has capacity (T3O-86). */
@@ -2693,11 +2689,12 @@ const make = Effect.gen(function* () {
       }
     }
     // Fetch before planning: the plan reads the remote's latest base. Once a pass per checkout.
-    if (resolved.defaultBranch !== "" && passGitMemo?.fetched.has(checkout) !== true) {
+    const passMemo = yield* PassMemoRef;
+    if (resolved.defaultBranch !== "" && passMemo?.fetched.has(checkout) !== true) {
       yield* workspace
         .measureBaseTip({ baseRefName: resolved.defaultBranch })
         .pipe(Effect.ignoreCause);
-      passGitMemo?.fetched.add(checkout);
+      passMemo?.fetched.add(checkout);
     }
     return null;
   });
