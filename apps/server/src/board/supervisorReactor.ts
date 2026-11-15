@@ -10010,6 +10010,7 @@ const make = Effect.gen(function* () {
    */
   const stanceOverride = (
     board: BoardState,
+    settings: BoardSettings,
     card: BoardCard,
     state: BoardCardStepState,
   ): boolean | null => {
@@ -10018,14 +10019,20 @@ const make = Effect.gen(function* () {
     const role = stage === null ? null : effectiveBoardStageRole(stage);
     if (role === "plan" && isBoardCardAutoPlanPending(card)) return false;
     if (role === "plan" && reviewRunsUnattended(card, state)) return false;
-    // Handed back from an unattended review the policy steer has not told yet: attended again.
+    // Handed back from an unattended review the policy steer has not told yet: the stance the
+    // plan step would have held without the review.
     if (
       role === "plan" &&
       state.planReviewStartedAt !== undefined &&
       !state.humanInLoop &&
       (state.planReviewPolicySent ?? "").includes("unattended=true")
     ) {
-      return card.humanInLoop ?? true;
+      const exec = resolveBoardStageExecution(
+        settings,
+        card.stage,
+        boardProjectStageConfig(board, card.projectId),
+      );
+      return card.humanInLoop ?? resolveHumanInLoop(board, settings, card, exec);
     }
     if (role === "build" && automationIn(board, card).autoBuild.value) return false;
     return card.humanInLoop;
@@ -10125,7 +10132,7 @@ const make = Effect.gen(function* () {
     }
     // The card's explicit override wins at every stage, or a toggle on a review or planning step
     // changes the card while the step stays supervised the old way.
-    const desired = stanceOverride(board, card, state) ?? state.humanInLoop;
+    const desired = stanceOverride(board, yield* boardSettings, card, state) ?? state.humanInLoop;
     if (desired === state.humanInLoop) return;
     // A paused step is not told: the turn would resume it through `resumeParkedStep` and overturn
     // the human's Stop. The stance still lands on the row below. Awaiting-input and stalled steps
@@ -11078,7 +11085,7 @@ const make = Effect.gen(function* () {
     card: BoardCard,
     state: BoardCardStepState,
   ) {
-    const desired = stanceOverride(yield* readBoard, card, state);
+    const desired = stanceOverride(yield* readBoard, yield* boardSettings, card, state);
     if (desired === null || desired === state.humanInLoop) return;
     yield* dispatchOptional({
       type: "board.card.retune-step",

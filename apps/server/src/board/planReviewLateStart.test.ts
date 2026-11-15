@@ -405,6 +405,50 @@ it.effect("an unattended review runs without a human: its turn end never parks",
   ),
 );
 
+const cardUpdated = (card: BoardCard, sequence: number): HarnessEvent =>
+  ({
+    type: "board.card-updated",
+    sequence,
+    payload: { cardId: card.id, card },
+  }) as unknown as HarnessEvent;
+
+it.effect.each([false, true])(
+  "Unattended turned off mid-review hands back the stance the plan step would hold (Auto-plan: %s)",
+  (autoPlanSetting) => {
+    const card: BoardCard = { ...unattendedCard("handback"), autoPlanSetting };
+    return withGovernor(
+      {
+        board: { cards: [card], plans: [plan("handback")], nextCardNumberByProject: {} },
+        settings,
+      },
+      (h) =>
+        Effect.gen(function* () {
+          const id = BoardCardId.make("handback");
+          yield* h.pumpDomain(cardMoved(card, "sprint", "planning", 1));
+          yield* h.pumpDomain(reviewStarted(boardCardStepState(yield* h.board, id)!, 2, false));
+          const running = boardCardStepState(yield* h.board, id)!;
+          assert.isFalse(running.humanInLoop);
+          yield* setShell(h, running.threadId!, fakeThreadState(running.threadId!));
+
+          const live = (yield* h.board).cards.find((candidate) => candidate.id === id)!;
+          yield* h.pumpDomain(
+            // Auto-plan's request answered by the posted plan: planning stays unattended.
+            cardUpdated(
+              {
+                ...live,
+                ...(autoPlanSetting ? { autoPlan: { requestedAt: NOW, endedAt: NOW } } : {}),
+                planReview: { enabled: true, rounds: 2, unattended: false },
+              },
+              3,
+            ),
+          );
+
+          assert.strictEqual(boardCardStepState(yield* h.board, id)?.humanInLoop, !autoPlanSetting);
+        }),
+    );
+  },
+);
+
 it.effect("Unattended turned on while parked on a question answers it once and resumes", () =>
   withGovernor(fixture("handover"), (h) =>
     Effect.gen(function* () {
@@ -440,13 +484,6 @@ it.effect("Unattended turned on while parked on a question answers it once and r
     }),
   ),
 );
-
-const cardUpdated = (card: BoardCard, sequence: number): HarnessEvent =>
-  ({
-    type: "board.card-updated",
-    sequence,
-    payload: { cardId: card.id, card },
-  }) as unknown as HarnessEvent;
 
 it.effect("Unattended turned on while parked in prose sends the policy and resumes", () =>
   withGovernor(fixture("prose"), (h) =>
