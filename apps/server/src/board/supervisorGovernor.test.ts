@@ -88,6 +88,13 @@ it.effect("capacity runs two cards strictly in queue order on a worker with room
               ["card-b", "grow"],
             ],
           );
+          // The refresh fiber renews card-b's grow hold, so further passes re-ask nothing.
+          const growHolds = () => capacity.holds.filter((hold) => hold.kind === "grow").length;
+          const asked = growHolds();
+          assert.isAbove(asked, 0);
+          yield* reactor.sweep;
+          yield* reactor.sweep;
+          assert.strictEqual(growHolds(), asked);
 
           // card-a's step ends; the capacity sweep releases it (card-b waits on that worker)
           // and places card-b.

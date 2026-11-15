@@ -2007,6 +2007,7 @@ const make = Effect.gen(function* () {
       profile: card.resources?.grant?.profile ?? requestedProfileOf(board, card),
       kind: "grow",
     };
+    if (holdFresh(String(card.id), workerId, input, yield* Clock.currentTimeMillis)) return true;
     const answer = yield* capacityClient.value.hold(workerId, input);
     if (answer === null || answer.outcome === "refused") {
       forgetHold(String(card.id), workerId);
