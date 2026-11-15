@@ -6,6 +6,7 @@
 import {
   BOARD_WORKER_PROTOCOL_FLOOR_T3O_VERSION,
   type BoardWorkerCheckout,
+  type BoardWorkerReadiness,
   type BoardWorkerSetup,
   type BoardWorkerSetupFailureKind,
   type BoardWorkerView,
@@ -180,6 +181,51 @@ export function checkoutCell(input: {
   }
   if (!online) return { kind: "set-up-when-online" };
   return { kind: "not-checked-out", canSetUp: input.projectHasRemote };
+}
+
+export type WorkerProjectState =
+  | CheckoutCell
+  | { readonly kind: "ready"; readonly checkedAt: string | null; readonly noScript: boolean }
+  | {
+      readonly kind: "not-ready";
+      readonly path: string;
+      readonly checkedAt: string | null;
+      readonly exitCode: number | null;
+      readonly lastLine: string | null;
+    }
+  | { readonly kind: "checking" };
+
+/**
+ * A project's row under a worker on the Workers page: its checkout, and once it is checked
+ * out, what its readiness script last said. A checkout never checked reads Checked out.
+ */
+export function workerProjectState(
+  cell: CheckoutCell,
+  readiness: BoardWorkerReadiness | null,
+): WorkerProjectState {
+  if (cell.kind !== "checked-out" || readiness === null) return cell;
+  switch (readiness.state) {
+    case "ready":
+      return {
+        kind: "ready",
+        checkedAt: readiness.checkedAt,
+        noScript: readiness.noScript === true,
+      };
+    case "not-ready":
+      return {
+        kind: "not-ready",
+        path: readiness.path,
+        checkedAt: readiness.checkedAt,
+        exitCode: readiness.exitCode ?? null,
+        lastLine: readiness.lastLine || null,
+      };
+    case "checking":
+      return { kind: "checking" };
+    case "cloning":
+      return { kind: "cloning", percent: null, stage: null };
+    case "not-set-up":
+      return cell;
+  }
 }
 
 /** Git's own phase, as the cell reads it ("Receiving objects"). */

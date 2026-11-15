@@ -30,8 +30,9 @@ is not connected, the board says so and offers to reconnect or switch back to th
   Tailscale address; pass `--insecure` to override.
 - Run one board server process per address.
 
-Set the address workers should use under **Settings → Board → Board address**. Until you do, the
-join command uses the address your browser has open, which may not be reachable from the worker.
+The join command uses the address your browser has the board open on. If workers reach the board
+another way (you opened it on `localhost`, or through a tunnel), press **Use another address** in
+the Add worker dialog. Joined workers are told about the new address and move to it.
 
 ### Adding a worker
 
@@ -191,15 +192,14 @@ no new work until usage drops.
 starts again when the window resets. Workers signed into the same subscription see the same usage,
 so they stop together.
 
-**After upgrading.** The old Concurrency settings are gone; **Settings → Board** says where each
-limit went. Your workers declare their capacity instead, `maxAgents` and provider caps start unset,
+**After upgrading.** The old Concurrency settings are gone. Your workers declare their capacity instead, `maxAgents` and provider caps start unset,
 and each project gets a baseline worked out from its recent cards, marked **set at upgrade** until
 you change it.
 
 ## Card sizes and a project's baseline
 
 A card reserves its project's **baseline** on its worker: what one normal card of that project
-needs in CPU, RAM and disk. Set it in **Settings → Board → Projects → <project> → Resources**, or
+needs in CPU, RAM and disk. Set it on the project's **Resources** tab (**Settings → Board → Pipeline**, then the project), or
 in the `resources` block of the project's `t3o.json`. Each card has a size per dimension — S, M, L
 or XL — that scales the baseline (M is the baseline itself). The planner suggests a size with its
 plan; change it under **Resources** in the card's sidebar, where **Reset to planner** goes back to
@@ -348,12 +348,13 @@ threads are kept.
 
 ## Project checkouts
 
-Once a board has a worker, **Settings → Board → Project checkouts** shows which board projects each
-worker has a copy of. A worker can only run cards for projects it has checked out. It matches them
-by the repository's git remote.
+On **Settings → Board → Workers**, each worker lists the board's projects beneath it: whether it
+has a copy, and what the project's readiness script last said there. A worker can only run cards
+for projects it has checked out and ready. It matches them by the repository's git remote.
+**Re-check** runs the readiness script again.
 
 For a project a worker doesn't have, press **Set up on worker**. The worker clones the project's
 remote into its projects folder, using that machine's git credentials, and you can change the
 folder before cloning. The clone runs on the worker, so you can leave the page while it runs. If a
-clone fails, the cell says why. **Details** shows git's own output, which you can copy, and you can
+clone fails, the row says why. **Details** shows git's own output, which you can copy, and you can
 **Retry** from there.

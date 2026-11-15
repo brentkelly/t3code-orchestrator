@@ -43,6 +43,8 @@ export type SettingsPath =
   | "/settings/archived"
   // T3o: Board settings page (D1 — the board is a single settings page).
   | "/settings/board"
+  // T3o: the board's pipeline page.
+  | "/settings/board/pipeline"
   // T3o: the board's workers page (T3O-84).
   | "/settings/board/workers";
 
@@ -123,6 +125,8 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/archived": "Archive",
   // T3o: Board settings nav label.
   "/settings/board": "Board",
+  // T3o: the board's pipeline page.
+  "/settings/board/pipeline": "Pipeline",
   // T3o: the board's workers page (T3O-84).
   "/settings/board/workers": "Workers",
 };
@@ -144,8 +148,11 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
       "/settings/snap-shot",
     ],
   },
-  // T3o: the board's settings page, set apart at the top of the stock groups.
-  { heading: null, paths: ["/settings/board", "/settings/board/workers"] },
+  // T3o: the board's settings pages, a group above the stock ones.
+  {
+    heading: "Board",
+    paths: ["/settings/board", "/settings/board/pipeline", "/settings/board/workers"],
+  },
   {
     heading: "Agents",
     paths: [
@@ -1374,6 +1381,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/archived": "project-defaults",
   // T3o: the board pages read the primary environment's settings at any selection.
   "/settings/board": null,
+  "/settings/board/pipeline": null,
   "/settings/board/workers": null,
 };
 

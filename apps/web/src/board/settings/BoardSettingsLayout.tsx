@@ -1,8 +1,7 @@
 /**
- * T3o: Settings → Board as a layout: General and one page
- * per project, under `/settings/board/`. The sub-nav lists the board's
- * projects; a blue dot marks one whose committed `t3o.json` differs from its
- * pipeline (known once General or the project's Import tab has looked).
+ * T3o: Settings → Board as a layout: General, Pipeline, Workers and one page per project.
+ * On Pipeline and project pages a strip switches between pipelines; a dot marks a project
+ * whose committed `t3o.json` differs from its pipeline.
  */
 import { AuthSettingsWriteScope, type EnvironmentId, type ProjectId } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
@@ -45,8 +44,10 @@ export function useBoardSettingsProjects(environmentId: EnvironmentId) {
 
 export function BoardSettingsLayout() {
   const resolution = useBoardEnvironment();
+  const pathname = useLocation({ select: (location) => location.pathname });
   return (
-    <SettingsPageContainer>
+    // The Workers table has five columns of meters; it gets the wider page.
+    <SettingsPageContainer width={pathname === "/settings/board/workers" ? "expanded" : "readable"}>
       {/* Which server's board this device shows, and whether it is reachable. */}
       <BoardServerStatusNotice className="mx-3 sm:mx-4" />
       {resolution.kind === "ready" ? (
@@ -83,7 +84,7 @@ function BoardSettingsReady(props: { readonly environmentId: EnvironmentId }) {
   };
   return (
     <BoardSettingsContext.Provider value={value}>
-      <BoardSettingsNav environmentId={props.environmentId} importWaiting={importWaiting} />
+      <BoardProjectsStrip environmentId={props.environmentId} importWaiting={importWaiting} />
       <Outlet />
     </BoardSettingsContext.Provider>
   );
@@ -93,18 +94,20 @@ const NAV_LINK =
   "rounded-md px-2 py-1 text-board-13 text-muted-foreground hover:bg-accent hover:text-foreground";
 const NAV_ACTIVE = "bg-accent font-medium text-foreground";
 
-function BoardSettingsNav(props: {
+function BoardProjectsStrip(props: {
   readonly environmentId: EnvironmentId;
   readonly importWaiting: ReadonlySet<string>;
 }) {
   const projects = useBoardSettingsProjects(props.environmentId);
   const pathname = useLocation({ select: (location) => location.pathname });
+  if (pathname !== "/settings/board/pipeline" && !pathname.startsWith("/settings/board/projects/"))
+    return null;
   return (
     <nav
-      aria-label="Board settings"
+      aria-label="Pipelines"
       className="mx-3 flex flex-wrap items-center gap-1 border-b border-border pb-2 sm:mx-4"
     >
-      <NavLink to="/settings/board">General</NavLink>
+      <NavLink to="/settings/board/pipeline">All projects</NavLink>
       {projects.length > 0 ? <span className="mx-1 h-4 w-px bg-border" /> : null}
       {projects.map((project) => (
         <Link
@@ -140,7 +143,7 @@ function BoardSettingsNav(props: {
   );
 }
 
-function NavLink(props: { readonly to: "/settings/board"; readonly children: ReactNode }) {
+function NavLink(props: { readonly to: "/settings/board/pipeline"; readonly children: ReactNode }) {
   return (
     <Link
       activeOptions={{ exact: true }}

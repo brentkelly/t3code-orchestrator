@@ -69,7 +69,7 @@ export function BoardServerPlanningCallouts(props: { readonly environmentId: Env
     toastManager.add({ type: "success", title: `${titleOf(projectId)} was cloned here` });
   };
   return (
-    <div className="mx-3 mt-2 flex flex-col gap-2 sm:mx-4">
+    <div className="flex flex-col gap-2">
       {callouts.map((callout) => {
         const project = titleOf(callout.projectId);
         const waiting = `${callout.waiting} card${callout.waiting === 1 ? "" : "s"} waiting`;

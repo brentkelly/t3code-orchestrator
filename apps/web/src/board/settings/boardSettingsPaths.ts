@@ -4,6 +4,19 @@ export function isBoardSettingsPath(pathname: string): boolean {
   return pathname === "/settings/board" || pathname.startsWith("/settings/board/");
 }
 
+/** The sidebar's own label where it differs from the page's breadcrumb label: under the
+    Board heading, the board's main page reads General. */
+export function boardSettingsNavLabel(to: string): string | null {
+  return to === "/settings/board" ? "General" : null;
+}
+
+/** A project's board settings are its pipeline, CI and resources: they light Pipeline. */
+function boardSettingsNavPath(activePath: string): string {
+  return activePath.startsWith("/settings/board/projects/")
+    ? "/settings/board/pipeline"
+    : activePath;
+}
+
 /** Whether a settings nav entry is the active one: the longest entry the path falls
     under wins, so Settings → Workers does not also light Board. */
 export function isSettingsNavPathActive(
@@ -11,6 +24,7 @@ export function isSettingsNavPathActive(
   to: string,
   navPaths: ReadonlyArray<string>,
 ): boolean {
-  const matches = (path: string) => activePath === path || activePath.startsWith(`${path}/`);
+  const path = boardSettingsNavPath(activePath);
+  const matches = (candidate: string) => path === candidate || path.startsWith(`${candidate}/`);
   return matches(to) && !navPaths.some((other) => other.length > to.length && matches(other));
 }

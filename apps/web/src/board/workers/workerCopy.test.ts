@@ -13,6 +13,7 @@ import {
   workerLastSeen,
   workerLastSeenDeadlines,
   workersNeedAttention,
+  workerProjectState,
   workerStatusPresentation,
 } from "./workerCopy";
 
@@ -156,6 +157,39 @@ describe("project checkout cells", () => {
         nowMs: NOW + SETUP_JUST_NOW_MS,
       }).kind,
     ).toBe("checked-out");
+  });
+
+  it("reads a checkout's readiness, and leaves anything not checked out to the checkout", () => {
+    const checkedOut = { kind: "checked-out", path: "~/src/app", lastKnown: false } as const;
+    const readiness = {
+      repositoryKey: "github.com/acme/app",
+      path: ".t3/ready.sh",
+      version: null,
+      checkedAt: "2026-10-21T09:40:00.000Z",
+    };
+    expect(workerProjectState(checkedOut, null)).toBe(checkedOut);
+    expect(workerProjectState(checkedOut, { ...readiness, state: "ready" })).toEqual({
+      kind: "ready",
+      checkedAt: "2026-10-21T09:40:00.000Z",
+      noScript: false,
+    });
+    expect(
+      workerProjectState(checkedOut, {
+        ...readiness,
+        state: "not-ready",
+        exitCode: 1,
+        lastLine: "",
+      }),
+    ).toEqual({
+      kind: "not-ready",
+      path: ".t3/ready.sh",
+      checkedAt: "2026-10-21T09:40:00.000Z",
+      exitCode: 1,
+      lastLine: null,
+    });
+    expect(workerProjectState(checkedOut, { ...readiness, state: "not-set-up" })).toBe(checkedOut);
+    const notCheckedOut = { kind: "not-checked-out", canSetUp: true } as const;
+    expect(workerProjectState(notCheckedOut, { ...readiness, state: "ready" })).toBe(notCheckedOut);
   });
 
   it("reads the host off https and scp-style remotes", () => {

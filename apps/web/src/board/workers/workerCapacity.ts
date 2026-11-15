@@ -1,6 +1,6 @@
 /**
  * T3o: a worker's capacity as the Workers page shows it (T3O-86): how much of each declared
- * dimension is free, its agents, each provider's account and quota, and its project readiness.
+ * dimension is free, its agents, and each provider's account and quota.
  */
 import {
   BOARD_RESOURCE_DIMENSIONS,
@@ -21,6 +21,10 @@ export interface BoardWorkerCapacityLines {
     readonly label: string;
     /** 0 to 1: how much of the declared amount is in use. */
     readonly used: number;
+    /** Rounded to one decimal: the bold number is what's free, out of what's declared. */
+    readonly free: number;
+    readonly declared: number;
+    readonly unit: string;
     /** "3.5 of 16 cores free". */
     readonly text: string;
     /** "Declared 32 cores · offered 4 · this board's cards hold 24". */
@@ -32,22 +36,21 @@ export interface BoardWorkerCapacityLines {
   readonly over: string | null;
   /** One per provider: its account, its usage windows, and why it takes no work. */
   readonly providers: ReadonlyArray<BoardWorkerProviderLines>;
-  /** "Ready for 3 of 4 projects", or null when none was checked. */
-  readonly readiness: string | null;
-  readonly notReady: number;
-  /** One line per project not ready: "acme/app · Not ready · exit 1". */
-  readonly projects: ReadonlyArray<string>;
   /** Null while live; "Last report 14:02" when the worker is out of reach. */
   readonly stale: string | null;
 }
 
 export interface BoardWorkerProviderLines {
-  /** "Claude · dev@acme.dev · Max". */
-  readonly title: string;
+  /** "Claude". */
+  readonly name: string;
+  /** "dev@acme.dev · Max", or null when signed out or unknown. */
+  readonly account: string | null;
   readonly windows: ReadonlyArray<{
     readonly label: string;
     /** 0 to 1. */
     readonly used: number;
+    /** Whole percent used. */
+    readonly percent: number;
     /** "Session · 42% used · resets 14:00". */
     readonly text: string;
     /** Amber: at the worker's threshold, so it refuses new cards. */
@@ -72,14 +75,19 @@ function providerLines(
 ): BoardWorkerProviderLines {
   const name = PROVIDER_DISPLAY_NAMES[provider.driver as ProviderDriverKind] ?? provider.driver;
   const login = LOGIN_COMMANDS[provider.driver];
-  const signedIn = provider.account.status === "signed-in";
+  const account =
+    provider.account.status === "signed-in"
+      ? [provider.account.email, provider.account.plan]
+          .filter((part): part is string => part != null)
+          .join(" · ")
+      : "";
   return {
-    title: [name, signedIn ? provider.account.email : null, signedIn ? provider.account.plan : null]
-      .filter((part): part is string => part != null)
-      .join(" · "),
+    name,
+    account: account === "" ? null : account,
     windows: provider.quota.windows.map((window) => ({
       label: window.label,
       used: Math.min(1, Math.max(0, window.usedPercent / 100)),
+      percent: Math.round(window.usedPercent),
       text: [
         window.label,
         `${Math.round(window.usedPercent)}% used`,
@@ -102,14 +110,6 @@ function providerLines(
         : null,
   };
 }
-
-const STATE_NAMES = {
-  "not-set-up": "Not set up",
-  cloning: "Cloning",
-  checking: "Checking",
-  ready: "Ready",
-  "not-ready": "Not ready",
-} as const;
 
 /**
  * T3o: what the Workers page says of a worker's holds (T3O-87). This board's own hold names its
@@ -142,6 +142,9 @@ export function boardWorkerCapacityLines(
     return {
       label: NAMES[dimension],
       used: declared <= 0 ? 1 : Math.min(1, Math.max(0, 1 - free / declared)),
+      free: round(free),
+      declared: round(declared),
+      unit,
       text: `${round(free)} of ${round(declared)} ${unit} free`,
       tooltip: [
         `Declared ${round(declared)} ${unit}`,
@@ -155,8 +158,6 @@ export function boardWorkerCapacityLines(
     };
   });
   const { running, max } = snapshot.agents;
-  const ready = snapshot.readiness.filter((entry) => entry.state === "ready").length;
-  const notReady = snapshot.readiness.filter((entry) => entry.state === "not-ready").length;
   return {
     bars,
     agents: `${running} ${running === 1 ? "agent" : "agents"} running${
@@ -168,25 +169,6 @@ export function boardWorkerCapacityLines(
         ? "Over its declared disk: takes no new worktrees until space is freed."
         : null,
     providers: snapshot.providers.map((provider) => providerLines(provider, clock, workerName)),
-    readiness:
-      snapshot.readiness.length === 0
-        ? null
-        : `Ready for ${ready} of ${snapshot.readiness.length} ${
-            snapshot.readiness.length === 1 ? "project" : "projects"
-          }`,
-    notReady,
-    projects: snapshot.readiness
-      .filter((entry) => entry.state !== "ready")
-      .map((entry) =>
-        [
-          entry.repositoryKey?.split("/").slice(-2).join("/") ?? "This project",
-          STATE_NAMES[entry.state],
-          entry.exitCode == null ? null : `exit ${entry.exitCode}`,
-          entry.lastLine ?? null,
-        ]
-          .filter((part): part is string => part !== null && part !== "")
-          .join(" · "),
-      ),
     stale: live ? null : `Last report ${clock(snapshot.at)}`,
   };
 }

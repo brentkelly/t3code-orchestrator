@@ -19,6 +19,8 @@ import {
   LayoutGridIcon,
   // T3o: the board's Workers nav icon (T3O-84).
   ServerCogIcon,
+  // T3o: the board's Pipeline nav icon.
+  WorkflowIcon,
   GitBranchIcon,
   GlobeIcon,
   InfoIcon,
@@ -65,7 +67,10 @@ import { useAvailableSettingsSearchItems } from "./useAvailableSettingsSearchIte
 import { useSettingsSectionNavigation } from "./useSettingsSectionNavigation";
 import { workspaceAreaProps } from "../../lib/workspaceFocus";
 // T3o: the board's Workers nav item (T3O-84).
-import { isSettingsNavPathActive } from "../../board/settings/boardSettingsPaths";
+import {
+  boardSettingsNavLabel,
+  isSettingsNavPathActive,
+} from "../../board/settings/boardSettingsPaths";
 import { SettingsNavAttentionDot } from "../../board/workers/WorkersNavDot";
 
 const SnapShotIcon = createLucideIcon("snap-shot", [
@@ -113,6 +118,8 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/connections": ServerIcon,
   // T3o: Board settings page icon.
   "/settings/board": LayoutGridIcon,
+  // T3o: the board's Pipeline page icon.
+  "/settings/board/pipeline": WorkflowIcon,
   // T3o: the board's Workers page icon (T3O-84).
   "/settings/board/workers": ServerCogIcon,
   "/settings/access": ShieldCheckIcon,
@@ -435,7 +442,8 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                                 <span
                                   className={cn("truncate", !compactSearchOpen && "max-md:sr-only")}
                                 >
-                                  {SETTINGS_SECTION_LABELS[to]}
+                                  {/* T3o: the board's main page reads General under its heading. */}
+                                  {boardSettingsNavLabel(to) ?? SETTINGS_SECTION_LABELS[to]}
                                 </span>
                                 {/* T3o: a worker needs attention (T3O-84). */}
                                 <SettingsNavAttentionDot to={to} />

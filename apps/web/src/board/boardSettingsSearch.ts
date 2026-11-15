@@ -59,7 +59,7 @@ export const BOARD_SETTINGS_SEARCH_ITEMS = [
   {
     id: "board-pipeline",
     title: "Pipeline",
-    to: "/settings/board",
+    to: "/settings/board/pipeline",
     searchTerms: ["stages default for projects continuous integration ci fix attempts"],
   },
   // Each project's pipeline, CI and t3o.json live on its own page,
@@ -74,21 +74,17 @@ export const BOARD_SETTINGS_SEARCH_ITEMS = [
   {
     id: "board-default-model",
     title: "Board default model",
-    to: "/settings/board",
+    to: "/settings/board/pipeline",
     targetId: "board-pipeline",
-  },
-  {
-    id: "board-concurrency",
-    title: "Capacity",
-    to: "/settings/board",
-    searchTerms: ["concurrency limit agents baseline resources capacity"],
   },
   // The distributed board.
   {
     id: "board-workers",
     title: "Workers",
     to: "/settings/board/workers",
-    searchTerms: ["add worker join code remote machine rename abbreviation remove"],
+    searchTerms: [
+      "add worker join code remote machine rename abbreviation remove capacity headroom concurrency board address url",
+    ],
   },
   {
     id: "board-default-worker",
@@ -97,12 +93,12 @@ export const BOARD_SETTINGS_SEARCH_ITEMS = [
     targetId: "board-workers",
   },
   {
-    id: "board-address",
-    title: "Board address",
+    id: "board-project-checkouts",
+    title: "Project checkouts",
     to: "/settings/board/workers",
-    searchTerms: ["worker join url public address"],
+    targetId: "board-workers",
+    searchTerms: ["set up clone readiness re-check"],
   },
-  { id: "board-project-checkouts", title: "Project checkouts", to: "/settings/board/workers" },
   {
     id: "board-reclaim-worktree-on-done",
     title: 'Reclaim worktrees at "Done"',

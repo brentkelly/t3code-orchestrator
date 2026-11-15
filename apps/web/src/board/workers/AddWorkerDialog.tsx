@@ -8,11 +8,14 @@ import { useAtomValue } from "@effect/atom-react";
 import {
   BOARD_WORKER_JOIN_CODE_TTL_MINUTES,
   BOARD_WORKER_PROTOCOL_FLOOR_T3O_VERSION,
+  BoardAddress,
+  type BoardWorkerId,
   type BoardWorkerJoinCodeCreated,
   type BoardWorkerJoinMilestone,
   type EnvironmentId,
 } from "@t3tools/contracts";
 import { CheckIcon, CircleIcon, InfoIcon } from "lucide-react";
+import * as Schema from "effect/Schema";
 import { useState } from "react";
 
 import { Button } from "../../components/ui/button";
@@ -25,11 +28,13 @@ import {
   DialogPopup,
   DialogTitle,
 } from "../../components/ui/dialog";
+import { Input } from "../../components/ui/input";
 import { toastManager } from "../../components/ui/toast";
 import { boardEnvironment } from "../../state/board";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { describeBoardCommandFailure } from "../boardCommandFeedback";
 import { BoardDialogTitle } from "../ui/BoardDialog";
+import { useUpdateBoardSettings } from "../useBoardEnvironmentId";
 import { useNowAtDeadlines } from "./boardWorkersState";
 import {
   joinDialogDeadlines,
@@ -45,6 +50,81 @@ import { CopyCommand, WorkerNameFields } from "./workerUi";
 
 const BOARD_WORKERS_DOCS_URL =
   "https://github.com/brentkelly/t3code-orchestrator/blob/t3o/docs/user/board-workers.md#workers";
+
+const isBoardAddress = Schema.is(BoardAddress);
+
+/**
+ * The address in the join command, and where it's changed. Unset, it is the address this page
+ * is open on, which a worker may not reach (localhost, or a tunnel that only passes a browser):
+ * the saved address is also the one the board tells joined workers to move to.
+ */
+function JoinAddress(props: { readonly boardUrl: string; readonly isFallback: boolean }) {
+  const update = useUpdateBoardSettings();
+  const [draft, setDraft] = useState<string | null>(null);
+  const trimmed = draft?.trim() ?? "";
+  const invalid = trimmed.length > 0 && !isBoardAddress(trimmed);
+  if (draft === null) {
+    return (
+      <span className="text-board-12 text-muted-foreground">
+        {props.isFallback
+          ? "This is the address this page is open on. Make sure workers can reach it."
+          : "Workers join and stay connected on this address."}{" "}
+        <button
+          className="underline underline-offset-2 hover:text-foreground"
+          onClick={() => setDraft(props.isFallback ? "" : props.boardUrl)}
+          type="button"
+        >
+          Use another address
+        </button>
+      </span>
+    );
+  }
+  const save = () => {
+    if (invalid) return;
+    update({ board: { workers: { boardAddress: trimmed.length === 0 ? null : trimmed } } });
+    setDraft(null);
+  };
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="flex items-center gap-2">
+        <Input
+          autoFocus
+          aria-label="Board address"
+          aria-invalid={invalid}
+          className="min-w-0 flex-1"
+          placeholder="https://board.example"
+          size="sm"
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") save();
+            if (event.key === "Escape") {
+              event.stopPropagation();
+              setDraft(null);
+            }
+          }}
+        />
+        <Button size="sm" variant="outline" onClick={() => setDraft(null)}>
+          Cancel
+        </Button>
+        <Button size="sm" disabled={invalid} onClick={save}>
+          Save
+        </Button>
+      </div>
+      <span
+        className={
+          invalid
+            ? "text-board-12 text-destructive-foreground"
+            : "text-board-12 text-muted-foreground"
+        }
+      >
+        {invalid
+          ? "Use an http:// or https:// address, such as https://board.example."
+          : "The address workers reach this board on. Leave it empty to use the one this page is open on."}
+      </span>
+    </div>
+  );
+}
 
 /** The join command a worker runs, with the board's address. */
 function workerJoinCommand(boardUrl: string, code: string): string {
@@ -63,8 +143,8 @@ export function AddWorkerDialog(props: {
   readonly boardUrl: string;
   /** No board address is set: the URL is this browser's own. */
   readonly boardUrlIsFallback: boolean;
-  readonly onSetBoardAddress: () => void;
-  readonly onSetUpProjects: () => void;
+  /** Takes the user to the new worker's projects on the Workers page. */
+  readonly onSetUpProjects: (workerId: BoardWorkerId) => void;
 }) {
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
@@ -203,21 +283,7 @@ function JoinCodeFlow(
                 How workers join
               </a>
             </span>
-            {props.boardUrlIsFallback ? (
-              <span className="text-board-12 text-muted-foreground">
-                Make sure workers can reach this address.{" "}
-                <button
-                  className="underline underline-offset-2 hover:text-foreground"
-                  onClick={() => {
-                    props.close();
-                    props.onSetBoardAddress();
-                  }}
-                  type="button"
-                >
-                  Set the board address
-                </button>
-              </span>
-            ) : null}
+            <JoinAddress boardUrl={props.boardUrl} isFallback={props.boardUrlIsFallback} />
           </div>
           <div className="flex gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2.5 text-board-12-5 text-muted-foreground">
             <InfoIcon className="mt-0.5 size-3.5 shrink-0" />
@@ -378,7 +444,7 @@ function JoinedStep(props: {
   readonly environmentId: EnvironmentId;
   readonly phase: Extract<JoinDialogPhase, { kind: "joined" }>;
   readonly close: () => void;
-  readonly onSetUpProjects: () => void;
+  readonly onSetUpProjects: (workerId: BoardWorkerId) => void;
 }) {
   const { usedBy, worker } = props.phase;
   const state = useAtomValue(boardEnvironment.workersAtom(props.environmentId));
@@ -469,7 +535,7 @@ function JoinedStep(props: {
           onClick={() =>
             void save(() => {
               props.close();
-              props.onSetUpProjects();
+              props.onSetUpProjects(usedBy.workerId);
             })
           }
         >

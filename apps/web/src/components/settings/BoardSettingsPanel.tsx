@@ -27,7 +27,7 @@ import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 import { Switch } from "../ui/switch";
 import { normalizeKeyPrefixInput, setBoardProjectSetting } from "./BoardSettingsPanel.logic";
-import { BoardPipelineSection, NumberStepper } from "./BoardPipelineSection";
+import { NumberStepper } from "./BoardPipelineSection";
 import { BoardSettingsCard, BoardSettingsCardRow } from "../../board/settings/boardSettingsCards";
 import { BoardImportNotices } from "../../board/settings/BoardImportNotice";
 import { searchableSetting } from "./settingsSearch";
@@ -42,8 +42,7 @@ import { BoardInput } from "../../board/ui/BoardInput";
 import { BoardButton } from "../../board/ui/BoardButton";
 
 /** Settings → Board → General: the board server, display, the
-    project list with its import notices, the global pipeline, the capacity note and lifecycle.
-    Workers have their own page.
+    project list with its import notices, and lifecycle. Pipeline and Workers have their own pages.
     The layout resolves the board server first. */
 export function BoardSettingsPanel() {
   const resolution = useBoardEnvironment();
@@ -70,8 +69,6 @@ function BoardSettingsSections({ environmentId }: { environmentId: EnvironmentId
       {/* Committed t3o.json files waiting to import. */}
       <BoardImportNotices />
       <ProjectsSection board={board} environmentId={environmentId} update={update} />
-      <BoardPipelineSection />
-      <BoardCapacityNote />
       <LifecycleSection board={board} update={update} />
     </>
   );
@@ -231,29 +228,6 @@ function ProjectRows({
         );
       })}
     </div>
-  );
-}
-
-// ── Capacity ───────────────────────────────────────────────────────────
-
-/**
- * T3o: the board's concurrency limits are gone (T3O-86). Each worker decides what it offers,
- * and each project's baseline says what a card reserves; this note points at both.
- */
-function BoardCapacityNote() {
-  const anchor = searchableSetting("board-concurrency");
-  return (
-    <SettingsSection id="board-concurrency" title={anchor.title} variant="plain">
-      <BoardSettingsCard>
-        <p className="py-1 text-board-13-5 text-muted-foreground">
-          Limits are now{" "}
-          <Link to="/settings/board/workers" className="text-foreground underline">
-            this server's capacity
-          </Link>{" "}
-          and each project's baseline, set on its Resources tab.
-        </p>
-      </BoardSettingsCard>
-    </SettingsSection>
   );
 }
 
