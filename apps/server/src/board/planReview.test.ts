@@ -11,6 +11,7 @@ import {
   ProviderInstanceId,
   ThreadId,
   type BoardCard,
+  type BoardCardPlanReview,
   type BoardCardStepState,
   type BoardState,
 } from "@t3tools/contracts";
@@ -137,7 +138,9 @@ describe("plan review on the server", () => {
 
   it("stamps the new-card defaults on a create, but never over its own or on a heading", () => {
     const board = boardOf(card(), state());
-    const create = { projectId: card().projectId };
+    const create: { projectId: ProjectId; planReview?: BoardCardPlanReview } = {
+      projectId: card().projectId,
+    };
     assert.deepStrictEqual(withPlanReviewCreationDefaults(create, board, settings).planReview, {
       enabled: true,
       rounds: 3,

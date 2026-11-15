@@ -15,7 +15,8 @@ import { boardStackEngine, makeBoardStackTestLayer } from "./boardStack.testkit.
 
 const projectId = ProjectId.make("project-tail");
 const cardId = BoardCardId.make("card-tail-1");
-const minute = (n: number) => new Date(Date.UTC(2026, 0, 1, 0, n)).toISOString();
+const minute = (n: number) =>
+  `2026-01-01T${String(Math.floor(n / 60)).padStart(2, "0")}:${String(n % 60).padStart(2, "0")}:00.000Z`;
 
 it.layer(makeBoardStackTestLayer("t3o-board-plan-review-tail-"))("the activity tail", (it) => {
   it.effect("keeps a finished plan review after later rows push it past the limit", () =>

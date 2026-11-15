@@ -58,6 +58,9 @@ Auto sign-off on later approves a plan that is waiting. A proposed split always 
 - **Auto-review plans**: whether new cards start with plan review on.
 - **Rounds**: the target new cards start with. You can change it on any card.
 - **Run unattended**: whether new cards' reviews start unattended.
+- **Review older cards** and **Older cards' rounds**: shown only while the old "review plans by
+  default" setting is on. They control cards created before new-card defaults that have no plan
+  review setting of their own. Turn it off and those cards' plans come straight to you.
 - **Prompt**: what the planning agent is told to do. Write `{rounds}` where the round target should
   go. **Reset** brings back the shipped prompt.
 

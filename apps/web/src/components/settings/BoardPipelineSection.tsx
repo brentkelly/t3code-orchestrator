@@ -1713,7 +1713,7 @@ function PlanReviewSettingsBlock(props: {
         label="Auto-review plans"
         hint={
           newCards.enabled
-            ? `All cards will be automatically reviewed by agents for ${newCards.rounds} ${newCards.rounds === 1 ? "round" : "rounds"}.`
+            ? `New cards will be automatically reviewed by agents for ${newCards.rounds} ${newCards.rounds === 1 ? "round" : "rounds"}.`
             : "Off. Turn plan review on per card from its sidebar."
         }
         checked={newCards.enabled}
@@ -1741,6 +1741,32 @@ function PlanReviewSettingsBlock(props: {
             checked={newCards.unattended === true}
             ariaLabel="Run plan reviews unattended"
             onChange={(unattended) => setNewCards({ unattended })}
+          />
+        </>
+      ) : null}
+      {current.enabledByDefault ? (
+        // Cards created before per-card defaults follow this fallback; shown only while it is
+        // on, so an install that had it on keeps a way to change or end it.
+        <>
+          <ToggleRow
+            label="Review older cards"
+            hint="Cards created before new-card defaults, with no plan review setting of their own, are reviewed."
+            checked={current.enabledByDefault}
+            ariaLabel="Review older cards' plans"
+            onChange={(enabledByDefault) => set({ enabledByDefault })}
+          />
+          <NumberRow
+            label="Older cards' rounds"
+            hint="The round target those older cards use."
+            stepper={
+              <NumberStepper
+                value={current.defaultRounds}
+                min={BOARD_PLAN_REVIEW_ROUNDS_MIN}
+                max={BOARD_PLAN_REVIEW_ROUNDS_MAX}
+                ariaLabel="Plan review rounds for older cards"
+                onChange={(defaultRounds) => set({ defaultRounds })}
+              />
+            }
           />
         </>
       ) : null}
