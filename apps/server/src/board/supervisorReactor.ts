@@ -7573,18 +7573,20 @@ const make = Effect.gen(function* () {
       const listed = yield* workspace
         .listBoardWorktrees({})
         .pipe(Effect.catchCause(() => Effect.succeed({ worktrees: [] })));
+      const boardHere = placedHere(board);
+      // Asked at most once per workspace, and only when an orphan has no owner to name it.
+      let defaultBranch: string | undefined;
       for (const registered of listed.worktrees) {
         const candidate = { path: registered.path, branch: registered.branch };
-        if (!isOrphanWorktree(placedHere(board), candidate)) continue;
-        const owner = placedHere(board).cards.find(
-          (card) => card.worktree?.branch === registered.branch,
-        );
-        const baseRefName =
-          owner?.worktree?.baseRefName ??
-          (yield* workspace.remoteDefaultBranch({}).pipe(
+        if (!isOrphanWorktree(boardHere, candidate)) continue;
+        const owner = boardHere.cards.find((card) => card.worktree?.branch === registered.branch);
+        if (owner?.worktree?.baseRefName === undefined && defaultBranch === undefined) {
+          defaultBranch = yield* workspace.remoteDefaultBranch({}).pipe(
             Effect.map((result) => result.branch),
             Effect.orElseSucceed(() => "main"),
-          ));
+          );
+        }
+        const baseRefName = owner?.worktree?.baseRefName ?? defaultBranch ?? "main";
         const outcome = yield* workspace
           .reclaimWorktree(
             {
