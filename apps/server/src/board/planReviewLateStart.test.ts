@@ -358,7 +358,7 @@ it.effect("a policy change still owed at a restart is delivered once to the idle
       {
         board,
         settings,
-        initialShells: new Map([[threadId, fakeThreadState(threadId, { sessionStatus: "ready" })]]),
+        initialShells: new Map([[threadId, fakeThreadState(threadId)]]),
       },
       (h) =>
         Effect.gen(function* () {

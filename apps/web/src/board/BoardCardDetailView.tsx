@@ -471,6 +471,10 @@ export interface BoardCardDetailViewProps {
   /** The Plan review section (plan review); null where it is hidden. */
   readonly planReview?: BoardCardPlanReviewView | null | undefined;
   readonly onSetPlanReview?: ((next: BoardCardPlanReview) => void) | undefined;
+  /** Start review on an armed plan review. */
+  readonly onStartPlanReview?: (() => void) | undefined;
+  /** When the plan was last posted, for "Plan posted <time>". */
+  readonly planPostedAt?: string | null | undefined;
   readonly labelsById: ReadonlyMap<BoardLabelId, BoardLabel>;
   /** Project title, or null when the project is not on disk (archived card). */
   readonly projectName: string | null;
@@ -1210,22 +1214,42 @@ function QueueSection({ props }: { readonly props: BoardCardDetailViewProps }) {
   );
 }
 
-/** How long a mid-review rounds change waits for another click before it is sent. */
-const PLAN_REVIEW_ROUNDS_SETTLE_MS = 800;
+/** How long a mid-review rounds change waits for another click before it commits, so a burst
+    of clicks lands as one change on the activity rail. */
+const PLAN_REVIEW_ROUNDS_SETTLE_MS = 1500;
+
+/** One bar segment per target round: done green, running blue, to come neutral. */
+function PlanReviewProgress({ segments }: { readonly segments: ReadonlyArray<string> }) {
+  return (
+    <div aria-hidden className="flex gap-0.5" data-board-plan-review-progress>
+      {segments.map((segment, index) => (
+        <span
+          className={cn(
+            "h-1 flex-1 rounded-full",
+            segment === "done" ? "bg-success" : segment === "running" ? "bg-info" : "bg-muted",
+          )}
+          data-segment={segment}
+          // oxlint-disable-next-line react/no-array-index-key -- segments are positional rounds
+          key={index}
+        />
+      ))}
+    </div>
+  );
+}
 
 /**
- * Plan review: an adversarial review of the plan once it is posted,
- * run by the planning agent with subagents. While one runs, a rounds change
- * tells the agent the new total, and turning the switch off stops the review.
+ * Plan review: an adversarial review of the plan once it is posted, run by the planning agent
+ * with subagents. Its rounds are a target the agent reads at each round; a review turned on
+ * after the plan was posted waits for Start review.
  */
 function PlanReviewSection({ props }: { readonly props: BoardCardDetailViewProps }) {
   const view = props.planReview;
   const onSet = props.onSetPlanReview;
-  // Mid-review every commit sends the planning agent a turn, so a run of
-  // stepper clicks lands as one change once it settles.
   const [pendingRounds, setPendingRounds] = useState<number | null>(null);
-  // The settled commit is built from the view as it is when the timer fires:
-  // a review stopped elsewhere in the meantime must not be turned back on.
+  // What a mid-review rounds change moved the target from, for the note under the stepper.
+  const [targetChange, setTargetChange] = useState<{ from: number; to: number } | null>(null);
+  // Built from the view as it is when the timer fires: a review stopped elsewhere in the
+  // meantime must not be turned back on.
   const commitRounds = useStableCallback((next: number) => {
     setPendingRounds(null);
     if (view == null || onSet === undefined || !view.enabled || !view.inProgress) return;
@@ -1238,6 +1262,16 @@ function PlanReviewSection({ props }: { readonly props: BoardCardDetailViewProps
   useEffect(() => () => roundsCommit.flush(), [roundsCommit]);
   if (view == null || onSet === undefined) return null;
   const rounds = pendingRounds ?? view.rounds;
+  if (view.phase === "reviewed") {
+    return (
+      <div className="flex items-center gap-1.5 border-t border-border p-3.5">
+        <SectionHeading>Plan review</SectionHeading>
+        <span className="flex-1" />
+        <span className="text-board-11 font-medium text-foreground">{view.summary}</span>
+      </div>
+    );
+  }
+  const shownChange = view.inProgress ? targetChange : null;
   return (
     <div className="flex flex-col gap-2 border-t border-border p-3.5">
       <div className="flex items-center gap-1.5">
@@ -1245,6 +1279,7 @@ function PlanReviewSection({ props }: { readonly props: BoardCardDetailViewProps
         <span className="flex-1" />
         <span className="text-board-11 font-medium text-foreground">{view.summary}</span>
       </div>
+      {view.progress === null ? null : <PlanReviewProgress segments={view.progress} />}
       {/* A div, not a label: the switch is a button, as in the auto-start row. */}
       <div className="flex items-start gap-2.5 text-board-12-5">
         <Switch
@@ -1254,6 +1289,7 @@ function PlanReviewSection({ props }: { readonly props: BoardCardDetailViewProps
           onCheckedChange={(next) => {
             roundsCommit.cancel();
             setPendingRounds(null);
+            setTargetChange(null);
             onSet(nextBoardCardPlanReview({ ...view, rounds }, { enabled: next }));
           }}
         />
@@ -1262,28 +1298,90 @@ function PlanReviewSection({ props }: { readonly props: BoardCardDetailViewProps
           <span className="text-board-11-5 leading-board-1-45 text-muted-foreground">
             {view.note}
           </span>
+          {view.provenance === null ? null : (
+            <span className="text-board-11 text-muted-foreground" data-board-plan-review-provenance>
+              {view.provenance}
+            </span>
+          )}
         </span>
       </div>
       {view.enabled ? (
-        <div className="flex items-center gap-2.5 pl-9.5">
-          <span className="flex-1 text-board-12 font-medium text-foreground">Rounds</span>
-          <NumberStepper
-            ariaLabel="plan review rounds"
-            max={BOARD_PLAN_REVIEW_ROUNDS_MAX}
-            min={BOARD_PLAN_REVIEW_ROUNDS_MIN}
-            onChange={(next) => {
-              const change = nextBoardCardPlanReview(view, { rounds: next });
-              if (!view.inProgress) {
-                roundsCommit.cancel();
-                setPendingRounds(null);
-                onSet(change);
-                return;
-              }
-              setPendingRounds(change.rounds);
-              roundsCommit.maybeExecute(change.rounds);
-            }}
-            value={rounds}
+        <div className="flex flex-col gap-1 pl-9.5">
+          <div className="flex items-center gap-2.5">
+            <span className="flex-1 text-board-12 font-medium text-foreground">Rounds</span>
+            <NumberStepper
+              ariaLabel="plan review rounds"
+              max={BOARD_PLAN_REVIEW_ROUNDS_MAX}
+              min={BOARD_PLAN_REVIEW_ROUNDS_MIN}
+              onChange={(next) => {
+                const change = nextBoardCardPlanReview(view, { rounds: next });
+                if (!view.inProgress) {
+                  roundsCommit.cancel();
+                  setPendingRounds(null);
+                  onSet(change);
+                  return;
+                }
+                setTargetChange((current) => ({
+                  from: current?.from ?? view.rounds,
+                  to: change.rounds,
+                }));
+                setPendingRounds(change.rounds);
+                roundsCommit.maybeExecute(change.rounds);
+              }}
+              value={rounds}
+            />
+          </div>
+          {shownChange === null || shownChange.from === shownChange.to ? null : (
+            <span className="text-board-11 text-muted-foreground">
+              Target changed from {shownChange.from} to {shownChange.to}. The agent picks it up at
+              its next round.
+            </span>
+          )}
+        </div>
+      ) : null}
+      {view.enabled ? (
+        <div className="flex items-start gap-2.5 pl-9.5 text-board-12-5">
+          <Switch
+            aria-label="Run plan review unattended"
+            checked={view.unattended}
+            className="mt-0.5 shrink-0"
+            onCheckedChange={(next) =>
+              onSet(nextBoardCardPlanReview({ ...view, rounds }, { unattended: next }))
+            }
+            size="sm"
           />
+          <span className="flex min-w-0 flex-col gap-0.5">
+            <span className="font-medium text-foreground">Unattended</span>
+            <span className="text-board-11-5 leading-board-1-45 text-muted-foreground">
+              {view.unattendedNote}
+            </span>
+            {view.signOffNote === null ? null : (
+              <span className="text-board-11-5 leading-board-1-45 text-muted-foreground">
+                {view.signOffNote}
+              </span>
+            )}
+          </span>
+        </div>
+      ) : null}
+      {view.phase === "ready-to-start" && props.onStartPlanReview !== undefined ? (
+        <div className="flex flex-col gap-1 pl-9.5">
+          <Button
+            className="self-start"
+            data-board-start-plan-review
+            onClick={() => {
+              roundsCommit.flush();
+              props.onStartPlanReview?.();
+            }}
+            size="compact"
+          >
+            Start review · {rounds === 1 ? "1 round" : `${rounds} rounds`}
+          </Button>
+          <span className="text-board-11 text-muted-foreground">
+            {props.planPostedAt == null
+              ? ""
+              : `Plan posted ${formatRelativeTimeLabel(props.planPostedAt)}. `}
+            Nothing is sent until you start.
+          </span>
         </div>
       ) : null}
     </div>

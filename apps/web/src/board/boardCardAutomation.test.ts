@@ -125,6 +125,20 @@ describe("the header's gate tags", () => {
     expect(strip({ ...all, autoSignOffSetting: false }).handsOff).toBe(false);
   });
 
+  it("an unattended plan review automates the Plan gate and brings in Sign-off", () => {
+    const card = shell("c-1", "planning");
+    const rows = boardCardAutomationRows({
+      resolved: resolve([card], card),
+      inPlanning: true,
+      planReviewUnattended: true,
+    });
+    const value = boardAutomationStrip({ rows, pastPlanning: false, planReviewUnattended: true });
+    expect(value.tags.slice(0, 2)).toEqual([
+      { gate: "Plan", auto: true, via: "review" },
+      { gate: "Sign-off", auto: false },
+    ]);
+  });
+
   it("drops the settled Plan and Sign-off gates past Planning", () => {
     const ready = shell("c-1", "ready", { autoBuildSetting: true, autoMergeSetting: true });
     const value = strip(ready);

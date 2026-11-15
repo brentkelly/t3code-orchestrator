@@ -116,7 +116,13 @@ describe("resolveT3oProjectFile", () => {
         settings: {
           building: { prompt: "ok", timeoutMs: -5, rounds: 3, label: "Make", kind: "review" },
           review: { rounds: 2, phases: { triage: { prompt: 7, model: null }, bogus: {} } },
-          planning: { planReview: { enabledByDefault: true, nope: 1 } },
+          planning: {
+            planReview: {
+              enabledByDefault: true,
+              nope: 1,
+              newCards: { rounds: 4, unattended: true },
+            },
+          },
           nowhere: { prompt: "x" },
         },
       },
@@ -124,7 +130,9 @@ describe("resolveT3oProjectFile", () => {
     expect(delta.overrides).toEqual({
       building: { prompt: "ok" },
       review: { rounds: 2, phases: { triage: { model: null } } },
-      planning: { planReview: { enabledByDefault: true } },
+      planning: {
+        planReview: { enabledByDefault: true, newCards: { rounds: 4, unattended: true } },
+      },
     });
     expect(delta.warnings).toEqual(
       expect.arrayContaining([

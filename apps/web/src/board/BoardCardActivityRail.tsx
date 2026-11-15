@@ -566,7 +566,12 @@ function activitySentence(
       return payload.planReviewRounds === undefined ? (
         <>changed the plan review rounds</>
       ) : (
-        <>changed the plan review to {roundsPhrase(payload.planReviewRounds)}</>
+        <>
+          set the review target to {roundsPhrase(payload.planReviewRounds)}
+          {payload.planReviewRoundsBefore === undefined
+            ? ""
+            : ` (was ${payload.planReviewRoundsBefore})`}
+        </>
       );
     case "plan-review-finished": {
       const run = payload.planReviewRoundsRun ?? null;
@@ -578,6 +583,9 @@ function activitySentence(
           finished the plan review after {run}
           {of} {run === 1 && of === "" ? "round" : "rounds"}
           {payload.planReviewConverged === true ? ", converged" : ""}
+          {payload.planReviewFindings == null
+            ? ""
+            : `, ${payload.planReviewFindings} ${payload.planReviewFindings === 1 ? "finding" : "findings"}`}
         </>
       );
     }

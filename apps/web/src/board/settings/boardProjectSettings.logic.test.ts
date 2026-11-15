@@ -12,6 +12,7 @@ import {
   boardCiSharedWorktreeWarnings,
   boardImportSummaryChips,
   boardProjectOverrideEdit,
+  boardProjectPlanReviewOverrideEdit,
   boardProjectStageState,
   moveBoardCiStep,
   removeBoardCiStep,
@@ -132,5 +133,20 @@ describe("import summary chips", () => {
         texts: [],
       }),
     ).toEqual(["+1 stage", "1 stage switch", "CI · 3 steps", "2 overrides", "1 ignored entry"]);
+  });
+});
+
+describe("a plan review override edit", () => {
+  it("sets and resets one new-card key, keeping the rest and dropping emptied levels", () => {
+    const full = withBoardProjectConfigVersion({
+      ...EMPTY_BOARD_PROJECT_STAGE_CONFIG,
+      overrides: { planning: { prompt: "Ours.", planReview: { newCards: { rounds: 5 } } } },
+    });
+    expect(boardProjectPlanReviewOverrideEdit(full, "planning", "unattended", true)?.patch).toEqual(
+      { prompt: "Ours.", planReview: { newCards: { rounds: 5, unattended: true } } },
+    );
+    expect(
+      boardProjectPlanReviewOverrideEdit(full, "planning", "rounds", undefined)?.patch,
+    ).toEqual({ prompt: "Ours." });
   });
 });

@@ -126,7 +126,7 @@ function AutomationStripView({ strip }: { readonly strip: BoardAutomationStrip }
   const tag = "inline-flex items-center gap-1 rounded px-1.5 py-px text-board-10-5 font-medium";
   return (
     <span className="flex flex-wrap items-center justify-end gap-1" data-board-automation-strip>
-      {strip.tags.map(({ gate, auto }) => (
+      {strip.tags.map(({ gate, auto, via }) => (
         <span
           className={cn(
             tag,
@@ -135,7 +135,7 @@ function AutomationStripView({ strip }: { readonly strip: BoardAutomationStrip }
           data-board-automation-gate={gate}
           key={gate}
         >
-          {gate} · {auto ? "auto" : "you"}
+          {gate} · {auto ? (via === "review" ? "auto from review" : "auto") : "you"}
         </span>
       ))}
       {strip.handsOff ? (
@@ -358,6 +358,8 @@ export function BoardCardAutomation(props: {
   readonly boardWideAutoMerge: boolean;
   readonly planningFinished: boolean;
   readonly inPlanning: boolean;
+  /** The card's plan review is on and unattended. */
+  readonly planReviewUnattended?: boolean;
 }) {
   if (props.group !== null) {
     return <GroupAutomationSection {...props} group={props.group} />;
@@ -368,14 +370,17 @@ export function BoardCardAutomation(props: {
     card: props.card,
     boardWideAutoMerge: props.boardWideAutoMerge,
   });
+  const planReviewUnattended = props.inPlanning && props.planReviewUnattended === true;
   const rows = boardCardAutomationRows({
     resolved,
     inPlanning: props.inPlanning,
     planningFinished: props.planningFinished,
+    planReviewUnattended,
   });
   const strip = boardAutomationStrip({
     rows,
     pastPlanning: boardAutomationPastPlanning(props.stages, props.card.stage),
+    planReviewUnattended,
   });
   return (
     <BoardCollapsibleSection summary={<AutomationStripView strip={strip} />} title="Automation">

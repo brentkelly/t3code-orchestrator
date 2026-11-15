@@ -12176,7 +12176,7 @@ Once the review process has been completed, summarise the finalised plan in the 
  * for the plan-role stage. `prompt` null means the compiled-in default, so the
  * default text never lands in settings.json and Reset is a retained null.
  */
-export const DEFAULT_BOARD_PLAN_REVIEW_NEW_CARD_ROUNDS = 3;
+const DEFAULT_BOARD_PLAN_REVIEW_NEW_CARD_ROUNDS = 3;
 
 export const BoardPlanReviewNewCards = Schema.Struct({
   enabled: Schema.optionalKey(Schema.Boolean),

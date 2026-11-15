@@ -20,6 +20,8 @@ import {
   BOARD_PLAN_REVIEW_ROUNDS_MIN,
   planReviewInstructionsClosing,
   planReviewInstructionsLead,
+  boardPlanReviewCreationDefaults,
+  type BoardPlanReviewNewCards,
   type BoardPlanReviewSettings,
   DEFAULT_BOARD_REVIEW_PHASES,
   boardDraftPullRequestLine,
@@ -1693,29 +1695,55 @@ function PlanReviewSettingsBlock(props: {
     prompt: null,
   };
   const set = (patch: Partial<BoardPlanReviewSettings>) => props.onChange({ ...current, ...patch });
+  // What new cards are stamped with; the live-fallback keys above stay as older cards read them.
+  const newCards = boardPlanReviewCreationDefaults({ planReview: current });
+  const setNewCards = (patch: Partial<BoardPlanReviewNewCards>) =>
+    set({
+      newCards: {
+        enabled: newCards.enabled,
+        rounds: newCards.rounds,
+        unattended: newCards.unattended === true,
+        ...patch,
+      },
+    });
   return (
     <>
       <PhaseHeader label="Plan review" />
       <ToggleRow
-        label="Review plans by default"
-        hint="Each card can still turn it on or off and set its own rounds."
-        checked={current.enabledByDefault}
-        ariaLabel="Review plans by default"
-        onChange={(enabledByDefault) => set({ enabledByDefault })}
-      />
-      <NumberRow
-        label="Default rounds"
-        hint="Stops early once the reviewers converge."
-        stepper={
-          <NumberStepper
-            value={current.defaultRounds}
-            min={BOARD_PLAN_REVIEW_ROUNDS_MIN}
-            max={BOARD_PLAN_REVIEW_ROUNDS_MAX}
-            ariaLabel="Default plan review rounds"
-            onChange={(defaultRounds) => set({ defaultRounds })}
-          />
+        label="Auto-review plans"
+        hint={
+          newCards.enabled
+            ? `All cards will be automatically reviewed by agents for ${newCards.rounds} ${newCards.rounds === 1 ? "round" : "rounds"}.`
+            : "Off. Turn plan review on per card from its sidebar."
         }
+        checked={newCards.enabled}
+        ariaLabel="Auto-review plans"
+        onChange={(enabled) => setNewCards({ enabled })}
       />
+      {newCards.enabled ? (
+        <>
+          <NumberRow
+            label="Rounds"
+            hint="Used for every new card. You can change it on any card."
+            stepper={
+              <NumberStepper
+                value={newCards.rounds}
+                min={BOARD_PLAN_REVIEW_ROUNDS_MIN}
+                max={BOARD_PLAN_REVIEW_ROUNDS_MAX}
+                ariaLabel="Plan review rounds for new cards"
+                onChange={(rounds) => setNewCards({ rounds })}
+              />
+            }
+          />
+          <ToggleRow
+            label="Run unattended"
+            hint="Reviews run like auto-plan, without stopping to ask you. With auto sign-off on, reviewed plans are approved without you."
+            checked={newCards.unattended === true}
+            ariaLabel="Run plan reviews unattended"
+            onChange={(unattended) => setNewCards({ unattended })}
+          />
+        </>
+      ) : null}
       <p className="pt-1 text-xs text-muted-foreground">
         Given to the planning agent when it posts its plan. {"{rounds}"} is the card's round count.
       </p>
@@ -1724,10 +1752,10 @@ function PlanReviewSettingsBlock(props: {
         label="Prompt"
         value={current.prompt ?? DEFAULT_BOARD_PLAN_REVIEW_PROMPT}
         defaultValue={DEFAULT_BOARD_PLAN_REVIEW_PROMPT}
-        preamble={planReviewInstructionsLead(current.defaultRounds)}
+        preamble={planReviewInstructionsLead(newCards.rounds)}
         postamble={planReviewInstructionsClosing({
-          rounds: current.defaultRounds,
-          humanInLoop: true,
+          rounds: newCards.rounds,
+          humanInLoop: newCards.unattended !== true,
         })}
         onChange={(prompt) =>
           set({ prompt: prompt === DEFAULT_BOARD_PLAN_REVIEW_PROMPT ? null : prompt })

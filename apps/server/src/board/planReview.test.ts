@@ -19,6 +19,7 @@ import { assert, describe, it } from "@effect/vitest";
 import {
   planReviewInstructions,
   resolveCardPlanReview,
+  withPlanReviewCreationDefaults,
   runningPlanReviewStep,
 } from "./planReview.ts";
 
@@ -124,6 +125,7 @@ describe("plan review on the server", () => {
     assert.deepStrictEqual(resolveCardPlanReview({ board, card: card(), settings }), {
       enabled: false,
       rounds: 2,
+      unattended: false,
     });
     const own = card({ planReview: { enabled: true, rounds: 6 } });
     assert.deepStrictEqual(resolveCardPlanReview({ board, card: own, settings }), {
@@ -131,6 +133,21 @@ describe("plan review on the server", () => {
       rounds: 6,
     });
     assert.strictEqual(BOARD_SEED_STAGE_IDS.planning, "planning");
+  });
+
+  it("stamps the new-card defaults on a create, but never over its own or on a heading", () => {
+    const board = boardOf(card(), state());
+    const create = { projectId: card().projectId };
+    assert.deepStrictEqual(withPlanReviewCreationDefaults(create, board, settings).planReview, {
+      enabled: true,
+      rounds: 3,
+      unattended: false,
+      source: "default",
+    });
+    const own = { ...create, planReview: { enabled: false, rounds: 1 } };
+    assert.strictEqual(withPlanReviewCreationDefaults(own, board, settings), own);
+    const heading = { ...create, heading: true };
+    assert.strictEqual(withPlanReviewCreationDefaults(heading, board, settings), heading);
   });
 
   it("a review runs only on a live planning step that started one, while it is on", () => {

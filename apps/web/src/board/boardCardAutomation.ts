@@ -160,6 +160,8 @@ export function boardCardAutomationRows(input: {
   readonly inPlanning: boolean;
   /** The plan step succeeded in Planning; Auto-plan still switches on. */
   readonly planningFinished?: boolean;
+  /** The card's plan review is on and unattended, which automates planning too. */
+  readonly planReviewUnattended?: boolean;
 }): ReadonlyArray<BoardAutomationRow> {
   const { autoPlan, autoSignOff, autoBuild, autoMerge } = input.resolved;
   const planNote =
@@ -177,7 +179,9 @@ export function boardCardAutomationRows(input: {
     : "Off: finished cards wait for you to merge.";
   return [
     row("autoPlan", BOARD_AUTOMATION_TOGGLE_LABELS.autoPlan, autoPlan, planNote),
-    ...(boardPlanAutomatedBy(input.resolved) === null
+    ...(boardPlanAutomatedBy(input.resolved, {
+      unattendedInPlanning: input.inPlanning && input.planReviewUnattended === true,
+    }) === null
       ? []
       : [
           {
@@ -277,6 +281,8 @@ export function boardGroupAutomationRows(input: {
 export interface BoardAutomationGateTag {
   readonly gate: "Plan" | "Sign-off" | "Build" | "Merge";
   readonly auto: boolean;
+  /** Automated by an unattended plan review rather than Auto-plan. */
+  readonly via?: "review";
 }
 
 export interface BoardAutomationStrip {
@@ -296,6 +302,8 @@ export const BOARD_AUTOMATION_HANDS_OFF_TOOLTIP =
 export function boardAutomationStrip(input: {
   readonly rows: ReadonlyArray<BoardAutomationRow>;
   readonly pastPlanning: boolean;
+  /** An unattended plan review automates the Plan gate. */
+  readonly planReviewUnattended?: boolean;
 }): BoardAutomationStrip {
   const on = (id: BoardAutomationRow["id"]) =>
     input.rows.some((r) => r.id === id && (r.on || r.waitingForGroupStart === true));
@@ -304,7 +312,9 @@ export function boardAutomationStrip(input: {
     ...(input.pastPlanning
       ? []
       : [
-          { gate: "Plan" as const, auto: on("autoPlan") },
+          on("autoPlan") || input.planReviewUnattended !== true
+            ? { gate: "Plan" as const, auto: on("autoPlan") }
+            : { gate: "Plan" as const, auto: true, via: "review" as const },
           ...(has("autoSignOff") ? [{ gate: "Sign-off" as const, auto: on("autoSignOff") }] : []),
         ]),
     { gate: "Build", auto: on("autoBuild") },
