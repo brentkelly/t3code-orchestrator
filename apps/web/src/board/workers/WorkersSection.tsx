@@ -14,7 +14,7 @@ import {
   type BoardWorkerView,
   type EnvironmentId,
 } from "@t3tools/contracts";
-import { EllipsisIcon, LockIcon, PlusIcon, ServerIcon } from "lucide-react";
+import { CircleHelpIcon, EllipsisIcon, PlusIcon, ServerIcon } from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
@@ -232,17 +232,6 @@ export function WorkersSection(props: {
 
   return (
     <>
-      <div className="mx-3 mb-3 flex items-start gap-2.5 rounded-lg bg-accent px-3 py-2 text-board-12 leading-board-1-55 sm:mx-4">
-        <LockIcon className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
-        <span>
-          Capacity is set on each machine with{" "}
-          <code className="rounded-sm bg-popover px-1 font-mono text-board-11-5">
-            pnpm t3o-worker config
-          </code>{" "}
-          and is read-only here. Headroom is what a worker offers this board now, out of the
-          capacity it declares.
-        </span>
-      </div>
       {firstExpiry === undefined ? null : (
         <div className="mx-3 mb-2 flex items-center gap-2 text-board-12-5 text-muted-foreground sm:mx-4">
           <span>
@@ -263,7 +252,15 @@ export function WorkersSection(props: {
         >
           <span>Worker</span>
           <span>Status</span>
-          <span>Headroom offered</span>
+          <span className="flex items-center gap-1">
+            Headroom offered
+            <BoardHint label="Each worker measures its CPU, RAM and disk and reports them to the board as they change. Headroom is what it can take on now. To hold some back, set capacity.cpuCores, capacity.ramGiB or capacity.diskGB with pnpm t3o-worker config on that machine.">
+              <CircleHelpIcon
+                aria-label="How headroom is measured"
+                className="size-3 text-muted-foreground/70"
+              />
+            </BoardHint>
+          </span>
           <span>Provider quota · account</span>
           <span />
         </div>

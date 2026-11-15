@@ -16,7 +16,7 @@ import {
   type OrchestrationProjectShell,
   type ProjectId,
 } from "@t3tools/contracts";
-import { CheckIcon, RefreshCwIcon, TriangleAlertIcon } from "lucide-react";
+import { CheckIcon, ChevronRightIcon, RefreshCwIcon, TriangleAlertIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
 import { Button } from "../../components/ui/button";
@@ -154,6 +154,11 @@ function ProjectRow(props: {
 }) {
   const { state, worker, project } = props;
   const capacityAction = useAtomCommand(boardEnvironment.capacityAction);
+  // The script's full output, read from the worker on demand and tied to the run it came from.
+  const [output, setOutput] = useState<{
+    readonly checkedAt: string | null;
+    readonly text: string | null;
+  } | null>(null);
   const offlineHint = `Available when ${props.workerLabel} reconnects`;
   const recheck = (
     <BoardHint label={props.live ? "Re-check: run the readiness script again" : offlineHint}>
@@ -217,11 +222,39 @@ function ProjectRow(props: {
             {state.exitCode === null ? " failed" : ` exited ${state.exitCode}`}
             {state.checkedAt === null ? "" : ` · ${clockTime(state.checkedAt)}`}
           </span>
-          {state.lastLine === null ? null : (
-            <span className="truncate rounded-md border border-border bg-muted/50 px-2 py-1 font-mono text-board-11">
-              {state.lastLine}
-            </span>
-          )}
+          <ReadinessOutput
+            lastLine={state.lastLine}
+            output={output?.checkedAt === state.checkedAt ? output.text : undefined}
+            canRead={props.live}
+            onToggle={() => {
+              if (output?.checkedAt === state.checkedAt) {
+                setOutput(null);
+                return;
+              }
+              const checkedAt = state.checkedAt;
+              setOutput({ checkedAt, text: null });
+              void capacityAction({
+                environmentId: props.environmentId,
+                input: {
+                  action: "readinessOutput",
+                  workerId: props.workerId,
+                  projectId: project.id,
+                },
+              }).then((result) =>
+                setOutput((current) =>
+                  current?.checkedAt !== checkedAt
+                    ? current
+                    : {
+                        checkedAt,
+                        text:
+                          result._tag === "Success"
+                            ? result.value || "The script printed nothing."
+                            : `Couldn't read the output from ${props.workerLabel}.`,
+                      },
+                ),
+              );
+            }}
+          />
         </span>
       );
       actions = recheck;
@@ -322,6 +355,38 @@ function ProjectRow(props: {
       <span className="flex justify-end gap-1.5 @max-xl:col-start-2 @max-xl:row-start-1">
         {actions}
       </span>
+    </div>
+  );
+}
+
+/**
+ * A failed readiness script's last line, which opens to the whole output. `output` is
+ * undefined while closed and null while it's read from the worker.
+ */
+function ReadinessOutput(props: {
+  readonly lastLine: string | null;
+  readonly output: string | null | undefined;
+  readonly canRead: boolean;
+  readonly onToggle: () => void;
+}) {
+  const open = props.output !== undefined;
+  return (
+    <div className="flex min-w-0 flex-col overflow-hidden rounded-md border border-border bg-muted/50">
+      <button
+        aria-expanded={open}
+        className="flex min-w-0 items-center gap-1.5 px-2 py-1 text-left font-mono text-board-11 hover:text-foreground disabled:pointer-events-none"
+        disabled={!props.canRead && !open}
+        onClick={props.onToggle}
+        type="button"
+      >
+        <ChevronRightIcon className={cn("size-3 shrink-0", open && "rotate-90")} />
+        <span className="truncate">{props.lastLine ?? "Show the script's output"}</span>
+      </button>
+      {open ? (
+        <pre className="max-h-72 overflow-auto border-t border-border px-2 py-1.5 font-mono text-board-11 whitespace-pre-wrap">
+          {props.output ?? "Reading the output…"}
+        </pre>
+      ) : null}
     </div>
   );
 }

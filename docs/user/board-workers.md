@@ -169,11 +169,17 @@ will often run one card over its declared capacity: declare capacity with that i
 On the worker, `pnpm t3o-worker config` sets `hold.earlyStartFraction` (default 0.5) and
 `hold.maxMinutes` (default 120), and `pnpm t3o-worker status` shows any hold.
 
-By default a worker declares every core it has, its RAM less 8 GiB (at least half of it; less where
-T3 Code limits its agents' memory), and 90% of the free disk where worktrees live. Change these on the worker with
-`pnpm t3o-worker config`:
+A worker measures its own capacity and keeps the board up to date, so there's nothing to set up.
+It offers every core it has, its RAM less 8 GiB (at least half of it; less where T3 Code limits its
+agents' memory), and on the disk where worktrees live, what its worktrees already take plus 90% of
+the free space. These are read again with every report, so adding RAM or disk to a machine shows on
+the Workers page without doing anything. Whatever the worker offers, a card only starts when the RAM
+and disk are actually free.
 
-- `capacity.cpuCores`, `capacity.ramGiB`, `capacity.diskGB` — what the worker offers to boards.
+To hold some of a machine back, or cap it, set these on the worker with `pnpm t3o-worker config`:
+
+- `capacity.cpuCores`, `capacity.ramGiB`, `capacity.diskGB` — a fixed amount to offer instead of the
+  measured one. `pnpm t3o-worker config unset <key>` goes back to measuring.
 - `maxAgents` — the most agents running at once on this worker, from every board. Unset means no cap.
 - `providerCaps.<providerInstanceId>` — the most agents of one provider instance, such as
   `providerCaps.claudeAgent`.

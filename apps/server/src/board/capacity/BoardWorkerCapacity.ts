@@ -394,25 +394,17 @@ export const makeBoardWorkerCapacity = Effect.fn("makeBoardWorkerCapacity")(func
     } satisfies MachineReading;
   });
 
-  /** Disk by default: 90% of the free space when first configured, kept, plus what the
-      worktrees that were already there use. Those are backfilled after the first snapshot and
-      measured later, so their part is added as it is measured, never stored. */
+  /** Disk by default, re-read every snapshot so a grown or shrunk volume shows at once: what
+      this worker's measured worktrees already take, plus 90% of the volume's free space. A
+      worktree not yet measured counts as nothing until it is. */
   const defaultDiskGB = Effect.gen(function* () {
-    const stored = yield* ports.store.setting("capacity.diskGB.default");
-    const parsed = stored === null ? Number.NaN : Number(stored);
-    let base = parsed;
-    if (!(Number.isFinite(parsed) && parsed > 0)) {
-      const free = yield* machine.freeDiskBytes(ports.worktreeVolume);
-      if (free === null) return 50;
-      base = Math.max(1, Math.floor(bytesToGB(free) * 0.9));
-      yield* ports.store.saveSetting("capacity.diskGB.default", String(base));
-    }
-    const existing = state.records.reduce(
-      (sum, record) =>
-        sum + (record.diskFromMeasurement ? Math.ceil(record.measuredDiskGB ?? 0) : 0),
+    const free = yield* machine.freeDiskBytes(ports.worktreeVolume);
+    if (free === null) return 50;
+    const inWorktrees = state.records.reduce(
+      (sum, record) => sum + (record.measuredDiskGB ?? 0),
       0,
     );
-    return base + existing;
+    return Math.max(1, Math.floor(inWorktrees + bytesToGB(free) * 0.9));
   });
 
   const declared = Effect.gen(function* () {

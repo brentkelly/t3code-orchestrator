@@ -400,38 +400,44 @@ it.effect("records and the last seq persist, reload, and go when the board is fo
   }).pipe(withMachine(fakes), Effect.provide(TestClock.layer()));
 });
 
-it.effect("the default disk counts the worktrees that were there, as they are measured", () => {
-  const fakes = makeFakes();
-  fakes.config = { "capacity.cpuCores": 16, "capacity.ramGiB": 64 };
-  return Effect.gen(function* () {
-    // At the first snapshot nothing is backfilled yet: 90% of the 1000 GB free is kept.
-    const first = yield* makeBoardWorkerCapacity(portsOver(fakes));
-    assert.strictEqual((yield* first.service.snapshot("board-a")).declared.diskGB, 900);
-    const backfilled: CapacityRecord = {
-      boardId: "board-a",
-      cardId: "a-1",
-      repositoryKey: null,
-      branch: "board/a-1",
-      worktreePath: "/w/a-1",
-      profile: { cpuCores: 1, ramGiB: 1, diskGB: 5 },
-      phase: "light",
-      settled: true,
-      seq: 1,
-      diskFromMeasurement: true,
-      measuredDiskGB: 120,
-      measuredAt: 0,
-      heavySince: null,
-    };
-    // Free space has since shrunk, but the stored part stands; the measured tree adds to it.
-    fakes.freeDiskBytes = 10 * 1000 ** 3;
-    const later = yield* makeBoardWorkerCapacity(
-      portsOver(fakes, { ...EMPTY_CAPACITY_STATE, records: [backfilled] }),
-    );
-    const snapshot = yield* later.service.snapshot("board-a");
-    assert.strictEqual(snapshot.declared.diskGB, 1020);
-    assert.isFalse(snapshot.over.disk);
-  }).pipe(withMachine(fakes), Effect.provide(TestClock.layer()));
-});
+it.effect(
+  "the default disk follows the volume: its free space plus what its worktrees take",
+  () => {
+    const fakes = makeFakes();
+    fakes.config = { "capacity.cpuCores": 16, "capacity.ramGiB": 64 };
+    return Effect.gen(function* () {
+      // 90% of the 1000 GB free.
+      const first = yield* makeBoardWorkerCapacity(portsOver(fakes));
+      assert.strictEqual((yield* first.service.snapshot("board-a")).declared.diskGB, 900);
+      // A bigger disk shows on the next snapshot, with no command run on the worker.
+      fakes.freeDiskBytes = 2000 * 1000 ** 3;
+      assert.strictEqual((yield* first.service.snapshot("board-a")).declared.diskGB, 1800);
+      const backfilled: CapacityRecord = {
+        boardId: "board-a",
+        cardId: "a-1",
+        repositoryKey: null,
+        branch: "board/a-1",
+        worktreePath: "/w/a-1",
+        profile: { cpuCores: 1, ramGiB: 1, diskGB: 5 },
+        phase: "light",
+        settled: true,
+        seq: 1,
+        diskFromMeasurement: true,
+        measuredDiskGB: 120,
+        measuredAt: 0,
+        heavySince: null,
+      };
+      // Space the worktrees fill stays theirs: their 120 GB plus 90% of the 10 GB free.
+      fakes.freeDiskBytes = 10 * 1000 ** 3;
+      const later = yield* makeBoardWorkerCapacity(
+        portsOver(fakes, { ...EMPTY_CAPACITY_STATE, records: [backfilled] }),
+      );
+      const snapshot = yield* later.service.snapshot("board-a");
+      assert.strictEqual(snapshot.declared.diskGB, 129);
+      assert.isFalse(snapshot.over.disk);
+    }).pipe(withMachine(fakes), Effect.provide(TestClock.layer()));
+  },
+);
 
 it.effect("a disk measurement finishing after its board left doesn't bring it back", () => {
   const fakes = makeFakes();
