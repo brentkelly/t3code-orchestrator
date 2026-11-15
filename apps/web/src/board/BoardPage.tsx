@@ -87,6 +87,7 @@ import {
 } from "./boardCardNav";
 import type { BoardCardNav } from "./BoardCardNavRails";
 import { useBoardAttentionSettle } from "./boardAttentionSettle";
+import { BOARD_COLUMN_CARD_CAP } from "./boardColumnCap";
 import { boardCardNoPullRequest } from "./boardCardNotice";
 import { boardQueueInfo, type BoardQueueInfo } from "./boardQueueInfo";
 import type { BoardCardTodoContext } from "./BoardCardItem";
@@ -1296,6 +1297,11 @@ function EnvironmentBoard({
   // The index is measured against the rendered (possibly filtered) cards, so it
   // resolves to an anchor card there first, then maps into the full column.
   // Splicing filtered coordinates into the full list would persist a wrong order.
+  const showAllByStage = useBoardUiStore((state) => state.showAllByStage);
+  const setColumnShowAll = useBoardUiStore((state) => state.setColumnShowAll);
+  const handleSetShowAll = useStableCallback((stageId: BoardStageId, showAll: boolean) =>
+    setColumnShowAll(collapseKeyOf(stageId), showAll),
+  );
   const commitDrop = (targetStage: BoardStageId, insertIndex: number, cardId: string) => {
     const source = findBoardCard(columns, cardId);
     if (source === null) return;
@@ -1311,6 +1317,8 @@ function EnvironmentBoard({
     // The visible card the drop lands BEFORE anchors the position; past the
     // last visible card appends to the end of the full column.
     const anchor = renderedRest[renderedIndex];
+    // Landing past a long column's cap would hide the card just dropped.
+    if (renderedIndex >= BOARD_COLUMN_CARD_CAP) setColumnShowAll(collapseKeyOf(targetStage), true);
     const ids = (columns[targetStage] ?? EMPTY_CARDS).map((card) => card.cardId as string);
     const list = ids.filter((id) => id !== cardId);
     const index = anchor === undefined ? list.length : Math.max(0, list.indexOf(anchor));
@@ -1331,6 +1339,8 @@ function EnvironmentBoard({
     const renderedIndex = rendered.indexOf(card.cardId);
     const renderedTarget = renderedIndex + direction;
     if (renderedIndex < 0 || renderedTarget < 0 || renderedTarget >= rendered.length) return;
+    if (renderedTarget >= BOARD_COLUMN_CARD_CAP)
+      setColumnShowAll(collapseKeyOf(source.stage), true);
     const anchor = rendered[renderedTarget]!;
     const ids = (columns[source.stage] ?? EMPTY_CARDS).map(
       (candidate) => candidate.cardId as string,
@@ -1843,6 +1853,8 @@ function EnvironmentBoard({
                   onRequestCreate={openCreate}
                   onSelectCard={handleSelectCard}
                   onSetCollapsed={handleSetCollapsed}
+                  showAll={showAllByStage[collapseKeyOf(stage.stageId)] === true}
+                  onSetShowAll={handleSetShowAll}
                   queueSlots={queueSlots}
                   selectedCardId={selectedCardId}
                   todosFor={todosFor}
