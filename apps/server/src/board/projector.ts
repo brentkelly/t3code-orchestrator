@@ -59,6 +59,7 @@ import {
   BoardPlansApprovedPayload,
   BoardPlansProposedPayload,
   BoardPlanReviewStartedPayload,
+  BoardSplitApprovalChangedPayload,
   BoardPlanReviewStoppedPayload,
   BoardPlanReviewRoundsChangedPayload,
   BoardPlanReviewProgressedPayload,
@@ -135,6 +136,9 @@ const decodeBoardCardStepCompletedPayload = Schema.decodeUnknownEffect(
 const decodeBoardPlansProposedPayload = Schema.decodeUnknownEffect(BoardPlansProposedPayload);
 const decodeBoardPlanReviewStartedPayload = Schema.decodeUnknownEffect(
   BoardPlanReviewStartedPayload,
+);
+const decodeBoardSplitApprovalChangedPayload = Schema.decodeUnknownEffect(
+  BoardSplitApprovalChangedPayload,
 );
 const decodeBoardPlanReviewStoppedPayload = Schema.decodeUnknownEffect(
   BoardPlanReviewStoppedPayload,
@@ -791,6 +795,13 @@ export function projectBoardEvent<M extends BoardReadModel>(
         Effect.map((payload) => upsertPlan(model, payload.plan)),
       );
 
+    // T3o: the deferred split approval rides the card (T3O-105).
+    case "board.split-approval-changed":
+      return decodeBoardSplitApprovalChangedPayload(event.payload).pipe(
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => upsertCard(model, payload.card)),
+      );
+
     case "board.plans-approved":
       // The children rode their own card-created events and the parent's move
       // its card-moved; this event re-asserts the post-approval
@@ -1153,6 +1164,8 @@ export function boardShellStreamEvent(event: BoardEvent): Option.Option<BoardShe
     case "board.card-worker-move-recorded":
     // Worker removed is a shell field on the card aggregate.
     case "board.card-worker-removal":
+    // T3o: the deferred split approval is card state (T3O-105).
+    case "board.split-approval-changed":
       return Option.some({
         kind: "card-upserted",
         sequence: event.sequence,

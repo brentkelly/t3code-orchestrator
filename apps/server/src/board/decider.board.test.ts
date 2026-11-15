@@ -2439,6 +2439,22 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
         createdAt: NOW,
         updatedAt: NOW,
       }));
+      // T3o: a split under a running review, already approved after review (T3O-105).
+      const splitReviewPlans: ReadonlyArray<BoardPlan> = ["r1", "r2"].map((key, index) => ({
+        ...splitPlans[index]!,
+        planId: boardPlanId(BoardCardId.make("card-split-review"), key),
+        cardId: BoardCardId.make("card-split-review"),
+      }));
+      const splitReviewCard = {
+        ...makeCard({ id: "card-split-review", stage: "planning" }),
+        planReview: { enabled: true, rounds: 2 },
+        pendingSplitApproval: {
+          autoBuild: true,
+          mergeTarget: "own" as const,
+          fingerprint: "[]",
+          approvedAt: NOW,
+        },
+      };
       // Worktree lifecycle fixtures: each succeeds and none emits a
       // move — worktree provisioning is gated on Building but never advances a
       // stage.
@@ -2597,9 +2613,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
             autoPlanningCard,
             reviewArmedCard,
             reviewRunningCard,
+            splitReviewCard,
           ],
           labels: [...BOARD_SEED_LABELS, tombstonedLabel],
-          plans: [readyPlan, ...splitPlans],
+          plans: [readyPlan, ...splitPlans, ...splitReviewPlans],
           stepStates: [
             makeStepState("card-admit", "pending"),
             // force-start-step only accepts a step actually queued for a slot.
@@ -2622,6 +2639,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
             },
             {
               ...makeStepState("card-review-running", "running", "planning"),
+              planReviewStartedAt: NOW,
+              planReviewRounds: 2,
+            },
+            {
+              ...makeStepState("card-split-review", "running", "planning"),
               planReviewStartedAt: NOW,
               planReviewRounds: 2,
             },
@@ -2835,6 +2857,25 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
           type: "board.plans.approve",
           commandId: CommandId.make("cmd-approve"),
           cardId: BoardCardId.make("card-split"),
+          createdAt: NOW,
+        },
+        "board.split.approve-after-review": {
+          type: "board.split.approve-after-review",
+          commandId: CommandId.make("cmd-split-approve-after-review"),
+          cardId: BoardCardId.make("card-split-review"),
+          createdAt: NOW,
+        },
+        "board.split.cancel-approval": {
+          type: "board.split.cancel-approval",
+          commandId: CommandId.make("cmd-split-cancel-approval"),
+          cardId: BoardCardId.make("card-split-review"),
+          createdAt: NOW,
+        },
+        "board.split.record-approval-refused": {
+          type: "board.split.record-approval-refused",
+          commandId: CommandId.make("cmd-split-approval-refused"),
+          cardId: BoardCardId.make("card-split-review"),
+          detail: "Refused.",
           createdAt: NOW,
         },
         "board.plan-review.start": {

@@ -1289,6 +1289,8 @@ export function withGovernor(
           // changed mid-review.
           event.type === "board.plan-review-started" ||
           event.type === "board.plan-review-rounds-changed" ||
+          // T3o: a split approved after review, a client command (T3O-105).
+          event.type === "board.split-approval-changed" ||
           // T3o: a delete leaves the board, so the card's room goes back to its worker
           // (T3O-86).
           event.type === "board.card-deleted"

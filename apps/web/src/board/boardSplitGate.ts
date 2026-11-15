@@ -15,6 +15,17 @@ export type BoardSplitGateSettings = {
   readonly mergeTarget: BoardCardGroupTarget;
 };
 
+/** The Approve-after-review chooser: whether it is open, and the option picked in it. */
+export type BoardSplitGateChooser = {
+  readonly open: boolean;
+  readonly pick: "after" | "now";
+};
+
+export const BOARD_SPLIT_GATE_CHOOSER_CLOSED: BoardSplitGateChooser = {
+  open: false,
+  pick: "after",
+};
+
 export type BoardSplitGateRow = {
   readonly planId: string;
   readonly number: string;
@@ -23,6 +34,8 @@ export type BoardSplitGateRow = {
   readonly after: string | null;
   readonly planned: boolean;
   readonly lands: string;
+  /** "Revised r2" and its hint: the review round that last changed the plan, or null. */
+  readonly revised: { readonly label: string; readonly hint: string } | null;
 };
 
 export type BoardSplitGateView = {
@@ -43,7 +56,9 @@ function describe(settings: BoardSplitGateSettings): string {
 }
 
 export function boardSplitGateView(input: {
-  readonly plans: ReadonlyArray<Pick<BoardPlan, "planId" | "title" | "dependsOn" | "planned">>;
+  readonly plans: ReadonlyArray<
+    Pick<BoardPlan, "planId" | "title" | "dependsOn" | "planned" | "revisedInRound">
+  >;
   readonly recommendation: BoardSplitRecommendation;
   readonly settings: BoardSplitGateSettings;
   /** The group's own integration branch, used when it merges to its own. */
@@ -67,6 +82,13 @@ export function boardSplitGateView(input: {
       after: after.length === 0 ? null : `after ${after.join(", ")}`,
       planned,
       lands: `→ ${planned ? input.readyLabel : input.backlogLabel}`,
+      revised:
+        plan.revisedInRound === undefined
+          ? null
+          : {
+              label: `Revised r${plan.revisedInRound}`,
+              hint: `Changed by plan review round ${plan.revisedInRound}`,
+            },
     };
   });
   const total = rows.length;

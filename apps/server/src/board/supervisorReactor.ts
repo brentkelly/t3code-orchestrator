@@ -8972,6 +8972,48 @@ const make = Effect.gen(function* () {
     );
   });
 
+  /** T3o: a deferred split approval is due once its card's planning step has succeeded (T3O-105). */
+  const deferredSplitApprovalDue = (board: BoardState, card: BoardCard): boolean => {
+    if (card.archivedAt !== null || card.pendingSplitApproval === undefined) return false;
+    const stage = boardStageById(board, card.stage);
+    if (stage === null || effectiveBoardStageRole(stage) !== "plan") return false;
+    const state = boardCardStepState(board, card.id);
+    return state !== null && state.stepId === card.stage && state.status === "succeeded";
+  };
+
+  /**
+   * T3o: a split a human approved during the plan review, applied now the planning step has
+   * completed (T3O-105). A refusal clears it with a note, so the split gate asks again.
+   */
+  const fireDeferredSplitApproval = Effect.fn("board-supervisor-fireDeferredSplitApproval")(
+    function* (cardId: BoardCardId) {
+      const card = yield* readCard(cardId);
+      const approval = card?.pendingSplitApproval;
+      if (approval === undefined) return;
+      const refused = yield* dispatchRefusal({
+        type: "board.plans.approve",
+        commandId: yield* commandId("split-approved-after-review"),
+        cardId,
+        autoBuild: approval.autoBuild,
+        mergeTarget: approval.mergeTarget,
+        ...(approval.autoPlan === undefined ? {} : { autoPlan: approval.autoPlan }),
+        ...(approval.autoSignOff === undefined ? {} : { autoSignOff: approval.autoSignOff }),
+        ...(approval.autoMerge === undefined ? {} : { autoMerge: approval.autoMerge }),
+        createdAt: yield* nowIso,
+      });
+      // A fault rather than a refusal leaves the approval on the card; clear it all the same.
+      const after = refused === null ? yield* readCard(cardId) : null;
+      if (refused === null && after?.pendingSplitApproval === undefined) return;
+      yield* dispatchOptional({
+        type: "board.split.record-approval-refused",
+        commandId: yield* commandId("split-approval-refused"),
+        cardId,
+        detail: refused ?? "The split could not be approved.",
+        createdAt: yield* nowIso,
+      });
+    },
+  );
+
   /**
    * The sign-off gate: approve an automated planning run's single plan only when the card's Auto
    * sign-off is on; otherwise it waits at the human gate with the run record pending. A split is
@@ -9507,6 +9549,8 @@ const make = Effect.gen(function* () {
       if (completion.outcome === "succeeded" && settledReviewPhase(board, card, state)) {
         yield* replanSettledStage(card, { resume: true });
       }
+      // T3o: a re-delivered success fires a split approval the first delivery missed (T3O-105).
+      if (deferredSplitApprovalDue(board, card)) yield* fireDeferredSplitApproval(card.id);
       return;
     }
     // Refresh trigger: a step boundary in the review stage. The review loop
@@ -9599,6 +9643,8 @@ const make = Effect.gen(function* () {
           }
           return;
         }
+        // T3o: a split approved after review fires first, then the sign-off gate (T3O-105).
+        if (stageRole === "plan") yield* fireDeferredSplitApproval(card.id);
         // The sign-off gate owns an auto-planned card's plan: it is approved when Auto sign-off
         // authorises it and otherwise waits for a human, so the stage's own auto-advance must
         // not move it.
@@ -11127,6 +11173,10 @@ const make = Effect.gen(function* () {
     switch (decision.kind) {
       case "advance":
         yield* settleStep({ card, state, outcome: "succeeded" });
+        // T3o: a planning step that finished during downtime fires its deferred split (T3O-105).
+        if (deferredSplitApprovalDue(yield* readBoard, card)) {
+          yield* fireDeferredSplitApproval(card.id);
+        }
         // Ask the executor what runs next: advance a finished single-step
         // stage, or resume the next round-scoped step of a multi-step loop
         // whose phase settled during downtime.
@@ -11348,6 +11398,8 @@ const make = Effect.gen(function* () {
     for (const card of quiet.cards) {
       if (card.archivedAt !== null) continue;
       const state = boardCardStepState(quiet, card.id);
+      // T3o: a deferred split whose firing a restart cut off, settled but never applied (T3O-105).
+      if (deferredSplitApprovalDue(quiet, card)) yield* fireDeferredSplitApproval(card.id);
       if (state === null || !settledReviewPhase(quiet, card, state)) continue;
       yield* replanSettledStage(card, { resume: true });
     }
@@ -11600,6 +11652,8 @@ const make = Effect.gen(function* () {
       // A rounds change sends nothing mid-turn: the agent reads the target at its next round,
       // and an idle thread is told once.
       case "board.plan-review-rounds-changed":
+      // T3o: a split approved after review, or undone, is review policy too (T3O-105).
+      case "board.split-approval-changed":
         return steerPlanReviewPolicy(event.payload.cardId, { idleOnly: true }).pipe(Effect.asVoid);
       case "board.card-step-awaiting-input":
       case "board.card-step-paused":
@@ -12219,7 +12273,9 @@ const make = Effect.gen(function* () {
           // target changed. A few per review.
           event.type !== "board.plan-review-stopped" &&
           event.type !== "board.plan-review-rounds-changed" &&
-          event.type !== "board.plan-review-started"
+          event.type !== "board.plan-review-started" &&
+          // T3o: a split approved after review, or undone, changes the review policy (T3O-105).
+          event.type !== "board.split-approval-changed"
         ) {
           return Effect.void;
         }

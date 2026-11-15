@@ -5,7 +5,7 @@
  * action area from Code review on: Merge, View PR, Open board.
  */
 import { BOARD_SEED_STAGE_IDS, BoardCardId, ThreadId } from "@t3tools/contracts";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
@@ -16,17 +16,19 @@ import {
   detail,
   localWorker,
   noop,
+  splitDetail,
   splitShells,
 } from "./boardCardDetailFixtures";
 import { usageRow } from "./usage/boardUsageFixtures";
 
 // The real pane mounts a live chat; the pills only need the thread it shows
-// and a way to pick another.
+// and a way to pick another. The footer remounts per thread, as the real chat does.
 vi.mock(import("./BoardCardThreadPane"), () => ({
   BoardCardThreadPane: ((props: {
     readonly selectedThreadId: ThreadId | null;
     readonly threadLinks: ReadonlyArray<{ readonly threadId: ThreadId }>;
     readonly onSelectThread: (threadId: ThreadId) => void;
+    readonly footer?: ReactNode;
   }) => (
     <div>
       <p>Showing {props.selectedThreadId}</p>
@@ -39,6 +41,15 @@ vi.mock(import("./BoardCardThreadPane"), () => ({
           Pick {link.threadId}
         </button>
       ))}
+      {props.footer == null ? null : (
+        <div
+          data-board-thread-column
+          key={props.selectedThreadId}
+          style={{ display: "flex", flexDirection: "column", height: 600 }}
+        >
+          {props.footer}
+        </div>
+      )}
     </div>
   )) as never,
 }));
@@ -298,5 +309,112 @@ describe("the brief's click-to-edit in the card sheet (T3O-96)", () => {
     await expect.element(editor).toHaveFocus();
     await userEvent.keyboard(" now");
     await expect.element(editor).toHaveTextContent("Fix the flicker now");
+  });
+});
+
+describe("the split gate's unsaved settings (T3O-105)", () => {
+  it("survive a thread-tab switch that remounts the chat holding the gate", async () => {
+    const onApproveSplit = vi.fn();
+    const split = splitDetail({ childCount: 0 });
+    await using screen = await render(
+      <BoardCardDetailPanel
+        {...baseProps}
+        canApproveSplit
+        detail={{
+          ...split,
+          card: {
+            ...split.card,
+            threadLinks: links.map(([threadId, role], index) => ({
+              threadId,
+              role,
+              linkedAt: `2026-01-01T00:00:0${index}.000Z`,
+              tombstonedAt: null,
+            })),
+          },
+        }}
+        onApproveSplit={onApproveSplit}
+        paneChoice="thread"
+        projectName="P"
+        splitGate={{
+          recommendation: { autoBuild: false, mergeTarget: "inherit" },
+          ownBranch: "board/t3-1",
+          landsOn: "main",
+          readyLabel: "Ready",
+          backlogLabel: "Backlog",
+        }}
+        threadLinks={links.map(([threadId, role]) => ({
+          threadId,
+          role,
+          tombstoned: false,
+          title: null,
+          threadState: "none" as const,
+          awaitingInput: false,
+          worker: localWorker,
+          ranOn: null,
+        }))}
+      />,
+    );
+    const autoBuild = screen.getByRole("switch", { name: "Auto-build" });
+    await expect.element(screen.getByText(`Showing ${otherThread}`)).toBeVisible();
+    // Unstyled here, the switch itself has no width; its label toggles it as a click would.
+    await userEvent.click(screen.getByText("Auto-build", { exact: true }));
+    await expect.element(autoBuild).toBeChecked();
+    await userEvent.click(screen.getByRole("button", { name: `Pick ${planningThread}` }));
+    await expect.element(screen.getByText(`Showing ${planningThread}`)).toBeVisible();
+    await expect.element(autoBuild).toBeChecked();
+    await userEvent.click(screen.getByRole("button", { name: /^Approve split/ }));
+    expect(onApproveSplit).toHaveBeenCalledWith({ autoBuild: true, mergeTarget: "inherit" });
+  });
+
+  it("keep the Approve-after-review chooser open, with its pick, across a thread-tab switch", async () => {
+    const onApproveSplit = vi.fn();
+    const split = splitDetail({ childCount: 0 });
+    await using screen = await render(
+      <BoardCardDetailPanel
+        {...baseProps}
+        canApproveSplit
+        detail={{
+          ...split,
+          // A parked planning step offers both Approve now and Approve when planning completes.
+          liveStepStatus: "paused",
+          card: {
+            ...split.card,
+            threadLinks: links.map(([threadId, role], index) => ({
+              threadId,
+              role,
+              linkedAt: `2026-01-01T00:00:0${index}.000Z`,
+              tombstonedAt: null,
+            })),
+          },
+        }}
+        onApproveSplit={onApproveSplit}
+        paneChoice="thread"
+        projectName="P"
+        splitGate={{
+          recommendation: { autoBuild: false, mergeTarget: "inherit" },
+          ownBranch: "board/t3-1",
+          landsOn: "main",
+          readyLabel: "Ready",
+          backlogLabel: "Backlog",
+        }}
+        threadLinks={links.map(([threadId, role]) => ({
+          threadId,
+          role,
+          tombstoned: false,
+          title: null,
+          threadState: "none" as const,
+          awaitingInput: false,
+          worker: localWorker,
+          ranOn: null,
+        }))}
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Approve split…" }));
+    await userEvent.click(screen.getByText("Approve now", { exact: true }));
+    await userEvent.click(screen.getByRole("button", { name: `Pick ${planningThread}` }));
+    await expect.element(screen.getByText(`Showing ${planningThread}`)).toBeVisible();
+    await expect.element(screen.getByRole("radio", { checked: true })).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Approve now" }));
+    expect(onApproveSplit).toHaveBeenCalledWith({ autoBuild: false, mergeTarget: "inherit" });
   });
 });

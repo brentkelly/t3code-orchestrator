@@ -233,6 +233,8 @@ export function BoardCardDetail({
   const deleteCard = useAtomCommand(boardEnvironment.deleteCard);
   const approvePlans = useAtomCommand(boardEnvironment.approvePlans);
   const startPlanReview = useAtomCommand(boardEnvironment.startPlanReview);
+  const approveSplitAfterReview = useAtomCommand(boardEnvironment.approveSplitAfterReview);
+  const cancelSplitApproval = useAtomCommand(boardEnvironment.cancelSplitApproval);
   const linkThread = useAtomCommand(boardEnvironment.linkThread);
   const unlinkThread = useAtomCommand(boardEnvironment.unlinkThread);
   // Moving the card to another project. Its own command rather than a
@@ -1307,6 +1309,21 @@ export function BoardCardDetail({
             },
           }),
         )
+      }
+      onApproveSplitAfterReview={(settings) =>
+        runCommand(
+          approveSplitAfterReview({
+            environmentId,
+            input: {
+              cardId: card.id,
+              autoBuild: settings.autoBuild,
+              mergeTarget: settings.mergeTarget,
+            },
+          }),
+        )
+      }
+      onUndoSplitApproval={() =>
+        runCommand(cancelSplitApproval({ environmentId, input: { cardId: card.id } }))
       }
       catalogue={catalogue}
       dependencies={dependencies}

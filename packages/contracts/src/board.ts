@@ -1245,6 +1245,22 @@ export const BoardSplitRecommendation = Schema.Struct({
 export type BoardSplitRecommendation = typeof BoardSplitRecommendation.Type;
 
 /**
+ * T3o: a split a human approved during a plan review, fired when the planning step completes
+ * (T3O-105). `fingerprint` is `boardSplitFingerprint` of the plans approved: a re-proposal that
+ * changes it drops the approval.
+ */
+export const BoardPendingSplitApproval = Schema.Struct({
+  autoBuild: Schema.Boolean,
+  mergeTarget: BoardCardGroupTarget,
+  autoPlan: Schema.optionalKey(Schema.Boolean),
+  autoSignOff: Schema.optionalKey(Schema.Boolean),
+  autoMerge: Schema.optionalKey(Schema.Boolean),
+  fingerprint: Schema.String,
+  approvedAt: IsoDateTime,
+});
+export type BoardPendingSplitApproval = typeof BoardPendingSplitApproval.Type;
+
+/**
  * Marks the current planning run unattended and stays after it ends; `endedAt` marks it spent.
  * Older rows carry a `mode`, which decoding ignores.
  */
@@ -2139,6 +2155,9 @@ export const BoardCard = Schema.Struct({
       proposals; absent on older ones, which read the fallback rules
       (`boardSplitRecommendationOf`). Migration 052's NULL column. */
   splitRecommendation: Schema.optionalKey(BoardSplitRecommendation),
+  /** T3o: a split approved to take effect when the plan review finishes (T3O-105).
+      Migration 078's NULL column. */
+  pendingSplitApproval: Schema.optionalKey(BoardPendingSplitApproval),
   /** Local branch override, or null to follow the project default resolved LIVE, so cards
       follow a moved default instead of pinning a dead branch. Never `origin/` or `refs/`
       qualified (`isBoardCardBaseBranchShape`). Read via `resolveBoardCardEffectiveBase`: a
@@ -2394,6 +2413,37 @@ const BOARD_PARKED_STEP_STATUSES = ["stalled", "awaiting-input", "paused"] as co
 /** Whether a step status is parked — see `BOARD_PARKED_STEP_STATUSES`. */
 export function isBoardParkedStepStatus(status: BoardStepStatus): boolean {
   return (BOARD_PARKED_STEP_STATUSES as ReadonlyArray<string>).includes(status);
+}
+
+/** T3o: how a proposed split may be approved given the card's live plan step (T3O-105). A
+    running review takes only Approve after review, since approving now freezes the plans and
+    ends it; a parked step takes either; otherwise the direct approve alone. */
+export function boardSplitApprovalModes(
+  planStep: {
+    readonly status: BoardStepStatus;
+    readonly planReviewStartedAt?: string | undefined;
+    readonly planReviewDoneAt?: string | undefined;
+  } | null,
+): { readonly afterReview: boolean; readonly now: boolean } {
+  const parked = planStep !== null && isBoardParkedStepStatus(planStep.status);
+  const reviewing = isBoardPlanReviewRunning(planStep);
+  return { afterReview: reviewing || parked, now: !reviewing || parked };
+}
+
+/** T3o: what a deferred split approval approved: each plan's key, title, dependencies and
+    planned flag, in plan order. Body edits leave it unchanged (T3O-105). */
+export function boardSplitFingerprint(
+  plans: ReadonlyArray<
+    Pick<BoardPlan, "planId" | "title" | "dependsOn" | "ordinal"> & {
+      readonly planned?: boolean | undefined;
+    }
+  >,
+): string {
+  return JSON.stringify(
+    [...plans]
+      .sort((left, right) => left.ordinal - right.ordinal)
+      .map((plan) => [plan.planId, plan.title, [...plan.dependsOn].sort(), plan.planned !== false]),
+  );
 }
 
 /**
@@ -2807,6 +2857,9 @@ const BOARD_CARD_ACTIVITY_KINDS = [
   "plan-review-stopped",
   "plan-review-rounds-changed",
   "plan-review-finished",
+  /** T3o: a split approved after review, undone, dropped by a changed split, or refused
+      when it fired (T3O-105). */
+  "split-approval",
   /** CI: a pass ended (its outcome on the row), the card was sent
       back to review, or a human skipped CI. Each links to the CI tab. */
   "card-ci-pass-finished",
@@ -2927,6 +2980,10 @@ export const BoardCardActivityPayload = Schema.Struct({
   planReviewRoundsRun: Schema.optionalKey(Schema.NullOr(NonNegativeInt)),
   planReviewConverged: Schema.optionalKey(Schema.NullOr(Schema.Boolean)),
   planReviewFindings: Schema.optionalKey(Schema.NullOr(NonNegativeInt)),
+  /** split-approval: what happened to the deferred approval, and the review round it
+      happened in. A refusal's reason rides in `detail`. */
+  splitApproval: Schema.optionalKey(Schema.Literals(["approved", "undone", "dropped", "refused"])),
+  planReviewRound: Schema.optionalKey(PositiveInt),
   /** card-ci-*: how the pass ended, the step that failed, and the
       fix attempts used. */
   ciOutcome: Schema.optionalKey(BoardCiPassOutcome),
@@ -5857,6 +5914,42 @@ export const BoardPlansApproveCommand = Schema.Struct({
 });
 export type BoardPlansApproveCommand = typeof BoardPlansApproveCommand.Type;
 
+/** T3o: approve a proposed split to take effect when the card's plan review finishes, so the
+    review is not cut short (T3O-105). The settings are the split gate's, as for approve. */
+export const BoardSplitApproveAfterReviewCommand = Schema.Struct({
+  type: Schema.Literal("board.split.approve-after-review"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  autoBuild: Schema.optionalKey(Schema.Boolean),
+  mergeTarget: Schema.optionalKey(BoardCardGroupTarget),
+  autoPlan: Schema.optionalKey(Schema.Boolean),
+  autoSignOff: Schema.optionalKey(Schema.Boolean),
+  autoMerge: Schema.optionalKey(Schema.Boolean),
+  createdAt: IsoDateTime,
+});
+export type BoardSplitApproveAfterReviewCommand = typeof BoardSplitApproveAfterReviewCommand.Type;
+
+/** T3o: Undo a split approved after review, before it fires (T3O-105). */
+export const BoardSplitCancelApprovalCommand = Schema.Struct({
+  type: Schema.Literal("board.split.cancel-approval"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  createdAt: IsoDateTime,
+});
+export type BoardSplitCancelApprovalCommand = typeof BoardSplitCancelApprovalCommand.Type;
+
+/** T3o: server-internal. The deferred approval fired and was refused; clear it so the split
+    gate asks again (T3O-105). */
+export const BoardSplitRecordApprovalRefusedCommand = Schema.Struct({
+  type: Schema.Literal("board.split.record-approval-refused"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  detail: TrimmedNonEmptyString,
+  createdAt: IsoDateTime,
+});
+export type BoardSplitRecordApprovalRefusedCommand =
+  typeof BoardSplitRecordApprovalRefusedCommand.Type;
+
 /** Start an armed plan review: one turned on after the plan was posted, which waits for this.
     Reopens a settled plan step or resumes a paused one, as turning review on used to. */
 export const BoardPlanReviewStartCommand = Schema.Struct({
@@ -7259,6 +7352,17 @@ export const BoardCardStepSteeredPayload = Schema.Struct({
 });
 export type BoardCardStepSteeredPayload = typeof BoardCardStepSteeredPayload.Type;
 
+/** T3o: the card's deferred split approval changed (T3O-105). `card` is the card after it;
+    `round` is the review round it happened in, when one was recorded. */
+export const BoardSplitApprovalChangedPayload = Schema.Struct({
+  cardId: BoardCardId,
+  card: BoardCard,
+  change: Schema.Literals(["approved", "undone", "dropped", "refused"]),
+  round: Schema.optionalKey(PositiveInt),
+  detail: Schema.optionalKey(TrimmedNonEmptyString),
+});
+export type BoardSplitApprovalChangedPayload = typeof BoardSplitApprovalChangedPayload.Type;
+
 /** A plan review started on the live plan step (plan review). */
 export const BoardPlanReviewStartedPayload = Schema.Struct({
   cardId: BoardCardId,
@@ -8458,6 +8562,9 @@ const BOARD_CLIENT_COMMANDS = [
   BoardPlansApproveCommand,
   // T3o: Start review on an armed plan review (T3O-104).
   BoardPlanReviewStartCommand,
+  // T3o: approve a split after review, and its Undo (T3O-105).
+  BoardSplitApproveAfterReviewCommand,
+  BoardSplitCancelApprovalCommand,
 ] as const;
 
 /**
@@ -8465,6 +8572,8 @@ const BOARD_CLIENT_COMMANDS = [
  * they reach the board decider without ever becoming client-dispatchable.
  */
 const BOARD_INTERNAL_COMMANDS = [
+  // T3o: a deferred split approval refused when it fired (T3O-105).
+  BoardSplitRecordApprovalRefusedCommand,
   BoardCardSyncGroupsCommand,
   BoardCardProvisionWorktreeCommand,
   BoardCardRecordWorktreeCommand,
@@ -8629,6 +8738,8 @@ export const BOARD_EVENT_TYPES = [
   "board.plan-review-rounds-changed",
   // Its round, end, arming or delivered policy moved (T3O-104).
   "board.plan-review-progressed",
+  // T3o: a split approved after review, undone, dropped or refused (T3O-105).
+  "board.split-approval-changed",
   // The worker registry.
   "board.worker-registered",
   "board.worker-removed",
@@ -8966,6 +9077,11 @@ export function makeBoardOrchestrationEvents<const Base extends Schema.Struct.Fi
       ...base,
       type: Schema.Literal("board.plan-review-started"),
       payload: BoardPlanReviewStartedPayload,
+    }),
+    Schema.Struct({
+      ...base,
+      type: Schema.Literal("board.split-approval-changed"),
+      payload: BoardSplitApprovalChangedPayload,
     }),
     Schema.Struct({
       ...base,
@@ -9728,6 +9844,9 @@ export const BoardCardDetail = Schema.Struct({
   ),
   /** Plan review was turned on after the plan was posted and waits for Start review. */
   planReviewAwaitingStart: Schema.optionalKey(IsoDateTime),
+  /** T3o: the live step's status; absent when it has settled or there is none. The split
+      dock reads whether planning is parked (T3O-105). */
+  liveStepStatus: Schema.optionalKey(BoardStepStatus),
 });
 export type BoardCardDetail = typeof BoardCardDetail.Type;
 

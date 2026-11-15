@@ -14,6 +14,8 @@ import {
   BOARD_DECISIONS_PER_CALL_MAX,
   isBoardCardAutoPlanPending,
   isBoardPlanReviewRunning,
+  boardSplitApprovalModes,
+  boardSplitFingerprint,
   BOARD_CARD_BRIEF_BODY_KIND,
   BOARD_CARD_LABELS_MAX,
   boardAppendOrderKey,
@@ -805,6 +807,41 @@ const planReviewStartedEvent = Effect.fn("planReviewStartedEvent")(function* (in
         updatedAt: input.command.createdAt,
       },
       ...(input.turnedOnLate === undefined ? {} : { turnedOnLate: input.turnedOnLate }),
+    },
+  };
+  return event;
+});
+
+/** T3o: the card's deferred split approval changed (T3O-105). An approval carries the card
+    with it; every other change carries the card without one. */
+const splitApprovalChangedEvent = Effect.fn("splitApprovalChangedEvent")(function* (input: {
+  readonly command: BoardCardCommand;
+  readonly card: BoardCard;
+  readonly change: "approved" | "undone" | "dropped" | "refused";
+  readonly round: number | undefined;
+  readonly detail?: string;
+}) {
+  const { pendingSplitApproval, ...rest } = input.card;
+  const card: BoardCard = {
+    ...rest,
+    ...(input.change === "approved" && pendingSplitApproval !== undefined
+      ? { pendingSplitApproval }
+      : {}),
+    updatedAt: input.command.createdAt,
+  };
+  const event: PlannedBoardEvent = {
+    ...(yield* makeBoardEventBase({
+      cardId: input.card.id,
+      occurredAt: input.command.createdAt,
+      commandId: input.command.commandId,
+    })),
+    type: "board.split-approval-changed",
+    payload: {
+      cardId: input.card.id,
+      card,
+      change: input.change,
+      ...(input.round === undefined ? {} : { round: input.round }),
+      ...(input.detail === undefined ? {} : { detail: input.detail }),
     },
   };
   return event;
@@ -4458,6 +4495,21 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
                 mergeTarget: command.recommendedMergeTarget ?? fallback.mergeTarget,
               };
             })();
+      // T3o: a re-proposal that changes the split drops its deferred approval; a body edit
+      // keeps it (T3O-105). First, so the proposal's rationale lands on top of the card.
+      const approvalDropped: ReadonlyArray<PlannedBoardEvent> =
+        proposalCard.pendingSplitApproval !== undefined &&
+        (plans.length < 2 ||
+          boardSplitFingerprint(plans) !== proposalCard.pendingSplitApproval.fingerprint)
+          ? [
+              yield* splitApprovalChangedEvent({
+                command,
+                card: proposalCard,
+                change: "dropped",
+                round: reviewRound,
+              }),
+            ]
+          : [];
       const proposed: PlannedBoardEvent = {
         ...(yield* makeBoardEventBase({
           cardId: command.cardId,
@@ -4481,16 +4533,22 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           : null;
       // T3o: a single plan's size is the card's own planner size (T3O-86); a split's
       // reaches each child at approval.
-      const sized = yield* plannerSizeRecorded({ board, command, card: proposalCard, plans });
+      // T3o: the size event carries the whole card, so it must not restore a dropped approval.
+      const sizedCard =
+        approvalDropped.length === 0
+          ? proposalCard
+          : (({ pendingSplitApproval: _dropped, ...rest }) => rest)(proposalCard);
+      const sized = yield* plannerSizeRecorded({ board, command, card: sizedCard, plans });
       // An armed review waits for Start review, however many times the agent proposes.
       if (
         reviewStep === null ||
         reviewStep.planReviewStartedAt !== undefined ||
         reviewStep.planReviewAwaitingStart !== undefined
       ) {
-        return sized === null ? proposed : [proposed, sized];
+        return [...approvalDropped, proposed, ...(sized === null ? [] : [sized])];
       }
       return [
+        ...approvalDropped,
         proposed,
         ...(sized === null ? [] : [sized]),
         yield* planReviewStartedEvent({
@@ -4499,6 +4557,63 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           rounds: command.planReview?.rounds ?? reviewStep.planReviewRounds ?? 1,
         }),
       ];
+    }
+
+    // T3o: approve a split to take effect when the plan review finishes (T3O-105). The reactor
+    // dispatches `board.plans.approve` with these settings when the planning step completes.
+    case "board.split.approve-after-review": {
+      const card = yield* requireActiveBoardCard({ board, command });
+      if (!boardSplitApprovalModes(livePlanReviewStep(board, card.id)).afterReview) {
+        return yield* invariant(
+          command,
+          `No plan review is running on card '${card.key}' and its planning is not paused; approve the split directly instead.`,
+        );
+      }
+      if (!boardCardPendingSplit(board, card.id)) {
+        return yield* invariant(
+          command,
+          `Card '${card.key}' has no proposed split to approve: it needs at least two plans and no live child cards.`,
+        );
+      }
+      const plans = boardCardPlans(board, card.id);
+      const recommendation = boardSplitRecommendationOf(board, card);
+      return yield* splitApprovalChangedEvent({
+        command,
+        card: {
+          ...card,
+          pendingSplitApproval: {
+            autoBuild: command.autoBuild ?? recommendation.autoBuild,
+            mergeTarget: command.mergeTarget ?? recommendation.mergeTarget,
+            ...(command.autoPlan === undefined ? {} : { autoPlan: command.autoPlan }),
+            ...(command.autoSignOff === undefined ? {} : { autoSignOff: command.autoSignOff }),
+            ...(command.autoMerge === undefined ? {} : { autoMerge: command.autoMerge }),
+            fingerprint: boardSplitFingerprint(plans),
+            approvedAt: command.createdAt,
+          },
+        },
+        change: "approved",
+        round: livePlanReviewStep(board, card.id)?.planReviewRound,
+      });
+    }
+
+    case "board.split.cancel-approval":
+    case "board.split.record-approval-refused": {
+      const card = yield* requireActiveBoardCard({ board, command });
+      if (card.pendingSplitApproval === undefined) {
+        return yield* invariant(
+          command,
+          `Card '${card.key}' has no split approval waiting for its review to finish.`,
+        );
+      }
+      return yield* splitApprovalChangedEvent({
+        command,
+        card,
+        change: command.type === "board.split.cancel-approval" ? "undone" : "refused",
+        round: livePlanReviewStep(board, card.id)?.planReviewRound,
+        ...(command.type === "board.split.record-approval-refused"
+          ? { detail: command.detail }
+          : {}),
+      });
     }
 
     // T3o: Start review on an armed plan review (T3O-104). Reopens a settled plan step or
@@ -4653,6 +4768,13 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
             )}', ${state.status}); finish or stop it before approving a split.`,
           );
         }
+      }
+      // T3o: approving now freezes the plans, which would end a running review (T3O-105).
+      if (!boardSplitApprovalModes(livePlanReviewStep(board, card.id)).now) {
+        return yield* invariant(
+          command,
+          `A plan review is running on card '${card.key}'; approving the split now would freeze its plans and end the review. Approve it after review instead (board.split.approve-after-review): the cards are created when the review finishes.`,
+        );
       }
       {
         // Only LIVE children block re-approval, so a fully archived first round does not
@@ -6956,6 +7078,28 @@ function boardAdoptionCommands(command: BoardCommand): ReadonlyArray<BoardComman
   ];
 }
 
+/** Strip a pending split approval from any card an event leaves outside the plan stage,
+    archives, or approves the split of. */
+function withSettledSplitApproval(decided: BoardDecision, board: BoardState): BoardDecision {
+  const planStageId = boardStageWithRole(board, "plan")?.stageId;
+  const events = boardDecidedEvents(decided);
+  if (!events.some((event) => settlesSplitApproval(event, planStageId))) return decided;
+  return events.map((event) => {
+    if (!settlesSplitApproval(event, planStageId)) return event;
+    const payload = event.payload as { readonly card: BoardCard };
+    const { pendingSplitApproval: _settled, ...card } = payload.card;
+    return { ...event, payload: { ...payload, card } } as PlannedBoardEvent;
+  });
+}
+
+function settlesSplitApproval(event: PlannedBoardEvent, planStageId: BoardStageId | undefined) {
+  const card = (event.payload as { readonly card?: BoardCard }).card;
+  if (card?.pendingSplitApproval === undefined) return false;
+  return (
+    event.type === "board.plans-approved" || card.archivedAt !== null || card.stage !== planStageId
+  );
+}
+
 export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* (input: {
   readonly command: BoardCommand;
   readonly readModel: BoardReadModel;
@@ -6999,7 +7143,11 @@ const decideOneBoardCommand = Effect.fn("decideOneBoardCommand")(function* (inpu
   BoardCommandInvariantError | PlatformError.PlatformError,
   SecureRandom.SecureRandom
 > {
-  const decided = yield* decideBoardCommandCore(input);
+  // T3o: a deferred split approval never outlives Planning, an archive or the approval (T3O-105).
+  const decided = withSettledSplitApproval(
+    yield* decideBoardCommandCore(input),
+    input.readModel.board ?? EMPTY_BOARD_STATE,
+  );
   const command = input.command;
   if (!GROUP_DERIVING_COMMANDS.has(command.type)) return decided;
   const planned = boardDecidedEvents(decided);

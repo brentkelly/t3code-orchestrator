@@ -56,6 +56,7 @@ import {
   BoardCardPullRequest,
   BoardCardModelOverrides,
   BoardSplitRecommendation,
+  BoardPendingSplitApproval,
   BoardCardAutoPlan,
   BoardCardPlanReview,
   BoardCardDecision,
@@ -188,6 +189,8 @@ const BoardCardDbRow = Schema.Struct({
   /** NULL for every row written before migration 052 and for every card with
       no recommended split (replay equals rehydration). */
   splitRecommendation: Schema.NullOr(Schema.fromJsonString(BoardSplitRecommendation)),
+  // T3o: NULL before migration 078 and whenever no split approval is pending (T3O-105).
+  pendingSplitApproval: Schema.NullOr(Schema.fromJsonString(BoardPendingSplitApproval)),
   autoPlan: Schema.NullOr(Schema.fromJsonString(BoardCardAutoPlan)),
   /** NULL for every row written before migration 054 and for every card that
       follows the Settings default (plan review). */
@@ -748,6 +751,7 @@ function boardCardToRow(card: BoardCard): BoardCardDbRow {
       : card.modelOverrides,
     splitRationale: card.splitRationale,
     splitRecommendation: card.splitRecommendation ?? null,
+    pendingSplitApproval: card.pendingSplitApproval ?? null,
     autoPlan: card.autoPlan ?? null,
     planReview: card.planReview ?? null,
     baseBranch: card.baseBranch,
@@ -855,6 +859,9 @@ function rowToBoardCard(
     modelOverrides: row.modelOverrides,
     splitRationale: row.splitRationale,
     ...(row.splitRecommendation === null ? {} : { splitRecommendation: row.splitRecommendation }),
+    ...(row.pendingSplitApproval === null
+      ? {}
+      : { pendingSplitApproval: row.pendingSplitApproval }),
     ...(row.autoPlan === null ? {} : { autoPlan: row.autoPlan }),
     ...(row.planReview === null ? {} : { planReview: row.planReview }),
     baseBranch: row.baseBranch,
@@ -934,6 +941,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         model_overrides,
         split_rationale,
         split_recommendation,
+        pending_split_approval,
         auto_plan,
         plan_review,
         base_branch,
@@ -990,6 +998,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ${row.modelOverrides},
         ${row.splitRationale},
         ${row.splitRecommendation},
+        ${row.pendingSplitApproval},
         ${row.autoPlan},
         ${row.planReview},
         ${row.baseBranch},
@@ -1046,6 +1055,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         model_overrides = excluded.model_overrides,
         split_rationale = excluded.split_rationale,
         split_recommendation = excluded.split_recommendation,
+        pending_split_approval = excluded.pending_split_approval,
         auto_plan = excluded.auto_plan,
         plan_review = excluded.plan_review,
         base_branch = excluded.base_branch,
@@ -1112,6 +1122,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         model_overrides AS "modelOverrides",
         split_rationale AS "splitRationale",
         split_recommendation AS "splitRecommendation",
+        pending_split_approval AS "pendingSplitApproval",
         auto_plan AS "autoPlan",
         plan_review AS "planReview",
         base_branch AS "baseBranch",
@@ -1535,6 +1546,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         model_overrides AS "modelOverrides",
         split_rationale AS "splitRationale",
         split_recommendation AS "splitRecommendation",
+        pending_split_approval AS "pendingSplitApproval",
         auto_plan AS "autoPlan",
         plan_review AS "planReview",
         base_branch AS "baseBranch",
@@ -3672,6 +3684,22 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
         });
         return;
 
+      // T3o: a deferred split approval, on the rail (T3O-105).
+      case "board.split-approval-changed":
+        yield* upsertCard(event.payload.card);
+        yield* recordActivity({
+          event,
+          cardId: event.payload.cardId,
+          kind: "split-approval",
+          payload: {
+            splitApproval: event.payload.change,
+            ...(event.payload.round === undefined ? {} : { planReviewRound: event.payload.round }),
+            ...(event.payload.detail === undefined ? {} : { detail: event.payload.detail }),
+          },
+          threadId: null,
+        });
+        return;
+
       // T3o: review bookkeeping, step state only (T3O-104).
       case "board.plan-review-progressed":
         yield* upsertStepState(event.payload.state);
@@ -4653,15 +4681,19 @@ function makeBoardCardDetailLoader(
             ...(() => {
               const step = Option.getOrNull(stepErrorRow);
               if (step === null) return {};
-              const awaiting =
-                step.planReviewAwaitingStart === null || step.planReviewStartedAt !== null
+              const awaiting = {
+                ...(step.planReviewAwaitingStart === null || step.planReviewStartedAt !== null
                   ? {}
-                  : { planReviewAwaitingStart: step.planReviewAwaitingStart };
+                  : { planReviewAwaitingStart: step.planReviewAwaitingStart }),
+                // T3o: the split dock reads whether planning is parked (T3O-105).
+                ...(isBoardTerminalStepStatus(step.status) ? {} : { liveStepStatus: step.status }),
+              };
               return step.planReviewStartedAt === null ||
                 step.planReviewRounds === null ||
                 isBoardTerminalStepStatus(step.status)
                 ? awaiting
                 : {
+                    ...awaiting,
                     planReviewStarted: {
                       startedAt: step.planReviewStartedAt,
                       rounds: step.planReviewRounds,

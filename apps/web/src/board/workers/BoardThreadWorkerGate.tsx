@@ -62,10 +62,13 @@ function useWorkerThreadAccess(worker: BoardThreadWorker): WorkerThreadAccess {
 export function BoardThreadWorkerGate({
   worker,
   children,
+  foot,
 }: {
   readonly worker: BoardThreadWorker;
   /** The thread itself, in the environment it opens in. */
   readonly children: (environmentId: EnvironmentId) => ReactNode;
+  /** Shown below the placeholder while the thread cannot open, so it stays reachable. */
+  readonly foot?: ReactNode;
 }) {
   const access = useWorkerThreadAccess(worker);
   const open = useAtomCommand(openWorkerThreadEnvironment, { reportFailure: false });
@@ -141,34 +144,37 @@ export function BoardThreadWorkerGate({
         }
       : workerThreadAccessCopy(access, worker);
   return (
-    <div className="flex min-h-0 flex-1 flex-col justify-center p-4">
-      <div className="flex flex-col gap-2.5 rounded-xl border border-dashed border-border bg-card p-4">
-        <div
-          className={cn(
-            "text-board-13 font-medium",
-            copy.tone === "warning" ? "text-warning-foreground" : "text-foreground",
-          )}
-        >
-          {copy.title}
-        </div>
-        <div className="text-board-12-5 leading-board-1-6 text-pretty text-muted-foreground">
-          {copy.detail}
-        </div>
-        {retryReason !== null && (shownFailure !== null || access === "offline") ? (
-          <div className="pt-0.5">
-            <Button
-              onClick={() => {
-                setFailure(null);
-                mint(retryReason);
-              }}
-              size="sm"
-              variant="outline"
-            >
-              Retry
-            </Button>
+    <>
+      <div className="flex min-h-0 flex-1 flex-col justify-center p-4">
+        <div className="flex flex-col gap-2.5 rounded-xl border border-dashed border-border bg-card p-4">
+          <div
+            className={cn(
+              "text-board-13 font-medium",
+              copy.tone === "warning" ? "text-warning-foreground" : "text-foreground",
+            )}
+          >
+            {copy.title}
           </div>
-        ) : null}
+          <div className="text-board-12-5 leading-board-1-6 text-pretty text-muted-foreground">
+            {copy.detail}
+          </div>
+          {retryReason !== null && (shownFailure !== null || access === "offline") ? (
+            <div className="pt-0.5">
+              <Button
+                onClick={() => {
+                  setFailure(null);
+                  mint(retryReason);
+                }}
+                size="sm"
+                variant="outline"
+              >
+                Retry
+              </Button>
+            </div>
+          ) : null}
+        </div>
       </div>
-    </div>
+      {foot == null ? null : <div className="shrink-0 border-t border-border p-3">{foot}</div>}
+    </>
   );
 }

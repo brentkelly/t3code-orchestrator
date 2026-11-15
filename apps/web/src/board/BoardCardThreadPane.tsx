@@ -57,9 +57,11 @@ const NO_THREAD_IDS: ReadonlyArray<ThreadId> = [];
 function BoardCardChat({
   environmentId,
   threadId,
+  aboveComposer,
 }: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
+  readonly aboveComposer: ReactNode;
 }) {
   const threadRef = scopeThreadRef(environmentId, threadId);
   const inShell = useThreadShell(threadRef) !== null;
@@ -67,27 +69,39 @@ function BoardCardChat({
   const rows = useBoardCardThreadRows(environmentId, inShell ? NO_THREAD_IDS : [threadId]);
   const presence = boardCardChatPresence({ threadId, inShell, rows });
 
+  // No composer to dock above: the dock sits at the foot instead.
+  const foot =
+    aboveComposer == null ? null : <div className="shrink-0 px-3 pb-3">{aboveComposer}</div>;
   if (presence === "gone") {
-    return <BoardCardMissingChat environmentId={environmentId} threadId={threadId} />;
+    return (
+      <>
+        <BoardCardMissingChat environmentId={environmentId} threadId={threadId} />
+        {foot}
+      </>
+    );
   }
   if (presence !== "open") {
     return (
-      <div className="flex flex-1 flex-col items-center justify-center gap-2 p-6 text-board-12-5 text-muted-foreground">
-        {presence === "loading" ? "Loading thread…" : "Couldn't load this thread."}
-        {presence === "failed" ? (
-          <Button
-            onClick={() => threadFamilies.refresh(appAtomRegistry, environmentId, threadId)}
-            size="xs"
-            variant="outline"
-          >
-            Retry
-          </Button>
-        ) : null}
-      </div>
+      <>
+        <div className="flex flex-1 flex-col items-center justify-center gap-2 p-6 text-board-12-5 text-muted-foreground">
+          {presence === "loading" ? "Loading thread…" : "Couldn't load this thread."}
+          {presence === "failed" ? (
+            <Button
+              onClick={() => threadFamilies.refresh(appAtomRegistry, environmentId, threadId)}
+              size="xs"
+              variant="outline"
+            >
+              Retry
+            </Button>
+          ) : null}
+        </div>
+        {foot}
+      </>
     );
   }
   return (
     <ChatView
+      aboveComposer={aboveComposer}
       chrome="embedded"
       environmentId={environmentId}
       routeKind="server"
@@ -210,7 +224,8 @@ export function BoardCardThreadPane({
   readonly queueInfo?: BoardQueueInfo | null | undefined;
   readonly queueForceStartPending?: boolean | undefined;
   readonly onQueueForceStart?: (() => void) | undefined;
-  /** Docked at the end of the thread, e.g. the split gate. */
+  /** Docked directly above the composer, e.g. the split dock; at the pane's foot when no
+      thread is open. */
   readonly footer?: ReactNode;
 }) {
   // A new blank thread becomes the card's most-recently-linked live thread, so
@@ -252,7 +267,10 @@ export function BoardCardThreadPane({
   };
 
   return (
-    <section className="flex min-h-0 min-w-0 flex-col border-r border-border bg-muted/55">
+    <section
+      className="flex min-h-0 min-w-0 flex-col border-r border-border bg-muted/55"
+      data-board-thread-column=""
+    >
       <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border pl-2.5 pr-3">
         <BoardCardThreadAddMenu
           adoptSearch={adoptSearch}
@@ -479,17 +497,19 @@ export function BoardCardThreadPane({
             todo={threadTodos?.get(selected.threadId)}
           />
           {/* A thread on a worker opens in that worker's environment. */}
-          <BoardThreadWorkerGate key={selected.threadId} worker={selected.worker}>
+          <BoardThreadWorkerGate foot={footer} key={selected.threadId} worker={selected.worker}>
             {(threadEnvironmentId) => (
-              <BoardCardChat environmentId={threadEnvironmentId} threadId={selected.threadId} />
+              <BoardCardChat
+                aboveComposer={footer}
+                environmentId={threadEnvironmentId}
+                threadId={selected.threadId}
+              />
             )}
           </BoardThreadWorkerGate>
         </div>
       )}
-      {footer == null ? null : (
-        <div className="max-h-[60%] shrink-0 overflow-y-auto border-t border-border p-3">
-          {footer}
-        </div>
+      {footer == null || (selected !== null && !selected.tombstoned) ? null : (
+        <div className="shrink-0 border-t border-border p-3">{footer}</div>
       )}
     </section>
   );
