@@ -12629,14 +12629,19 @@ const make = Effect.gen(function* () {
     reconcile,
     // Forge-check CI steps poll on the sweep too.
     sweep: sweepTimeouts.pipe(
-      // A forge read answers through the queue: the sweep waits for it to land.
       Effect.andThen(sweepCiForgeSteps),
-      Effect.andThen(awaitForgeProbes),
-      Effect.andThen(worker.drain),
       Effect.andThen(sweepOrphanedCiPasses),
       // T3o: and worker capacity's phase rule and sync (T3O-86).
       Effect.andThen(sweepCapacity),
       withTickThreadStates,
+      // A forge read answers through the queue: the sweep waits for any it started to land.
+      Effect.andThen(
+        Effect.suspend(() =>
+          forgeProbesInFlight.size === 0
+            ? Effect.void
+            : awaitForgeProbes.pipe(Effect.andThen(worker.drain)),
+        ),
+      ),
     ),
     refreshHolds,
     readyWorkerCapacity: (projectId) =>
