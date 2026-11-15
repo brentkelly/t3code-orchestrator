@@ -62,3 +62,16 @@ it.effect("asks git only for a checkout with no pointer file", () =>
     assert.deepStrictEqual(gitCalls, [plain]);
   }).pipe(Effect.provide(NodeServices.layer)),
 );
+
+it.effect(
+  "falls back to git when the pointer names a missing directory, so the owner stays unknown",
+  () =>
+    Effect.gen(function* () {
+      const gitCalls: Array<string> = [];
+      const { worktree, gitDir } = linkedWorktree(null);
+      NodeFS.rmSync(gitDir, { recursive: true });
+      const deps = yield* depsWith(gitCalls, null);
+      assert.strictEqual(yield* boardWorktreeOwner(deps, worktree), null);
+      assert.deepStrictEqual(gitCalls, [worktree]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+);

@@ -105,10 +105,18 @@ const worktreePrivateGitDir = (
   deps.fileSystem.readFileString(deps.path.join(worktreePath, ".git")).pipe(
     Effect.map((dotGit) => /^gitdir:\s*(.+?)\s*$/m.exec(dotGit)?.[1] ?? null),
     Effect.orElseSucceed(() => null),
+    Effect.map((gitDir) => (gitDir === null ? null : deps.path.resolve(worktreePath, gitDir))),
+    // A pointer to a missing dir must not read as "self": let git decide (usually unknown).
     Effect.flatMap((gitDir) =>
       gitDir === null
-        ? worktreeGitDirFromGit(deps.git, worktreePath)
-        : Effect.succeed(deps.path.resolve(worktreePath, gitDir)),
+        ? Effect.succeed(null)
+        : deps.fileSystem.exists(gitDir).pipe(
+            Effect.map((exists) => (exists ? gitDir : null)),
+            Effect.orElseSucceed(() => null),
+          ),
+    ),
+    Effect.flatMap((gitDir) =>
+      gitDir === null ? worktreeGitDirFromGit(deps.git, worktreePath) : Effect.succeed(gitDir),
     ),
   );
 

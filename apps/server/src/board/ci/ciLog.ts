@@ -221,14 +221,14 @@ const followBoardCiLogUntil = (input: {
   );
 };
 
-/** Whether a step's log has stopped growing (the end rule): the step
-    settled, its pass finished, or the card moved to another pass. */
 /** What decides whether a followed step has settled: the card's live CI and its passes. */
 export type BoardCiLogSettleState = {
   readonly card: Pick<BoardCardDetail["card"], "ci">;
   readonly ciPasses: BoardCardDetail["ciPasses"];
 };
 
+/** Whether a step's log has stopped growing (the end rule): the step
+    settled, its pass finished, or the card moved to another pass. */
 export function isBoardCiLogSettled(
   detail: BoardCiLogSettleState | null,
   runId: string,
