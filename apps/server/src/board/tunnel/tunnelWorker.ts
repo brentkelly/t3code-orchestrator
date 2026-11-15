@@ -32,6 +32,8 @@ export interface WorkerTunnelStatus {
   readonly lastError: string | null;
   /** The address in use. */
   readonly boardUrl: string;
+  /** Why the board can't use this T3o, from its last answer; `t3o-worker auto-update` acts on it. */
+  readonly updateRequired: string | null;
 }
 
 export interface TunnelWorkerOptions {
@@ -73,6 +75,13 @@ export function tunnelBackoffMs(
 ): number {
   const ceiling = Math.min(bounds.maxMs, bounds.initialMs * 2 ** Math.min(failures, 16));
   return Math.round(ceiling / 2 + (random() * ceiling) / 2);
+}
+
+/** Why a board that answered `ok` still can't use this worker, or null when it can. */
+function gatewayUpdateRequired(ack: WorkerTunnelHelloAck, gatewayProtocol: number) {
+  if (ack.gatewayFloor === undefined || gatewayProtocol >= ack.gatewayFloor) return null;
+  const release = ack.gatewayFloorRelease ? ` (T3o ${ack.gatewayFloorRelease} or newer)` : "";
+  return `The board needs board-worker protocol ${ack.gatewayFloor}${release}; this worker speaks ${gatewayProtocol}.`;
 }
 
 /** A tunnel that held this long was healthy: it redials at once and its backoff starts over. */
@@ -199,6 +208,7 @@ export class TunnelWorker {
       lastConnectedAt: null,
       lastError: null,
       boardUrl: this.boardUrl,
+      updateRequired: null,
     };
   }
 
@@ -323,15 +333,18 @@ export class TunnelWorker {
                     channel.close();
                   });
                 return;
-              case "needs-update":
+              case "needs-update": {
+                const reason = `The board speaks tunnel protocol ${message.tunnelProtocol ?? "?"}, this worker ${this.tunnelProtocol}. Update T3o on the older side.`;
                 this.setStatus({
                   state: "needs-update",
-                  lastError: `The board speaks tunnel protocol ${message.tunnelProtocol ?? "?"}, this worker ${this.tunnelProtocol}. Update T3o on the older side.`,
+                  lastError: reason,
+                  updateRequired: reason,
                 });
                 // Keep dialling, slowly: updating the board brings this worker back by itself.
                 parkedForUpdate = true;
                 channel.close();
                 return;
+              }
               case "revoked":
                 this.setStatus({
                   state: "revoked",
@@ -362,6 +375,7 @@ export class TunnelWorker {
                   lastError: known
                     ? `The board's address ${next} isn't reachable from this worker; staying on ${this.boardUrl}.`
                     : null,
+                  updateRequired: gatewayUpdateRequired(message, this.options.gatewayProtocol),
                 });
                 this.options.onReady?.(message);
             }

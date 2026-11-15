@@ -1,0 +1,34 @@
+// @effect-diagnostics globalDate:off - fixed timestamps for the plain-Node decision.
+import { describe, expect, it } from "vite-plus/test";
+
+import { AUTO_UPDATE_RETRY_MS, decideAutoUpdate } from "./t3o-auto-update.ts";
+
+describe("auto-update decision", () => {
+  const flagged = {
+    pid: 1,
+    boards: [
+      { boardLabel: "mesh-dev", state: "connected", updateRequired: "needs protocol 6" },
+      { boardLabel: "other", state: "connected", updateRequired: null },
+      { boardLabel: "older", state: "connected" },
+    ],
+  };
+  const now = 10 * AUTO_UPDATE_RETRY_MS;
+  const decide = (input: Partial<Parameters<typeof decideAutoUpdate>[0]>) =>
+    decideAutoUpdate({ status: flagged, serverAlive: true, lastAttemptAt: null, now, ...input });
+
+  it("updates only for a live server's flagged boards", () => {
+    expect(decide({})).toEqual({ kind: "update", reasons: ["mesh-dev: needs protocol 6"] });
+    expect(decide({ serverAlive: false }).kind).toBe("idle");
+    expect(decide({ status: null }).kind).toBe("idle");
+    expect(decide({ status: { pid: 1, boards: [flagged.boards[1]] } }).kind).toBe("idle");
+    expect(decide({ status: { pid: 1 } }).kind).toBe("idle");
+  });
+
+  it("waits out the retry window after an attempt that left the flag set", () => {
+    expect(decide({ lastAttemptAt: now - AUTO_UPDATE_RETRY_MS + 1 })).toMatchObject({
+      kind: "wait",
+      retryAt: new Date(now + 1).toISOString(),
+    });
+    expect(decide({ lastAttemptAt: now - AUTO_UPDATE_RETRY_MS }).kind).toBe("update");
+  });
+});

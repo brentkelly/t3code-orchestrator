@@ -276,7 +276,25 @@ popover lists the cards each one has paused, with **Open Workers settings**.
 - **Reconnecting** — the worker is connected but the board's access there has to be renewed; it
   happens by itself on the worker's next connection.
 - **Needs update** — the worker is connected but too old for this board, so it takes no new cards;
-  its threads stay readable. Run `pnpm t3o-update` on the worker.
+  its threads stay readable. Run `pnpm t3o-update` on the worker, or let auto-update do it (below).
+
+## Keeping a worker up to date
+
+A worker learns from each board, every time it connects, whether the board can still use it. A
+board updated past what the worker speaks says so straight away, and `pnpm t3o-worker status`
+shows it as **needs update**.
+
+`pnpm t3o-worker auto-update --install` adds a systemd timer that checks for that every two
+minutes and runs `pnpm t3o-update` when it's set. Checking only reads a file on the worker; GitHub
+is contacted only when an update is due. `--check` reports without updating, and `--uninstall`
+removes the timer. Its runs are in `journalctl -u t3o-auto-update`.
+
+- The update reinstalls the service with `sudo`, so the worker's user needs passwordless sudo for
+  the timer to finish it. `--install` warns when it doesn't have it.
+- It installs the latest T3o release. A board running a build newer than every release keeps the
+  worker on **Needs update** until that release is out; the timer then retries every 30 minutes.
+- Agent turns running on the worker are interrupted when the service restarts, as with any update.
+- Workers on a release from before auto-update never report the flag: update them by hand once.
 
 ## Threads on a worker
 

@@ -390,6 +390,7 @@ const workerStatusSections: Array<(home: string) => ReadonlyArray<string>> = [
           `  ${board.boardLabel}  ${entry?.boardUrl ?? board.boardUrl}`,
           `    ${entry?.state ?? "unknown"}${entry?.lastConnectedAt ? `, last connected ${entry.lastConnectedAt}` : ""}`,
           ...(entry?.lastError ? [`    last error: ${entry.lastError}`] : []),
+          ...(entry?.updateRequired ? [`    needs update: ${entry.updateRequired}`] : []),
         ];
       }),
     ];

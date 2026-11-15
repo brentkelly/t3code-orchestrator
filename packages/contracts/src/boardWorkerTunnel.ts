@@ -114,6 +114,10 @@ export const WorkerTunnelHelloAck = Schema.Struct({
   liveBoardSessionIds: Schema.optionalKey(Schema.Array(TrimmedNonEmptyString)),
   tunnelProtocol: Schema.optionalKey(NonNegativeInt),
   message: Schema.optionalKey(Schema.String),
+  /** On `ok`: the gateway protocol floor, so a worker below it knows it needs an update. */
+  gatewayFloor: Schema.optionalKey(NonNegativeInt),
+  /** The T3o release that first met `gatewayFloor`. */
+  gatewayFloorRelease: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type WorkerTunnelHelloAck = typeof WorkerTunnelHelloAck.Type;
 

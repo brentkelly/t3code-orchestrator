@@ -125,6 +125,7 @@ const makeWorkerTunnels = Effect.gen(function* () {
       state: status.state,
       lastConnectedAt: status.lastConnectedAt,
       lastError: status.lastError,
+      updateRequired: status.updateRequired,
     });
     scheduleStatus();
   };
@@ -216,6 +217,7 @@ const makeWorkerTunnels = Effect.gen(function* () {
       lastConnectedAt: statuses.get(boardId)?.lastConnectedAt ?? null,
       lastError: null,
       boardUrl: entry.boardUrl,
+      updateRequired: null,
     });
     tunnel.start();
   };
@@ -270,6 +272,7 @@ const makeWorkerTunnels = Effect.gen(function* () {
           lastConnectedAt: null,
           lastError: "No tunnel credential stored for this board. Join it again.",
           boardUrl: entry.boardUrl,
+          updateRequired: null,
         });
         continue;
       }
