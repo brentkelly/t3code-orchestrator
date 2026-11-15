@@ -125,7 +125,7 @@ function AutomationRowView({
 function AutomationStripView({ strip }: { readonly strip: BoardAutomationStrip }) {
   const tag = "inline-flex items-center gap-1 rounded px-1.5 py-px text-board-10-5 font-medium";
   return (
-    <span className="flex items-center gap-1" data-board-automation-strip>
+    <span className="flex flex-wrap items-center justify-end gap-1" data-board-automation-strip>
       {strip.tags.map(({ gate, auto }) => (
         <span
           className={cn(

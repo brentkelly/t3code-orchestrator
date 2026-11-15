@@ -1265,8 +1265,8 @@ export type BoardCardDecisionMaker = typeof BoardCardDecisionMaker.Type;
 
 /** Caps on what one decision may carry: the log rides every detail frame. */
 const BOARD_DECISION_QUESTION_MAX_LENGTH = 300;
-export const BOARD_DECISION_TEXT_MAX_LENGTH = 600;
-export const BOARD_DECISION_REASON_MAX_LENGTH = 400;
+const BOARD_DECISION_TEXT_MAX_LENGTH = 600;
+const BOARD_DECISION_REASON_MAX_LENGTH = 400;
 export const BOARD_DECISIONS_PER_CALL_MAX = 40;
 
 export const BoardCardDecisionInput = Schema.Struct({
