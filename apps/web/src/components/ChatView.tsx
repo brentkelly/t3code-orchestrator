@@ -418,6 +418,7 @@ type ChatViewProps =
       routeKind: "draft";
       draftId: DraftId;
       chrome?: ChatViewChrome;
+      // T3o: the board's split dock is server-thread only (T3O-105).
       aboveComposer?: never;
     };
 
@@ -434,6 +435,7 @@ export default function ChatView(props: ChatViewProps) {
     embedded: parentPanel,
     // T3o: see ChatViewChrome.
     chrome = "full",
+    // T3o: the board's split dock (T3O-105).
     aboveComposer,
   } = props;
   const embedded = parentPanel !== undefined;

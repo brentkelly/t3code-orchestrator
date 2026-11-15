@@ -59,6 +59,7 @@ import {
   isLiveBoardCardThreadLink,
   type BoardProjectExecutionConfig,
   boardStalledWords,
+  boardSplitFingerprint,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { Debouncer } from "@tanstack/react-pacer";
@@ -2937,8 +2938,12 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
     cardId: card.id,
     stored: readBoardSplitDockStored(card.id),
   }));
-  const splitDockStored =
-    splitDockState.cardId === card.id ? splitDockState.stored : readBoardSplitDockStored(card.id);
+  let splitDockStored = splitDockState.stored;
+  if (splitDockState.cardId !== card.id) {
+    // Adjusted during render, so storage is read once per card switch, not every render.
+    splitDockStored = readBoardSplitDockStored(card.id);
+    setSplitDockState({ cardId: card.id, stored: splitDockStored });
+  }
   const storeSplitDock = (stored: BoardSplitDockStored) => {
     writeBoardSplitDockStored(card.id, stored);
     setSplitDockState({ cardId: card.id, stored });
@@ -2951,7 +2956,10 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
         ? (props.detail.liveStepStatus ?? null)
         : null,
     pendingApproval: card.pendingSplitApproval ?? null,
-    approvalLost: boardSplitApprovalLostFromActivity(props.detail.activity),
+    // Only the dock reads it; a card with no split to approve skips the walk.
+    approvalLost: props.canApproveSplit
+      ? boardSplitApprovalLostFromActivity(props.detail.activity)
+      : null,
   };
   const splitDockExpanded = boardSplitDockExpanded(splitDockInput, splitDockStored);
   const setSplitDockExpanded = (expanded: boolean) =>
@@ -3526,9 +3534,12 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                       summary={boardSplitDockSummary(splitDockInput)}
                     >
                       <BoardSplitGate
-                        // A re-proposal is a new gate: start from its own
-                        // recommendation rather than the last one's edits.
-                        key={props.detail.plans.map((plan) => plan.planId + plan.updatedAt).join()}
+                        // A changed split is a new gate: start from its own recommendation
+                        // rather than the last one's edits. A plan body edit keeps the gate.
+                        key={
+                          boardSplitFingerprint(props.detail.plans) +
+                          JSON.stringify(props.splitGate.recommendation)
+                        }
                         {...props.splitGate}
                         footer={boardSplitDockFooter(splitDockInput)}
                         lostNote={boardSplitDockLostNote(splitDockInput.approvalLost)}

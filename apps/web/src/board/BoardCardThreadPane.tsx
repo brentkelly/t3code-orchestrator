@@ -497,7 +497,7 @@ export function BoardCardThreadPane({
             todo={threadTodos?.get(selected.threadId)}
           />
           {/* A thread on a worker opens in that worker's environment. */}
-          <BoardThreadWorkerGate key={selected.threadId} worker={selected.worker}>
+          <BoardThreadWorkerGate foot={footer} key={selected.threadId} worker={selected.worker}>
             {(threadEnvironmentId) => (
               <BoardCardChat
                 aboveComposer={footer}
