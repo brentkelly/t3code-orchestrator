@@ -12,6 +12,7 @@ import {
   type BoardCardGrant,
   type BoardCardStepState,
   type BoardCommand,
+  type BoardResourceProfile,
   type BoardState,
   type BoardWorkerCapacitySnapshot,
   type BoardWorkerId,
@@ -753,7 +754,7 @@ it.effect("syncAll reads each project's repository key once, however many worker
   Effect.gen(function* () {
     const W2 = EnvironmentId.make("env-w2");
     const fake = yield* makeFakeCapacity(
-      new Map([
+      new Map<BoardWorkerId, BoardResourceProfile>([
         [BOARD_LOCAL_WORKER_ID, { cpuCores: 16, ramGiB: 64, diskGB: 200 }],
         [W1, { cpuCores: 16, ramGiB: 64, diskGB: 200 }],
         [W2, { cpuCores: 16, ramGiB: 64, diskGB: 200 }],

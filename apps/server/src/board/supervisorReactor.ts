@@ -214,8 +214,10 @@ import {
   ThreadReadError,
   UNKNOWN_THREAD_STATE,
   type BoardProject,
+  type BoardThreadState,
   type ThreadCommandError,
   type ThreadSignal,
+  type UnknownThreadState,
 } from "./ThreadGateway.ts";
 import type { BoardCommand } from "./decider.ts";
 import { syncCardThreadPullRequests } from "./cardThreadPullRequests.ts";
@@ -789,10 +791,53 @@ const make = Effect.gen(function* () {
     Effect.map(([projects, model]): BoardWorld => ({ projects, board: model.board })),
   );
 
+  // T3o: one thread-state read per thread per sweep tick (T3O-108). Set only while a tick's
+  // timeout and capacity sweeps run, and read only by their checks: a tick-scoped memo needs no
+  // invalidation, and every other path keeps reading fresh.
+  let tickThreadStates: Map<
+    string,
+    Effect.Effect<BoardThreadState | UnknownThreadState | null, ThreadReadError>
+  > | null = null;
+  const withTickThreadStates = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    Effect.suspend(() => {
+      if (tickThreadStates !== null) return effect;
+      const memo = new Map<
+        string,
+        Effect.Effect<BoardThreadState | UnknownThreadState | null, ThreadReadError>
+      >();
+      tickThreadStates = memo;
+      return effect.pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (tickThreadStates === memo) tickThreadStates = null;
+          }),
+        ),
+      );
+    });
+  /** `threads.threadState`, read once per tick while a sweep tick runs. */
+  const sweepThreadState = Effect.fnUntraced(function* (threadId: ThreadId) {
+    const memo = tickThreadStates;
+    if (memo === null) return yield* threads.threadState(threadId);
+    let read = memo.get(String(threadId));
+    if (read === undefined) {
+      read = yield* Effect.cached(threads.threadState(threadId));
+      memo.set(String(threadId), read);
+    }
+    return yield* read;
+  });
+
   /** A thread the board can still act on — present and not deleted — or
-      undefined. */
-  const liveThread = (threadId: ThreadId) =>
-    threads.threadState(threadId).pipe(
+      undefined. `read` is the sweep tick's shared read where a sweep check asks. */
+  const liveThread = (
+    threadId: ThreadId,
+    read: (
+      threadId: ThreadId,
+    ) => Effect.Effect<
+      BoardThreadState | UnknownThreadState | null,
+      ThreadReadError
+    > = threads.threadState,
+  ) =>
+    read(threadId).pipe(
       Effect.flatMap((state) =>
         // T3o: a thread on a worker the board cannot reach is neither
         // gone nor alive, so no decision may be taken on it: surfaced as a
@@ -2371,7 +2416,7 @@ const make = Effect.gen(function* () {
       awaitingPermission: (state) =>
         state.threadId === null
           ? Effect.succeed(false)
-          : threads.threadState(state.threadId).pipe(
+          : sweepThreadState(state.threadId).pipe(
               Effect.map(
                 (thread) =>
                   thread !== null && thread !== "unknown" && thread.awaitingPermission === true,
@@ -11561,7 +11606,7 @@ const make = Effect.gen(function* () {
       waits inside a live run with no question signal to park the step) or, read only when it has
       neither, a subagent's approval. Review-deciding questions are the board's own to answer. */
   const threadAwaitingHuman = (state: Pick<BoardCardStepState, "stepId">, threadId: ThreadId) =>
-    liveThread(threadId).pipe(
+    liveThread(threadId, sweepThreadState).pipe(
       Effect.flatMap((shell) =>
         shell === undefined
           ? Effect.succeed(false)
@@ -11576,7 +11621,9 @@ const make = Effect.gen(function* () {
   /** The thread's shell when it is between turns, needs no human and has
       background work — the same reading the card's "Waiting" label makes. */
   const threadWaitingOnBackground = (threadId: ThreadId) =>
-    liveThread(threadId).pipe(Effect.map((shell) => shell?.waitingOnBackground ?? false));
+    liveThread(threadId, sweepThreadState).pipe(
+      Effect.map((shell) => shell?.waitingOnBackground ?? false),
+    );
 
   /**
    * Supervise a step waiting on its own background work; true means the timeout logic must not
@@ -11602,7 +11649,7 @@ const make = Effect.gen(function* () {
       beginBackgroundWait(state.threadId, input.now);
       return true;
     }
-    const shell = yield* liveThread(state.threadId);
+    const shell = yield* liveThread(state.threadId, sweepThreadState);
     if (shell === undefined || !shell.waitingOnBackground) {
       // A live turn (a check-in being answered) is supervised the ordinary
       // way and keeps the wait; background work that is gone ends it.
@@ -12259,6 +12306,8 @@ const make = Effect.gen(function* () {
           Effect.andThen(sweepAutoArchives),
           // T3o: worker capacity's phase rule, settling and sync, then the upgrade (T3O-86).
           Effect.andThen(sweepCapacity),
+          // T3o: the timeout and capacity sweeps share one thread read per thread (T3O-108).
+          withTickThreadStates,
         );
     }
   };
@@ -12485,6 +12534,7 @@ const make = Effect.gen(function* () {
       Effect.andThen(sweepOrphanedCiPasses),
       // T3o: and worker capacity's phase rule and sync (T3O-86).
       Effect.andThen(sweepCapacity),
+      withTickThreadStates,
     ),
     refreshHolds,
     readyWorkerCapacity: (projectId) =>

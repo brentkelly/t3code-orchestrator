@@ -1221,6 +1221,10 @@ it.layer(makeBoardStackTestLayer("t3o-thread-gateway-contract-"))(
         ]);
         const after = yield* threads.lastSignalAt(threadId);
         assert.isTrue(after! > before!, `${before} -> ${after}`);
+        // The thread's own update time, as its shell reads it; a deleted thread has none.
+        assert.strictEqual(after, "2099-01-01T00:00:00.000Z");
+        yield* threads.delete({ commandId: boardCommandId("delete-signal-thread"), threadId });
+        assert.isNull(yield* threads.lastSignalAt(threadId));
       }),
     );
 
