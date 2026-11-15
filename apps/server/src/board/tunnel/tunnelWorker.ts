@@ -266,7 +266,8 @@ export class TunnelWorker {
         return;
       }
       if (error instanceof UpgradeRefused && error.revoked) {
-        this.setStatus({ state: "revoked", lastError: error.message });
+        // A board that dropped this worker no longer asks it to update.
+        this.setStatus({ state: "revoked", lastError: error.message, updateRequired: null });
         this.stopped = true;
         this.options.onRevoked?.();
         return;
@@ -353,6 +354,7 @@ export class TunnelWorker {
                 this.setStatus({
                   state: "revoked",
                   lastError: message.message ?? "Refused by the board.",
+                  updateRequired: null,
                 });
                 this.stopped = true;
                 this.options.onRevoked?.();

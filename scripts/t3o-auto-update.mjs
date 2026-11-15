@@ -48,8 +48,6 @@ function fail(message) {
 }
 
 const log = (message) => console.log(`[t3o-auto-update] ${message}`);
-// `-k` ignores sudo's credential cache, so a password typed moments ago doesn't pass the probe.
-const sudoWorks = () => NodeChildProcess.spawnSync("sudo", ["-k", "-n", "true"]).status === 0;
 if (!/^[A-Za-z0-9@._-]+$/.test(values.unit)) {
   fail(`--unit must be a systemd unit name without .service, got ${JSON.stringify(values.unit)}`);
 }
@@ -84,10 +82,29 @@ if (values.uninstall) {
 }
 
 const unitPath = NodePath.join(timerDir, `${values.unit}.service`);
+/** The sudo commands the update's service reinstall runs; docs/user/board-workers.md lists them. */
+const updateSudoCommands = [
+  ["tee", unitPath],
+  ["systemctl", "daemon-reload"],
+  ["systemctl", "restart", `${values.unit}.service`],
+];
+// `-l <command>` asks whether the policy allows it without running it, so a sudoers entry scoped
+// to these commands passes. `-k` ignores the credential cache, so a password typed moments ago
+// doesn't pass.
+const sudoWorks = () =>
+  updateSudoCommands.every(
+    (command) =>
+      NodeChildProcess.spawnSync("sudo", ["-k", "-n", "-l", ...command], { stdio: "ignore" })
+        .status === 0,
+  );
 let settings;
 try {
   settings = parseUnitFile(NodeFS.readFileSync(unitPath, "utf8"));
 } catch (error) {
+  // The service was removed but this timer wasn't: a timer tick has nothing to update.
+  if (!values.install && !values.check && !process.stdout.isTTY && error?.code === "ENOENT") {
+    process.exit(0);
+  }
   fail(
     `cannot read ${unitPath}: ${error instanceof Error ? error.message : String(error)}. Auto-update needs the systemd install (\`pnpm run install-t3o-service\`).`,
   );
@@ -131,7 +148,12 @@ if (values.install) {
   log(`Installed ${timerName}.timer. Its runs log to \`journalctl -u ${timerName}\`.`);
   if (!passwordlessSudo) {
     log(
-      `Warning: ${NodeOS.userInfo().username} can't sudo without a password, and an update reinstalls the service with sudo. Allow it, or the timer's updates will fail.`,
+      `Warning: ${NodeOS.userInfo().username} can't run ${updateSudoCommands
+        .map((command) => command[0])
+        .filter((name, index, all) => all.indexOf(name) === index)
+        .join(
+          " and ",
+        )} with sudo without a password, and an update reinstalls the service with them. Allow them (see "Keeping a worker up to date" in docs/user/board-workers.md), or the timer's updates will fail.`,
     );
   }
   process.exit(0);
@@ -162,10 +184,12 @@ const decision = decideAutoUpdate({
   status,
   serverAlive: alive(status?.pid),
   lastAttemptAt: typeof state?.lastAttemptAt === "number" ? state.lastAttemptAt : null,
+  lastOutcome: typeof state?.outcome === "string" ? state.outcome : null,
   now: Date.now(),
 });
 
 const interactive = values.check || process.stdout.isTTY;
+if (decision.kind === "failed") fail(decision.reason);
 if (decision.kind === "idle") {
   if (decision.forgetAttempt) NodeFS.rmSync(statePath, { force: true });
   // The timer runs this every two minutes: idle and wait ticks write nothing to the journal.
@@ -190,7 +214,7 @@ log(`Updating:\n${reasons}`);
 if (!process.stdin.isTTY && !sudoWorks()) {
   record("no-sudo");
   fail(
-    `the update reinstalls ${values.unit}.service with sudo, and ${NodeOS.userInfo().username} can't sudo without a password here.`,
+    `the update reinstalls ${values.unit}.service with sudo, and ${NodeOS.userInfo().username} can't run its commands without a password here.`,
   );
 }
 const result = NodeChildProcess.spawnSync(

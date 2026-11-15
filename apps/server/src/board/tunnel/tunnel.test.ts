@@ -257,6 +257,30 @@ describe("worker tunnel", () => {
     expect((await log.when((status) => status.state === "connected")).updateRequired).toBeNull();
   });
 
+  it("clears a worker's update flag once its board revokes it", async () => {
+    const local = await startLocalServer("worker-loopback");
+    const board = await startBoard({
+      decide: async () =>
+        board.hellos.length === 1
+          ? { status: "ok", liveBoardSessionIds: ["s1"] }
+          : { status: "refused", message: "Removed from the board." },
+    });
+    const log = statusLog();
+    const revoked = deferred<void>();
+    startWorker({
+      boardUrl: board.url,
+      localPort: local.port,
+      onStatus: log.onStatus,
+      onRevoked: () => revoked.resolve(),
+    });
+    expect(
+      (await log.when((status) => status.state === "connected")).updateRequired,
+    ).not.toBeNull();
+    board.board.disconnect(WORKER_ID);
+    await revoked.promise;
+    expect((await log.when((status) => status.state === "revoked")).updateRequired).toBeNull();
+  });
+
   it("carries concurrent streams, each to the worker's own port", async () => {
     const local = await startLocalServer("worker-loopback");
     const board = await startBoard({});

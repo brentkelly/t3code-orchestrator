@@ -295,7 +295,18 @@ if (command === "uninstall") {
   const displaced = readState()?.displaced;
 
   run("sudo", ["systemctl", "disable", "--now", unitName], { allowFailure: true });
-  run("sudo", ["rm", "-f", unitPath]);
+  // The auto-update timer (`t3o-worker auto-update --install`) has nothing to update without it.
+  const autoUpdate = `${values.unit}-auto-update`;
+  if (NodeFS.existsSync(`/etc/systemd/system/${autoUpdate}.timer`)) {
+    run("sudo", ["systemctl", "disable", "--now", `${autoUpdate}.timer`], { allowFailure: true });
+  }
+  run("sudo", [
+    "rm",
+    "-f",
+    unitPath,
+    `/etc/systemd/system/${autoUpdate}.timer`,
+    `/etc/systemd/system/${autoUpdate}.service`,
+  ]);
   run("sudo", ["systemctl", "daemon-reload"]);
   for (const note of uninstallGitShims(localBin)) console.log(`[t3o-service] ${note}`);
 

@@ -287,10 +287,20 @@ shows it as **needs update**.
 `pnpm t3o-worker auto-update --install` adds a systemd timer that checks for that every two
 minutes and runs `pnpm t3o-update` when it's set. Checking only reads a file on the worker; GitHub
 is contacted only when an update is due. `--check` reports without updating, and `--uninstall`
-removes the timer. Its runs are in `journalctl -u t3o-auto-update`.
+removes the timer (`pnpm run uninstall-t3o-service` removes it too). Its runs are in
+`journalctl -u t3o-auto-update`.
 
 - The update reinstalls the service with `sudo`, so the worker's user needs passwordless sudo for
-  the timer to finish it. `--install` warns when it doesn't have it.
+  `tee` and `systemctl` for the timer to finish it. `--install` warns when it doesn't have it.
+  Blanket passwordless sudo works, or a sudoers entry scoped to those commands (adjust the user,
+  unit name and binary paths from `command -v tee systemctl`):
+
+  ```
+  worker ALL=(root) NOPASSWD: /usr/bin/tee /etc/systemd/system/t3o.service, /usr/bin/systemctl
+  ```
+
+- When an unattended update fails and leaves the service stopped, the timer doesn't try again: each
+  run fails in the journal until you run `pnpm t3o-update` by hand to see what went wrong.
 - It installs the latest T3o release. A board running a build newer than every release keeps the
   worker on **Needs update** until that release is out; the timer then retries every 30 minutes.
 - Agent turns running on the worker are interrupted when the service restarts, as with any update.

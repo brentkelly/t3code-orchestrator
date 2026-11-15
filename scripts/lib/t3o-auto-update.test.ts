@@ -14,7 +14,14 @@ describe("auto-update decision", () => {
   };
   const now = 10 * AUTO_UPDATE_RETRY_MS;
   const decide = (input: Partial<Parameters<typeof decideAutoUpdate>[0]>) =>
-    decideAutoUpdate({ status: flagged, serverAlive: true, lastAttemptAt: null, now, ...input });
+    decideAutoUpdate({
+      status: flagged,
+      serverAlive: true,
+      lastAttemptAt: null,
+      lastOutcome: null,
+      now,
+      ...input,
+    });
 
   it("updates only for a live server's flagged boards", () => {
     expect(decide({})).toEqual({ kind: "update", reasons: ["mesh-dev: needs protocol 6"] });
@@ -32,6 +39,23 @@ describe("auto-update decision", () => {
       forgetAttempt: false,
     });
     expect(decide({ status: null, lastAttemptAt })).toMatchObject({ forgetAttempt: false });
+    // A board still connecting after a restart hasn't answered, so it clears nothing.
+    const connecting = { pid: 1, boards: [{ boardLabel: "mesh-dev", state: "connecting" }] };
+    expect(decide({ status: connecting, lastAttemptAt })).toMatchObject({ forgetAttempt: false });
+  });
+
+  it("fails visibly when the last update failed and left the server down", () => {
+    const lastAttemptAt = now - 1;
+    for (const lastOutcome of ["exited 1", "no-sudo"]) {
+      expect(decide({ serverAlive: false, lastAttemptAt, lastOutcome })).toMatchObject({
+        kind: "failed",
+        reason: expect.stringContaining(lastOutcome),
+      });
+      expect(decide({ status: null, lastAttemptAt, lastOutcome }).kind).toBe("failed");
+    }
+    // A clean run, or a live server, is not a failure to report.
+    expect(decide({ serverAlive: false, lastAttemptAt, lastOutcome: "ran" }).kind).toBe("idle");
+    expect(decide({ lastAttemptAt, lastOutcome: "exited 1" }).kind).toBe("wait");
   });
 
   it("waits out the retry window after an attempt that left the flag set", () => {
