@@ -1206,6 +1206,9 @@ export const BoardCardGroup = Schema.Struct({
   autoMerge: Schema.Boolean,
   /** Children are planned by the agent, unattended. */
   autoPlan: Schema.Boolean,
+  /** An auto-planned child's single plan is approved without a human. Decodes to false on
+      group objects written before the sign-off gate. */
+  autoSignOff: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /** The group has begun: a human (or the group cascade) moved it, or one of
       its children, into the build stage. A child's own Auto-build start does
       not count. */
@@ -2143,6 +2146,9 @@ export const BoardCard = Schema.Struct({
       effective value also depends on the group and the board-wide auto-merge. On a group card
       `autoMergeSetting` is the group's own merge. */
   autoPlanSetting: Schema.NullOr(Schema.Boolean).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  autoSignOffSetting: Schema.NullOr(Schema.Boolean).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   autoBuildSetting: Schema.NullOr(Schema.Boolean).pipe(
@@ -3771,12 +3777,13 @@ export function boardStageBeforeBuild(board: BoardState): BoardStageDefinition |
 
 // ── Automation ────────────────────────────────────────────────
 
-const BOARD_AUTOMATION_TOGGLES = ["autoPlan", "autoBuild", "autoMerge"] as const;
+const BOARD_AUTOMATION_TOGGLES = ["autoPlan", "autoSignOff", "autoBuild", "autoMerge"] as const;
 export type BoardAutomationToggle = (typeof BOARD_AUTOMATION_TOGGLES)[number];
 
 /** Each toggle's name as the card and the tools show it. */
 export const BOARD_AUTOMATION_TOGGLE_LABELS: Readonly<Record<BoardAutomationToggle, string>> = {
   autoPlan: "Auto-plan",
+  autoSignOff: "Auto sign-off",
   autoBuild: "Auto-build",
   autoMerge: "Auto-merge",
 };
@@ -3812,6 +3819,7 @@ export type BoardAutomationNode = {
   readonly parentCardId?: string | null | undefined;
   readonly stage: string;
   readonly autoPlanSetting?: boolean | null | undefined;
+  readonly autoSignOffSetting?: boolean | null | undefined;
   readonly autoBuildSetting?: boolean | null | undefined;
   readonly autoMergeSetting?: boolean | null | undefined;
   readonly group?: BoardCardGroup | null | undefined;
@@ -3827,7 +3835,9 @@ function ownAutomationSetting(
   const value =
     toggle === "autoPlan"
       ? node.autoPlanSetting
-      : toggle === "autoBuild"
+      : toggle === "autoSignOff"
+        ? node.autoSignOffSetting
+        : toggle === "autoBuild"
         ? node.autoBuildSetting
         : node.autoMergeSetting;
   return value ?? null;
@@ -3895,6 +3905,7 @@ export function resolveBoardCardAutomation(input: {
       : null;
 
   const autoPlan = resolve("autoPlan", group === null ? null : group.autoPlan, planLock);
+  const autoSignOff = resolve("autoSignOff", group === null ? null : group.autoSignOff, planLock);
   const autoBuild = resolve(
     "autoBuild",
     group === null ? null : group.autoBuild && group.started,
@@ -3916,7 +3927,17 @@ export function resolveBoardCardAutomation(input: {
         parent === undefined ? null : group === null ? true : group.autoMerge,
         null,
       );
-  return { autoPlan, autoBuild, autoMerge };
+  return { autoPlan, autoSignOff, autoBuild, autoMerge };
+}
+
+/**
+ * What automates the card's planning, which is when the Auto sign-off gate applies. Null means
+ * a person plans, so the plan always waits for them. Plan review's unattended mode adds "review".
+ */
+export type BoardPlanAutomatedBy = "auto-plan" | "review" | null;
+
+export function boardPlanAutomatedBy(resolved: BoardResolvedAutomation): BoardPlanAutomatedBy {
+  return resolved.autoPlan.value ? "auto-plan" : null;
 }
 
 /** Whether the card's planning run for its current stay in Planning finished:
@@ -3968,6 +3989,8 @@ export function boardAutomationTogglesTurnedOn(input: {
     card: {
       ...card,
       autoPlanSetting: change.autoPlan === undefined ? card.autoPlanSetting : change.autoPlan,
+      autoSignOffSetting:
+        change.autoSignOff === undefined ? card.autoSignOffSetting : change.autoSignOff,
       autoBuildSetting: change.autoBuild === undefined ? card.autoBuildSetting : change.autoBuild,
       autoMergeSetting: change.autoMerge === undefined ? card.autoMergeSetting : change.autoMerge,
     },
@@ -5048,6 +5071,7 @@ export const BoardCardSetGroupSettingsCommand = Schema.Struct({
   autoBuild: Schema.optional(Schema.Boolean),
   autoMerge: Schema.optional(Schema.Boolean),
   autoPlan: Schema.optional(Schema.Boolean),
+  autoSignOff: Schema.optional(Schema.Boolean),
   createdAt: IsoDateTime,
 });
 export type BoardCardSetGroupSettingsCommand = typeof BoardCardSetGroupSettingsCommand.Type;
@@ -5062,6 +5086,7 @@ export const BoardCardSetAutomationCommand = Schema.Struct({
   commandId: CommandId,
   cardId: BoardCardId,
   autoPlan: Schema.optional(Schema.NullOr(Schema.Boolean)),
+  autoSignOff: Schema.optional(Schema.NullOr(Schema.Boolean)),
   autoBuild: Schema.optional(Schema.NullOr(Schema.Boolean)),
   autoMerge: Schema.optional(Schema.NullOr(Schema.Boolean)),
   createdAt: IsoDateTime,
@@ -5072,6 +5097,7 @@ export type BoardCardSetAutomationCommand = typeof BoardCardSetAutomationCommand
     toggle flip from any other edit of the same card. */
 export const BoardAutomationChanged = Schema.Struct({
   autoPlan: Schema.optional(Schema.Literal(true)),
+  autoSignOff: Schema.optional(Schema.Literal(true)),
   autoBuild: Schema.optional(Schema.Literal(true)),
   autoMerge: Schema.optional(Schema.Literal(true)),
   /** A group's own `group` settings changed, so its inheriting children are
@@ -5758,6 +5784,8 @@ export const BoardPlansApproveCommand = Schema.Struct({
       group from the card's resolved toggles atomically. Absent: Auto-plan
       off, Auto-merge on for an own-branch group and off otherwise. */
   autoPlan: Schema.optionalKey(Schema.Boolean),
+  /** The new group's Auto sign-off, from the card's resolved toggle. Absent: off. */
+  autoSignOff: Schema.optionalKey(Schema.Boolean),
   autoMerge: Schema.optionalKey(Schema.Boolean),
   createdAt: IsoDateTime,
 });
@@ -7431,6 +7459,7 @@ export const BoardCardShell = Schema.Struct({
       budget). An explicit `false` overrides the group. Resolve with
       `resolveBoardCardAutomation`. */
   autoPlanSetting: Schema.optionalKey(Schema.Boolean),
+  autoSignOffSetting: Schema.optionalKey(Schema.Boolean),
   autoBuildSetting: Schema.optionalKey(Schema.Boolean),
   autoMergeSetting: Schema.optionalKey(Schema.Boolean),
   /** The current planning run is unattended, absent otherwise. */
@@ -7817,6 +7846,7 @@ export function makeBoardCardShell(input: {
       On the card aggregate, so both producers carry them; the keys
       are omitted while a toggle inherits. */
   readonly autoPlanSetting?: boolean | null | undefined;
+  readonly autoSignOffSetting?: boolean | null | undefined;
   readonly autoBuildSetting?: boolean | null | undefined;
   readonly autoMergeSetting?: boolean | null | undefined;
   readonly autoPlanPending?: boolean | null | undefined;
@@ -7923,6 +7953,9 @@ export function makeBoardCardShell(input: {
     // The Automation toggles: omitted while inheriting; an explicit
     // `false` is carried because it overrides the group.
     ...(input.autoPlanSetting == null ? {} : { autoPlanSetting: input.autoPlanSetting }),
+    ...(input.autoSignOffSetting == null
+      ? {}
+      : { autoSignOffSetting: input.autoSignOffSetting }),
     ...(input.autoBuildSetting == null ? {} : { autoBuildSetting: input.autoBuildSetting }),
     ...(input.autoMergeSetting == null ? {} : { autoMergeSetting: input.autoMergeSetting }),
     ...(input.autoPlanPending === true ? { autoPlanPending: true } : {}),
@@ -8040,6 +8073,7 @@ export function boardCardShellFromCard(
     scheduledStartAt: card.scheduledStartAt,
     priority: card.priority,
     autoPlanSetting: card.autoPlanSetting,
+    autoSignOffSetting: card.autoSignOffSetting,
     autoBuildSetting: card.autoBuildSetting,
     autoMergeSetting: card.autoMergeSetting,
     autoPlanPending: isBoardCardAutoPlanPending(card),

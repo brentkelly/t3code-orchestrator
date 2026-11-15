@@ -60,6 +60,7 @@ function makeCard(
     baseBranch: null,
     scheduledStartAt: null,
     autoPlanSetting: null,
+    autoSignOffSetting: null,
     autoBuildSetting: null,
     autoMergeSetting: null,
     autoMergeHold: null,
@@ -177,6 +178,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
             autoBuild: false,
             autoMerge: false,
             autoPlan: false,
+            autoSignOff: false,
             started: false,
             placed: BOARD_SEED_STAGE_IDS.planning,
             prevStage: null,
@@ -358,7 +360,12 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
 // ── Automation toggles ─────────────────────────────────────────
 
 const setAutomation = (
-  settings: { autoPlan?: boolean | null; autoBuild?: boolean | null; autoMerge?: boolean | null },
+  settings: {
+    autoPlan?: boolean | null;
+    autoSignOff?: boolean | null;
+    autoBuild?: boolean | null;
+    autoMerge?: boolean | null;
+  },
   id = "card-auto",
 ): BoardCommand => ({
   type: "board.card.set-automation",
@@ -373,6 +380,7 @@ const groupOf = (overrides: Partial<NonNullable<BoardCard["group"]>> = {}) => ({
   autoBuild: false,
   autoMerge: false,
   autoPlan: false,
+  autoSignOff: false,
   started: false,
   placed: BOARD_SEED_STAGE_IDS.ready,
   prevStage: null,
@@ -444,6 +452,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
         expect((yield* decideFail(setAutomation({ autoPlan: true }), building)).message).toContain(
           "Planning is finished.",
         );
+        expect(
+          (yield* decideFail(setAutomation({ autoSignOff: true }), building)).message,
+        ).toContain("Can't turn Auto sign-off on");
         const onWhileLocked = readModel([
           makeCard({ id: "card-auto", stage: "review", autoBuildSetting: true }),
         ]);
@@ -456,6 +467,41 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
           yield* decideEvents(setAutomation({ autoMerge: true }), building),
         );
         expect(merge.payload.card.autoMergeSetting).toBe(true);
+      }),
+    );
+
+    it.effect("Make hands-off in Ready sends only the unlocked gates; a locked one refuses all", () =>
+      Effect.gen(function* () {
+        const ready = readModel([makeCard({ id: "card-auto", stage: "ready" })]);
+        const handsOff = updatedCard(
+          yield* decideEvents(setAutomation({ autoBuild: true, autoMerge: true }), ready),
+        );
+        expect(handsOff.payload.card).toMatchObject({
+          autoBuildSetting: true,
+          autoMergeSetting: true,
+          autoSignOffSetting: null,
+        });
+        expect(handsOff.payload.automationChanged).toEqual({ autoBuild: true, autoMerge: true });
+        // Naming a locked gate refuses the whole command.
+        expect(
+          (yield* decideFail(
+            setAutomation({ autoSignOff: true, autoBuild: true, autoMerge: true }),
+            ready,
+          )).message,
+        ).toContain("Planning is finished.");
+        // In Planning all four go on in one command.
+        const planning = updatedCard(
+          yield* decideEvents(
+            setAutomation({ autoPlan: true, autoSignOff: true, autoBuild: true, autoMerge: true }),
+            readModel([makeCard({ id: "card-auto", stage: "planning" })]),
+          ),
+        );
+        expect(planning.payload.automationChanged).toEqual({
+          autoPlan: true,
+          autoSignOff: true,
+          autoBuild: true,
+          autoMerge: true,
+        });
       }),
     );
 
@@ -523,6 +569,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
             id: "card-auto",
             stage: "building",
             autoPlanSetting: true,
+            autoSignOffSetting: true,
             autoBuildSetting: true,
           });
           const toReady = movedCard(yield* decideEvents(moveTo("ready"), readModel([built])));
@@ -533,6 +580,12 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
           expect(toPlanning.payload.card).toMatchObject({
             autoBuildSetting: false,
             autoPlanSetting: false,
+            autoSignOffSetting: false,
+          });
+          expect(toPlanning.payload.automationChanged).toEqual({
+            autoBuild: true,
+            autoPlan: true,
+            autoSignOff: true,
           });
           // A forward move turns nothing off; an inheriting card that is off stays inheriting.
           const forward = movedCard(
@@ -583,6 +636,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
             (events) => cardIn(events, String(group.id))?.group,
           );
         const inherit = makeCard({ id: "card-auto", stage: "ready", group: groupOf() });
+        expect((yield* settings({ autoSignOff: true }, inherit))?.autoSignOff).toBe(true);
         expect((yield* settings({ target: "own" }, inherit))?.autoMerge).toBe(true);
         // The same command naming auto-merge keeps the user's choice.
         expect((yield* settings({ target: "own", autoMerge: false }, inherit))?.autoMerge).toBe(
@@ -632,6 +686,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
           });
           expect(approved.payload.card).toMatchObject({
             autoPlanSetting: null,
+            autoSignOffSetting: null,
             autoBuildSetting: null,
             autoMergeSetting: true,
           });

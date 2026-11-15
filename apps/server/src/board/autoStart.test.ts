@@ -443,6 +443,7 @@ it.effect("a child's own Auto-build starts it without beginning its unstarted gr
       autoBuild: true,
       autoMerge: false,
       autoPlan: false,
+      autoSignOff: false,
       started: false,
       placed: BOARD_SEED_STAGE_IDS.ready,
       prevStage: null,

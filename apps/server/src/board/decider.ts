@@ -1467,7 +1467,7 @@ function holdsOnlyIntegrationSlice(board: BoardState, card: BoardCard): boolean 
 
 /**
  * The own Automation toggles a backward move turns off: from Building or later back to before
- * it disarms Auto-build; back into Planning or earlier disarms Auto-plan. Only a toggle that is
+ * it disarms Auto-build; back into Planning or earlier disarms Auto-plan and Auto sign-off. Only a toggle that is
  * effectively on is written off, so an inheriting card that was off stays inheriting.
  */
 function backwardMoveDisarms(
@@ -1475,7 +1475,9 @@ function backwardMoveDisarms(
   card: BoardCard,
   toStage: BoardStageId,
 ): {
-  readonly settings: Partial<Pick<BoardCard, "autoPlanSetting" | "autoBuildSetting">>;
+  readonly settings: Partial<
+    Pick<BoardCard, "autoPlanSetting" | "autoSignOffSetting" | "autoBuildSetting">
+  >;
   readonly changed: BoardAutomationChanged | null;
 } {
   const from = boardStageIndex(board, card.stage);
@@ -1492,15 +1494,19 @@ function backwardMoveDisarms(
     buildIndex >= 0 && from >= buildIndex && to < buildIndex && resolved.autoBuild.value;
   const disarmPlan =
     planIndex >= 0 && from >= planIndex && to <= planIndex && resolved.autoPlan.value;
-  if (!disarmBuild && !disarmPlan) return { settings: {}, changed: null };
+  const disarmSignOff =
+    planIndex >= 0 && from >= planIndex && to <= planIndex && resolved.autoSignOff.value;
+  if (!disarmBuild && !disarmPlan && !disarmSignOff) return { settings: {}, changed: null };
   return {
     settings: {
       ...(disarmBuild ? { autoBuildSetting: false } : {}),
       ...(disarmPlan ? { autoPlanSetting: false } : {}),
+      ...(disarmSignOff ? { autoSignOffSetting: false } : {}),
     },
     changed: {
       ...(disarmBuild ? { autoBuild: true as const } : {}),
       ...(disarmPlan ? { autoPlan: true as const } : {}),
+      ...(disarmSignOff ? { autoSignOff: true as const } : {}),
     },
   };
 }
@@ -1553,12 +1559,14 @@ const groupConversionEvents = Effect.fn("groupConversionEvents")(function* (inpu
     ...card,
     group: defaultBoardCardGroup(board, card, {
       autoPlan: resolved.autoPlan.value,
+      autoSignOff: resolved.autoSignOff.value,
       autoBuild: resolved.autoBuild.value,
       autoMerge: resolved.autoBuild.value && boardCardMergesIntoIntegrationBranch(board, card),
     }),
     // Only leaves run, so a group has no priority (T3O-95).
     priority: "normal",
     autoPlanSetting: null,
+    autoSignOffSetting: null,
     autoBuildSetting: null,
     updatedAt: command.createdAt,
   };
@@ -2680,6 +2688,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         ...(command.autoBuild === undefined ? {} : { autoBuild: command.autoBuild }),
         ...(command.autoMerge === undefined ? {} : { autoMerge: command.autoMerge }),
         ...(command.autoPlan === undefined ? {} : { autoPlan: command.autoPlan }),
+        ...(command.autoSignOff === undefined ? {} : { autoSignOff: command.autoSignOff }),
         ...transitionMerge,
       };
       if (boardCardGroupsEqual(nextGroup, card.group)) {
@@ -2718,6 +2727,8 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       }
       const nextSettings = {
         autoPlanSetting: command.autoPlan === undefined ? card.autoPlanSetting : command.autoPlan,
+        autoSignOffSetting:
+          command.autoSignOff === undefined ? card.autoSignOffSetting : command.autoSignOff,
         autoBuildSetting:
           command.autoBuild === undefined ? card.autoBuildSetting : command.autoBuild,
         autoMergeSetting:
@@ -2725,6 +2736,9 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       };
       const changed: BoardAutomationChanged = {
         ...(nextSettings.autoPlanSetting === card.autoPlanSetting ? {} : { autoPlan: true }),
+        ...(nextSettings.autoSignOffSetting === card.autoSignOffSetting
+          ? {}
+          : { autoSignOff: true }),
         ...(nextSettings.autoBuildSetting === card.autoBuildSetting ? {} : { autoBuild: true }),
         ...(nextSettings.autoMergeSetting === card.autoMergeSetting ? {} : { autoMerge: true }),
       };
@@ -3591,6 +3605,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         priority: "normal",
         ...retireBoardCardPullRequest(card),
         autoPlanSetting: null,
+        autoSignOffSetting: null,
         autoBuildSetting: null,
         autoMergeSetting: null,
         autoMergeHold: null,
@@ -4489,6 +4504,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         autoBuild: command.autoBuild ?? recommendation.autoBuild,
         target: command.mergeTarget ?? recommendation.mergeTarget,
         ...(command.autoPlan === undefined ? {} : { autoPlan: command.autoPlan }),
+        ...(command.autoSignOff === undefined ? {} : { autoSignOff: command.autoSignOff }),
         ...(command.autoMerge === undefined ? {} : { autoMerge: command.autoMerge }),
       };
       // The graph is agent-authored and therefore re-validated at the gate —
@@ -4598,6 +4614,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         // Its children copied its priority above; a group has none.
         priority: "normal",
         autoPlanSetting: null,
+        autoSignOffSetting: null,
         autoBuildSetting: null,
         updatedAt: command.createdAt,
       };

@@ -221,6 +221,7 @@ describe("leaving Planning before the plan is written", () => {
         autoBuild: false,
         autoMerge: false,
         autoPlan: true,
+        autoSignOff: false,
         started: false,
         placed: PLANNING,
         prevStage: null,

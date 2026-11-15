@@ -285,6 +285,7 @@ export function boardCardFromCreatedPayload(payload: BoardCardCreatedPayload): B
     // no create-command field to set it with. Nor born auto-merging, for the same reason — and
     // with nothing merged, nothing held.
     autoPlanSetting: null,
+    autoSignOffSetting: null,
     autoBuildSetting: null,
     autoMergeSetting: null,
     autoMergeHold: null,

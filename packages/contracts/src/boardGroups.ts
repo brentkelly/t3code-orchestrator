@@ -205,6 +205,7 @@ export function defaultBoardCardGroup(
     autoBuild: false,
     autoMerge: overrides?.target === "own",
     autoPlan: false,
+    autoSignOff: false,
     started: false,
     placed: boardGroupPlacedStage(board, card.stage),
     prevStage: card.stage,
@@ -414,6 +415,7 @@ export function boardCardGroupsEqual(
     left.autoBuild === right.autoBuild &&
     left.autoMerge === right.autoMerge &&
     left.autoPlan === right.autoPlan &&
+    left.autoSignOff === right.autoSignOff &&
     left.started === right.started &&
     left.placed === right.placed &&
     left.prevStage === right.prevStage &&

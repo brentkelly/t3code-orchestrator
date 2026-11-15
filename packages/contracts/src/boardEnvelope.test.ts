@@ -200,7 +200,7 @@ describe("decision log and auto-plan (T3O-32)", () => {
     );
   });
 
-  it("tells an auto-planned run with Auto-build on that its plan is approved and built", () => {
+  it("tells an auto-planned run with Auto sign-off on that its single plan is approved", () => {
     const auto = composeStepPrompt({
       card: { key: "T3-1", title: "Ship it", stage: "planning" },
       stageLabel: "Planning",
@@ -210,12 +210,13 @@ describe("decision log and auto-plan (T3O-32)", () => {
         prompt: "Plan.",
         humanInLoop: false,
         autoPlan: true,
-        autoBuild: true,
+        autoSignOff: true,
       },
       role: "plan",
     });
     expect(auto).toContain(boardAutoPlanInstruction(true));
-    expect(auto).toContain("approved and built automatically");
+    expect(auto).toContain("a single plan you propose is approved automatically");
+    expect(auto).toContain("A proposed split always waits for the user's approval.");
   });
 });
 
