@@ -196,7 +196,12 @@ import {
   type BoardSplitDockStored,
 } from "./boardSplitDock";
 import { boardGroupUsesCardActions } from "./boardGroups";
-import { BOARD_SPLIT_CHANGE_REQUEST_PREFILL, type BoardSplitGateSettings } from "./boardSplitGate";
+import {
+  BOARD_SPLIT_CHANGE_REQUEST_PREFILL,
+  BOARD_SPLIT_GATE_CHOOSER_CLOSED,
+  type BoardSplitGateChooser,
+  type BoardSplitGateSettings,
+} from "./boardSplitGate";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { threadWorkerOpensOn, type BoardThreadWorker } from "./workers/threadWorker";
 import {
@@ -2961,7 +2966,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
       ? boardSplitApprovalLostFromActivity(props.detail.activity)
       : null,
   };
-  // The gate's unsaved Auto-build and Merge target edits live here, not in the gate: the gate
+  // The gate's unsaved Auto-build, Merge target and chooser state live here, not in the gate: it
   // renders inside the per-thread chat and remounts on a tab switch, a chat load or a collapse.
   // A changed split or recommendation is a new gate; a plan body edit keeps the edits.
   const splitGateKey =
@@ -2971,13 +2976,10 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
   const [splitGateEdit, setSplitGateEdit] = useState<{
     readonly key: string;
     readonly settings: BoardSplitGateSettings;
+    readonly chooser: BoardSplitGateChooser;
   } | null>(null);
-  const splitGateSettings =
-    props.splitGate === null
-      ? null
-      : splitGateEdit !== null && splitGateEdit.key === splitGateKey
-        ? splitGateEdit.settings
-        : props.splitGate.recommendation;
+  const splitGateLive =
+    splitGateEdit !== null && splitGateEdit.key === splitGateKey ? splitGateEdit : null;
   const splitDockExpanded = boardSplitDockExpanded(splitDockInput, splitDockStored);
   const setSplitDockExpanded = (expanded: boolean) =>
     storeSplitDock(boardSplitDockChoice(splitDockInput, splitDockStored, expanded));
@@ -3558,11 +3560,25 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                       <BoardSplitGate
                         key={splitGateKey}
                         {...props.splitGate}
-                        settings={splitGateSettings ?? props.splitGate.recommendation}
+                        settings={splitGateLive?.settings ?? props.splitGate.recommendation}
                         onSettingsChange={(settings) =>
                           splitGateKey === null
                             ? undefined
-                            : setSplitGateEdit({ key: splitGateKey, settings })
+                            : setSplitGateEdit({
+                                key: splitGateKey,
+                                settings,
+                                chooser: splitGateLive?.chooser ?? BOARD_SPLIT_GATE_CHOOSER_CLOSED,
+                              })
+                        }
+                        chooser={splitGateLive?.chooser ?? BOARD_SPLIT_GATE_CHOOSER_CLOSED}
+                        onChooserChange={(chooser) =>
+                          splitGateKey === null || props.splitGate === null
+                            ? undefined
+                            : setSplitGateEdit({
+                                key: splitGateKey,
+                                settings: splitGateLive?.settings ?? props.splitGate.recommendation,
+                                chooser,
+                              })
                         }
                         footer={boardSplitDockFooter(splitDockInput)}
                         lostNote={boardSplitDockLostNote(splitDockInput.approvalLost)}

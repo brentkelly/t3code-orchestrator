@@ -5,14 +5,17 @@
  */
 import type { BoardPlan, BoardSplitRecommendation } from "@t3tools/contracts";
 import { ChevronDownIcon, CircleAlertIcon, FileCheckIcon } from "lucide-react";
-import { useState } from "react";
-
 import { Button } from "../components/ui/button";
 import { Switch } from "../components/ui/switch";
 import { Toggle, ToggleGroup } from "../components/ui/toggle-group";
 import { BoardHint } from "./BoardHint";
 import type { BoardSplitDockFooter } from "./boardSplitDock";
-import { boardSplitGateView, type BoardSplitGateSettings } from "./boardSplitGate";
+import {
+  BOARD_SPLIT_GATE_CHOOSER_CLOSED,
+  boardSplitGateView,
+  type BoardSplitGateChooser,
+  type BoardSplitGateSettings,
+} from "./boardSplitGate";
 
 export function BoardSplitGate(props: {
   readonly plans: ReadonlyArray<
@@ -31,6 +34,9 @@ export function BoardSplitGate(props: {
   /** The Auto-build and Merge target to approve with, held by the panel so a remount keeps them. */
   readonly settings: BoardSplitGateSettings;
   readonly onSettingsChange: (settings: BoardSplitGateSettings) => void;
+  /** The Approve-after-review chooser, held by the panel for the same reason. */
+  readonly chooser: BoardSplitGateChooser;
+  readonly onChooserChange: (chooser: BoardSplitGateChooser) => void;
   readonly onApprove: (settings: BoardSplitGateSettings) => void;
   readonly onApproveAfterReview: (settings: BoardSplitGateSettings) => void;
   readonly onAskForChanges: () => void;
@@ -38,8 +44,9 @@ export function BoardSplitGate(props: {
 }) {
   const recommended = props.recommendation;
   const { settings, onSettingsChange: setSettings } = props;
-  const [choosing, setChoosing] = useState(false);
-  const [pick, setPick] = useState<"after" | "now">("after");
+  const { chooser, onChooserChange: setChooser } = props;
+  const choosing = chooser.open;
+  const pick = chooser.pick;
   const view = boardSplitGateView({ ...props, recommendation: recommended, settings });
   const choice = props.footer.kind === "choice" ? props.footer : null;
   return (
@@ -171,7 +178,7 @@ export function BoardSplitGate(props: {
                 checked={pick === value}
                 className="mt-0.5"
                 name="split-approval"
-                onChange={() => setPick(value)}
+                onChange={() => setChooser({ ...chooser, pick: value })}
                 type="radio"
               />
               <span className="flex min-w-0 flex-col gap-0.5">
@@ -183,12 +190,16 @@ export function BoardSplitGate(props: {
             </label>
           ))}
           <div className="flex items-center justify-end gap-2">
-            <Button onClick={() => setChoosing(false)} size="sm" variant="ghost-muted">
+            <Button
+              onClick={() => setChooser(BOARD_SPLIT_GATE_CHOOSER_CLOSED)}
+              size="sm"
+              variant="ghost-muted"
+            >
               Cancel
             </Button>
             <Button
               onClick={() => {
-                setChoosing(false);
+                setChooser(BOARD_SPLIT_GATE_CHOOSER_CLOSED);
                 if (pick === "now" && choice.now !== null) props.onApprove(settings);
                 else props.onApproveAfterReview(settings);
               }}
@@ -212,7 +223,9 @@ export function BoardSplitGate(props: {
             Ask for changes
           </Button>
           <Button
-            onClick={() => (choice === null ? props.onApprove(settings) : setChoosing(true))}
+            onClick={() =>
+              choice === null ? props.onApprove(settings) : setChooser({ ...chooser, open: true })
+            }
             size="sm"
           >
             {choice === null ? "Approve split" : "Approve split…"}

@@ -15,6 +15,17 @@ export type BoardSplitGateSettings = {
   readonly mergeTarget: BoardCardGroupTarget;
 };
 
+/** The Approve-after-review chooser: whether it is open, and the option picked in it. */
+export type BoardSplitGateChooser = {
+  readonly open: boolean;
+  readonly pick: "after" | "now";
+};
+
+export const BOARD_SPLIT_GATE_CHOOSER_CLOSED: BoardSplitGateChooser = {
+  open: false,
+  pick: "after",
+};
+
 export type BoardSplitGateRow = {
   readonly planId: string;
   readonly number: string;

@@ -365,4 +365,56 @@ describe("the split gate's unsaved settings (T3O-105)", () => {
     await userEvent.click(screen.getByRole("button", { name: /^Approve split/ }));
     expect(onApproveSplit).toHaveBeenCalledWith({ autoBuild: true, mergeTarget: "inherit" });
   });
+
+  it("keep the Approve-after-review chooser open, with its pick, across a thread-tab switch", async () => {
+    const onApproveSplit = vi.fn();
+    const split = splitDetail({ childCount: 0 });
+    await using screen = await render(
+      <BoardCardDetailPanel
+        {...baseProps}
+        canApproveSplit
+        detail={{
+          ...split,
+          // A parked planning step offers both Approve now and Approve when planning completes.
+          liveStepStatus: "paused",
+          card: {
+            ...split.card,
+            threadLinks: links.map(([threadId, role], index) => ({
+              threadId,
+              role,
+              linkedAt: `2026-01-01T00:00:0${index}.000Z`,
+              tombstonedAt: null,
+            })),
+          },
+        }}
+        onApproveSplit={onApproveSplit}
+        paneChoice="thread"
+        projectName="P"
+        splitGate={{
+          recommendation: { autoBuild: false, mergeTarget: "inherit" },
+          ownBranch: "board/t3-1",
+          landsOn: "main",
+          readyLabel: "Ready",
+          backlogLabel: "Backlog",
+        }}
+        threadLinks={links.map(([threadId, role]) => ({
+          threadId,
+          role,
+          tombstoned: false,
+          title: null,
+          threadState: "none" as const,
+          awaitingInput: false,
+          worker: localWorker,
+          ranOn: null,
+        }))}
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Approve split…" }));
+    await userEvent.click(screen.getByText("Approve now", { exact: true }));
+    await userEvent.click(screen.getByRole("button", { name: `Pick ${planningThread}` }));
+    await expect.element(screen.getByText(`Showing ${planningThread}`)).toBeVisible();
+    await expect.element(screen.getByRole("radio", { checked: true })).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Approve now" }));
+    expect(onApproveSplit).toHaveBeenCalledWith({ autoBuild: false, mergeTarget: "inherit" });
+  });
 });
