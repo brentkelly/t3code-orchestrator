@@ -185,12 +185,16 @@ const approve = (input?: {
   readonly cardId?: string;
   readonly autoBuild?: boolean;
   readonly mergeTarget?: BoardCardGroupTarget;
+  readonly autoPlan?: boolean;
+  readonly autoSignOff?: boolean;
 }): BoardCommand => ({
   type: "board.plans.approve",
   commandId: CommandId.make("cmd-approve"),
   cardId: BoardCardId.make(input?.cardId ?? "card-parent"),
   ...(input?.autoBuild === undefined ? {} : { autoBuild: input.autoBuild }),
   ...(input?.mergeTarget === undefined ? {} : { mergeTarget: input.mergeTarget }),
+  ...(input?.autoPlan === undefined ? {} : { autoPlan: input.autoPlan }),
+  ...(input?.autoSignOff === undefined ? {} : { autoSignOff: input.autoSignOff }),
   createdAt: NOW,
 });
 
@@ -455,7 +459,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("split gate (T3O-
     Effect.gen(function* () {
       const approved = approvedEvent(
         yield* decideEvents(
-          approve({ autoBuild: true, mergeTarget: "own" }),
+          approve({ autoBuild: true, mergeTarget: "own", autoPlan: true, autoSignOff: true }),
           makeBoard({
             parent: {
               splitRationale: WHY,
@@ -468,6 +472,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("split gate (T3O-
       expect(approved.payload.card.group).toMatchObject({
         target: "own",
         autoBuild: true,
+        autoPlan: true,
+        autoSignOff: true,
         started: false,
       });
     }),

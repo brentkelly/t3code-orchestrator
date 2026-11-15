@@ -5780,11 +5780,11 @@ export const BoardPlansApproveCommand = Schema.Struct({
       defaults to the card's split recommendation when absent. */
   autoBuild: Schema.optionalKey(Schema.Boolean),
   mergeTarget: Schema.optionalKey(BoardCardGroupTarget),
-  /** The new group's Auto-plan and Auto-merge, so a split seeds the
-      group from the card's resolved toggles atomically. Absent: Auto-plan
-      off, Auto-merge on for an own-branch group and off otherwise. */
+  /** The new group's Auto-plan, Auto sign-off and Auto-merge. The split gate
+      sends the card's resolved Auto-plan and Auto sign-off together. Absent:
+      Auto-plan and Auto sign-off off, Auto-merge on for an own-branch group
+      and off otherwise. */
   autoPlan: Schema.optionalKey(Schema.Boolean),
-  /** The new group's Auto sign-off, from the card's resolved toggle. Absent: off. */
   autoSignOff: Schema.optionalKey(Schema.Boolean),
   autoMerge: Schema.optionalKey(Schema.Boolean),
   createdAt: IsoDateTime,

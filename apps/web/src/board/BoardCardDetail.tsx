@@ -1267,25 +1267,28 @@ export function BoardCardDetail({
       stages={stages}
       canApproveSplit={canApproveSplit}
       splitGate={splitGate}
-      onApproveSplit={(settings) =>
-        runCommand(
+      onApproveSplit={(settings) => {
+        // The card's Auto-plan and Auto sign-off carry over together to the new group:
+        // sign-off alone would sit inert until the group's Auto-plan was turned on.
+        const resolved = resolveBoardShellAutomation({
+          shells: groupShells,
+          stages: stageState,
+          card,
+          boardWideAutoMerge,
+        });
+        return runCommand(
           approvePlans({
             environmentId,
             input: {
               cardId: card.id,
               autoBuild: settings.autoBuild,
               mergeTarget: settings.mergeTarget,
-              // The card's Auto sign-off carries over to the group its children inherit from.
-              autoSignOff: resolveBoardShellAutomation({
-                shells: groupShells,
-                stages: stageState,
-                card,
-                boardWideAutoMerge,
-              }).autoSignOff.value,
+              autoPlan: resolved.autoPlan.value,
+              autoSignOff: resolved.autoSignOff.value,
             },
           }),
-        )
-      }
+        );
+      }}
       catalogue={catalogue}
       dependencies={dependencies}
       dependencyOptions={dependencyOptions}

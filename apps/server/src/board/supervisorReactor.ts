@@ -41,7 +41,6 @@ import {
   boardCardAutoArchiveDue,
   boardAutoPlanInstruction,
   boardPlanAutomatedBy,
-  type BoardPlanAutomatedBy,
   boardAutoPlanOffInstruction,
   BOARD_PLAN_REVIEW_LATE_START_LEAD,
   boardPlanReviewRoundsChangedLead,
@@ -8869,12 +8868,9 @@ const make = Effect.gen(function* () {
    * The sign-off gate: approve an automated planning run's single plan only when the card's Auto
    * sign-off is on; otherwise it waits at the human gate with the run record pending. A split is
    * never approved here. Approval moves the card to Ready, and Auto-build takes it from there.
-   * `by` names what automated the planning; plan review's unattended mode passes "review".
    */
   const approvePlannedCard = Effect.fn("board-supervisor-approvePlannedCard")(function* (
     card: BoardCard,
-    _state: BoardCardStepState,
-    _by: Exclude<BoardPlanAutomatedBy, null>,
   ) {
     const board = yield* readBoard;
     const resolved = automationIn(board, card);
@@ -9222,14 +9218,12 @@ const make = Effect.gen(function* () {
         }
         // Auto sign-off turned on for a finished run whose single plan waits for approval.
         if (pending && finished && resolved.autoSignOff.value) {
-          const state = boardCardStepState(board, card.id);
-          const planAutomatedBy = boardPlanAutomatedBy(resolved);
           if (
-            state !== null &&
-            planAutomatedBy !== null &&
+            boardCardStepState(board, card.id) !== null &&
+            boardPlanAutomatedBy(resolved) !== null &&
             boardCardPlans(board, card.id).length === 1
           ) {
-            yield* approvePlannedCard(card, state, planAutomatedBy);
+            yield* approvePlannedCard(card);
             const after = yield* readCard(card.id);
             return after !== null && after.stage !== card.stage ? ("approved" as const) : null;
           }
@@ -9480,7 +9474,7 @@ const make = Effect.gen(function* () {
         if (stageRole === "plan") {
           const planned = yield* readCard(card.id);
           if (planned !== null && isBoardCardAutoPlanPending(planned)) {
-            yield* approvePlannedCard(planned, state, "auto-plan");
+            yield* approvePlannedCard(planned);
             yield* releaseFinishedThreads;
             yield* schedule();
             return;
