@@ -62,6 +62,8 @@ it.effect("backfills Auto sign-off where Auto-plan and Auto-build both resolve o
     yield* insertCard({ id: "build-only", build: 1 });
     yield* insertCard({ id: "plan-only", plan: 1 });
     yield* insertCard({ id: "own-off", parent: "started", plan: 0 });
+    yield* insertCard({ id: "own-build-off", parent: "started", build: 0 });
+    yield* insertCard({ id: "own-build-off-plan-only-group", parent: "plan-only-group", build: 0 });
     yield* insertCard({ id: "inheriting", parent: "started" });
 
     const migration = BOARD_MIGRATIONS.find(([id]) => id === MIGRATION_ID);
@@ -84,7 +86,10 @@ it.effect("backfills Auto sign-off where Auto-plan and Auto-build both resolve o
     assert.deepInclude(row("inherited-plan-own-build"), { signOff: 1 });
     assert.deepInclude(row("build-only"), { signOff: null });
     assert.deepInclude(row("plan-only"), { signOff: null });
-    assert.deepInclude(row("own-off"), { signOff: null });
+    // An own off would otherwise inherit the group's backfilled sign-off and auto-approve.
+    assert.deepInclude(row("own-off"), { signOff: 0 });
+    assert.deepInclude(row("own-build-off"), { signOff: 0 });
+    assert.deepInclude(row("own-build-off-plan-only-group"), { signOff: null });
     // Inherits the started group's backfilled sign-off instead of taking its own.
     assert.deepInclude(row("inheriting"), { signOff: null });
     assert.deepInclude(row("started"), { signOff: null, groupSignOff: 1 });

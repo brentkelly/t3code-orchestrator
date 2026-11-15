@@ -1,7 +1,6 @@
-// Auto sign-off takes plan approval over from Auto-build. A card's own sign-off is
-// written on only where Auto-plan and Auto-build both resolve on today, as
-// `resolveBoardCardAutomation` reads them, so Auto-build-only cards do not start
-// auto-approving. Guarded, so re-running is a no-op.
+// Auto sign-off takes plan approval over from Auto-build: on where Auto-plan and
+// Auto-build both resolve on today, off where a card's own Auto-plan or Auto-build
+// off would otherwise inherit its group's backfilled on. Re-running is a no-op.
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
@@ -53,8 +52,15 @@ export default Effect.gen(function* () {
     const autoBuild =
       own(row.autoBuildSetting) ??
       (group !== null && group.groupAutoBuild !== 0 && group.groupStarted !== 0);
-    if (!autoPlan || !autoBuild) continue;
-    yield* sql`UPDATE board_cards SET auto_sign_off_setting = 1 WHERE card_id = ${row.cardId}`;
+    if (autoPlan && autoBuild) {
+      yield* sql`UPDATE board_cards SET auto_sign_off_setting = 1 WHERE card_id = ${row.cardId}`;
+      continue;
+    }
+    const ownOff = row.autoPlanSetting === 0 || row.autoBuildSetting === 0;
+    const groupSignsOff = group !== null && group.groupAutoPlan !== 0 && group.groupAutoBuild !== 0;
+    if (ownOff && groupSignsOff) {
+      yield* sql`UPDATE board_cards SET auto_sign_off_setting = 0 WHERE card_id = ${row.cardId}`;
+    }
   }
   yield* sql`
     UPDATE board_cards SET group_auto_sign_off = 1
