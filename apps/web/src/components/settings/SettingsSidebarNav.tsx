@@ -21,6 +21,8 @@ import {
   ServerCogIcon,
   // T3o: the board's Pipeline nav icon.
   WorkflowIcon,
+  // T3o: the board's Projects nav icon.
+  FolderKanbanIcon,
   GitBranchIcon,
   GlobeIcon,
   InfoIcon,
@@ -120,6 +122,8 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/board": LayoutGridIcon,
   // T3o: the board's Pipeline page icon.
   "/settings/board/pipeline": WorkflowIcon,
+  // T3o: the board's Projects page icon.
+  "/settings/board/projects": FolderKanbanIcon,
   // T3o: the board's Workers page icon (T3O-84).
   "/settings/board/workers": ServerCogIcon,
   "/settings/access": ShieldCheckIcon,

@@ -118,7 +118,8 @@ function ScopeOptionLabel({ option }: { option: ScopeOption }) {
   );
 }
 
-function ScopeMenu({
+// T3o: exported for the board's project picker (Settings → Board → Projects).
+export function ScopeMenu({
   ariaLabel,
   icon,
   label,

@@ -7,6 +7,7 @@ describe("which Board settings entry is lit", () => {
     "/settings/general",
     "/settings/board",
     "/settings/board/pipeline",
+    "/settings/board/projects",
     "/settings/board/workers",
   ];
   const lit = (path: string) =>
@@ -18,7 +19,7 @@ describe("which Board settings entry is lit", () => {
     expect(lit("/settings/board/pipeline")).toEqual(["/settings/board/pipeline"]);
   });
 
-  it("lights Pipeline on a project's own pages", () => {
-    expect(lit("/settings/board/projects/p1/resources")).toEqual(["/settings/board/pipeline"]);
+  it("lights Projects on a project's own pages", () => {
+    expect(lit("/settings/board/projects/p1/resources")).toEqual(["/settings/board/projects"]);
   });
 });

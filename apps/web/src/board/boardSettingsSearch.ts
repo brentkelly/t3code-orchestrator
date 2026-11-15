@@ -43,17 +43,17 @@ export const BOARD_SETTINGS_SEARCH_ITEMS = [
     targetId: "board-display",
     searchTerms: ["cost spend tokens usage threshold price"],
   },
-  { id: "board-projects", title: "Projects", to: "/settings/board" },
+  { id: "board-projects", title: "Projects", to: "/settings/board/projects" },
   {
     id: "board-key-prefix",
     title: "Card key prefix",
-    to: "/settings/board",
+    to: "/settings/board/projects",
     targetId: "board-projects",
   },
   {
     id: "board-project-visibility",
     title: "Hide a project from the board",
-    to: "/settings/board",
+    to: "/settings/board/projects",
     targetId: "board-projects",
   },
   {
@@ -67,7 +67,7 @@ export const BOARD_SETTINGS_SEARCH_ITEMS = [
   {
     id: "board-project-pipelines",
     title: "Project pipelines and CI",
-    to: "/settings/board",
+    to: "/settings/board/projects",
     targetId: "board-projects",
     searchTerms: ["t3o.json import export per project stages override ci steps stop on failure"],
   },

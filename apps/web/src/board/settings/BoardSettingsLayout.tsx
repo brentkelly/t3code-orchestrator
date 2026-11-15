@@ -1,19 +1,18 @@
 /**
- * T3o: Settings → Board as a layout: General, Pipeline, Workers and one page per project.
- * On Pipeline and project pages a strip switches between pipelines; a dot marks a project
- * whose committed `t3o.json` differs from its pipeline.
+ * T3o: Settings → Board as a layout: General, Pipeline, Projects, Workers and one page per
+ * project. Projects pages pick their project with the settings scope picker's menu.
  */
 import { AuthSettingsWriteScope, type EnvironmentId, type ProjectId } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import { Link, Outlet, useLocation } from "@tanstack/react-router";
+import { Outlet, useLocation, useNavigate } from "@tanstack/react-router";
 import * as Option from "effect/Option";
-import { createContext, useContext, useState, type ReactNode } from "react";
+import { createContext, useContext, useState } from "react";
 
 import { SettingsPageContainer } from "../../components/settings/settingsLayout";
+import { ScopeMenu } from "../../components/settings/SettingsScopeSentence";
 import { cn } from "../../lib/utils";
 import { useEnvironmentScope } from "../../state/session";
 import { environmentShell } from "../../state/shell";
-import { BoardHint } from "../BoardHint";
 import { BoardServerStatusNotice } from "../BoardServerSettings";
 import { projectAccent, projectIconColorOf } from "../projectAccent";
 import { useBoardEnvironment } from "../useBoardEnvironmentId";
@@ -84,74 +83,64 @@ function BoardSettingsReady(props: { readonly environmentId: EnvironmentId }) {
   };
   return (
     <BoardSettingsContext.Provider value={value}>
-      <BoardProjectsStrip environmentId={props.environmentId} importWaiting={importWaiting} />
+      <BoardProjectPicker environmentId={props.environmentId} importWaiting={importWaiting} />
       <Outlet />
     </BoardSettingsContext.Provider>
   );
 }
 
-const NAV_LINK =
-  "rounded-md px-2 py-1 text-board-13 text-muted-foreground hover:bg-accent hover:text-foreground";
-const NAV_ACTIVE = "bg-accent font-medium text-foreground";
+const ALL_PROJECTS = "all";
 
-function BoardProjectsStrip(props: {
+/** The settings scope picker's look, for the board's projects: All projects is the list, and a
+    project opens its own page on the tab already open. The board is one server, so there's no
+    environment to pick. */
+function BoardProjectPicker(props: {
   readonly environmentId: EnvironmentId;
   readonly importWaiting: ReadonlySet<string>;
 }) {
   const projects = useBoardSettingsProjects(props.environmentId);
   const pathname = useLocation({ select: (location) => location.pathname });
-  if (pathname !== "/settings/board/pipeline" && !pathname.startsWith("/settings/board/projects/"))
-    return null;
-  return (
-    <nav
-      aria-label="Pipelines"
-      className="mx-3 flex flex-wrap items-center gap-1 border-b border-border pb-2 sm:mx-4"
-    >
-      <NavLink to="/settings/board/pipeline">All projects</NavLink>
-      {projects.length > 0 ? <span className="mx-1 h-4 w-px bg-border" /> : null}
-      {projects.map((project) => (
-        <Link
-          // Active on every tab of the project's page, not only the one it links to.
-          className={cn(
-            NAV_LINK,
-            "inline-flex items-center gap-1.5",
-            pathname.startsWith(`/settings/board/projects/${encodeURIComponent(project.id)}/`) &&
-              NAV_ACTIVE,
-          )}
-          key={project.id}
-          params={{ projectId: project.id, tab: "pipeline" }}
-          to="/settings/board/projects/$projectId/$tab"
-        >
-          <span
-            className={cn(
-              "size-1.5 shrink-0 rounded-full",
-              projectAccent(project.id, projectIconColorOf(project)).dot,
-            )}
-          />
-          {project.title}
-          {props.importWaiting.has(project.id) ? (
-            <BoardHint label="A t3o.json is waiting to import">
-              <span
-                aria-label="A t3o.json is waiting to import"
-                className="size-1.5 shrink-0 rounded-full bg-attention"
-              />
-            </BoardHint>
-          ) : null}
-        </Link>
-      ))}
-    </nav>
+  const navigate = useNavigate();
+  const match = /^\/settings\/board\/projects\/([^/]+)\/([^/]+)/.exec(pathname);
+  if (pathname !== "/settings/board/projects" && match === null) return null;
+  const selectedId = match === null ? null : decodeURIComponent(match[1] ?? "");
+  const tab = match?.[2] ?? "pipeline";
+  const selected = projects.find((project) => project.id === selectedId);
+  const dot = (project: (typeof projects)[number]) => (
+    <span
+      className={cn(
+        "size-2 shrink-0 rounded-full",
+        projectAccent(project.id, projectIconColorOf(project)).dot,
+      )}
+    />
   );
-}
-
-function NavLink(props: { readonly to: "/settings/board/pipeline"; readonly children: ReactNode }) {
   return (
-    <Link
-      activeOptions={{ exact: true }}
-      activeProps={{ className: NAV_ACTIVE }}
-      className={NAV_LINK}
-      to={props.to}
-    >
-      {props.children}
-    </Link>
+    <p className="flex min-w-0 flex-wrap items-center gap-1.5 px-3 text-sm text-muted-foreground sm:px-4">
+      <span className="shrink-0">Applying settings for</span>
+      <ScopeMenu
+        ariaLabel="Board project"
+        icon={selected === undefined ? null : dot(selected)}
+        label={selected?.title ?? (selectedId === null ? "All projects" : "Unavailable project")}
+        value={selectedId ?? ALL_PROJECTS}
+        searchLabel="Search projects"
+        allOption={{ value: ALL_PROJECTS, label: "All projects" }}
+        options={projects.map((project) => ({
+          value: project.id,
+          label: project.title,
+          ...(props.importWaiting.has(project.id)
+            ? { secondary: "A t3o.json is waiting to import" }
+            : {}),
+          icon: dot(project),
+        }))}
+        onChange={(next) =>
+          void (next === ALL_PROJECTS
+            ? navigate({ to: "/settings/board/projects" })
+            : navigate({
+                to: "/settings/board/projects/$projectId/$tab",
+                params: { projectId: next, tab },
+              }))
+        }
+      />
+    </p>
   );
 }

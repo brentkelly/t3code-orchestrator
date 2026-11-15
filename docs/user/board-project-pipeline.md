@@ -2,7 +2,7 @@
 
 The board has one list of stages, set in **Settings** → **Board** → **Pipeline**. Each project
 follows it, except for the differences you give that project on its own page: **Settings** →
-**Board** → the project → **Pipeline**. Only the differences are stored, so a stage added to the
+**Board** → **Projects** → the project → **Pipeline**. Only the differences are stored, so a stage added to the
 board later reaches every project unless a project switched it off.
 
 ## Stage defaults and switches
@@ -57,8 +57,8 @@ board never reads it on its own. On the project's **Import & export** tab:
   push it yourself. If the checkout's `t3o.json` already has uncommitted edits, Export downloads the
   file instead of overwriting them.
 
-When a project's committed `t3o.json` differs from its pipeline, **Settings** → **Board** offers to
-import it. **No thanks** hides the offer until the file changes again. Import and export need the
+When a project's committed `t3o.json` differs from its pipeline, **Settings** → **Board** →
+**Projects** offers to import it. **No thanks** hides the offer until the file changes again. Import and export need the
 project's checkout on the board's own server.
 
 ```json

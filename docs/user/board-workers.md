@@ -205,7 +205,7 @@ you change it.
 ## Card sizes and a project's baseline
 
 A card reserves its project's **baseline** on its worker: what one normal card of that project
-needs in CPU, RAM and disk. Set it on the project's **Resources** tab (**Settings → Board → Pipeline**, then the project), or
+needs in CPU, RAM and disk. Set it in **Settings → Board → Projects → <project> → Resources**, or
 in the `resources` block of the project's `t3o.json`. Each card has a size per dimension — S, M, L
 or XL — that scales the baseline (M is the baseline itself). The planner suggests a size with its
 plan; change it under **Resources** in the card's sidebar, where **Reset to planner** goes back to
