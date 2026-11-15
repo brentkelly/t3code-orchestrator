@@ -202,7 +202,7 @@ export function boardSplitDockSummary(input: Pick<BoardSplitDockInput, "plans">)
   ].join(" · ");
 }
 
-/** The green bar of a split approved to take effect later. */
+/** The bar of a split approved to take effect later. */
 export function boardSplitDockApprovedBar(input: BoardSplitDockInput): string | null {
   if (input.pendingApproval === null) return null;
   if (!boardSplitDockReviewRunning(input)) {

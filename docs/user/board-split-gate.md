@@ -51,7 +51,7 @@ A split always waits for a person, even when every automation gate is on. See
 Approving creates the cards from the plans as they are, which would end a running review. So while
 one runs, **Approve split…** offers **Approve after review** instead: you approve now, with the
 settings you chose, and the cards are created from the final plans when the review finishes. The
-dock turns into a green bar, **Split approved · N cards created after review**, and the planning
+dock turns into a bar, **Split approved · N cards created after review**, and the planning
 agent is told it can finish without waiting for you.
 
 **Undo** on the bar takes the approval back at any time before the cards are created; the split then

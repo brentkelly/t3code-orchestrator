@@ -1,9 +1,10 @@
 /**
  * T3o: the proposed split, docked directly above the thread composer (T3O-105). Collapsed it is
  * one row; expanded it holds the split gate, capped at 45% of the thread column, and a grip
- * resizes it. A split approved after review shows as a green bar with Undo until it fires.
+ * resizes it. A split approved after review shows as a blue bar with Undo until it fires:
+ * it is waiting on the review, not done.
  */
-import { CheckIcon, ChevronUpIcon, CircleAlertIcon } from "lucide-react";
+import { ChevronUpIcon, CircleAlertIcon, ClockIcon } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { Button } from "../components/ui/button";
@@ -15,7 +16,7 @@ export function BoardSplitDock(props: {
   readonly expanded: boolean;
   /** "Proposed split · N cards · K revised · Needs approval". */
   readonly summary: string;
-  /** The green bar of a split approved after review, or null. */
+  /** The bar of a split approved after review, or null. */
   readonly approvedBar: string | null;
   readonly storedHeight: number | null;
   readonly onExpandedChange: (expanded: boolean) => void;
@@ -40,12 +41,12 @@ export function BoardSplitDock(props: {
   if (props.approvedBar !== null) {
     return (
       <div
-        className="mb-2 flex items-center gap-2 rounded-xl border border-success/40 bg-success/10 px-3 py-2"
+        className="mb-2 flex items-center gap-2 rounded-xl border border-info/40 bg-info/10 px-3 py-2"
         ref={rootRef}
         role="status"
       >
-        <CheckIcon className="size-3.5 shrink-0 text-success-foreground" />
-        <span className="min-w-0 flex-1 truncate text-board-12 font-medium text-success-foreground">
+        <ClockIcon className="size-3.5 shrink-0 text-info-foreground" />
+        <span className="min-w-0 flex-1 truncate text-board-12 font-medium text-info-foreground">
           {props.approvedBar}
         </span>
         <Button onClick={props.onUndo} size="xs" variant="ghost">
