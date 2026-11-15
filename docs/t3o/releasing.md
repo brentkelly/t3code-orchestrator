@@ -74,8 +74,11 @@ run or are behind, so `t3o-update` is a fast-forward for them.
 
 ## Checklist
 
-- If `BOARD_WORKER_PROTOCOL_FLOOR` changed since the previous tag, say in the release notes that board
-  workers must update too: a central board refuses workers below the floor. The refusal names
-  `BOARD_WORKER_PROTOCOL_FLOOR_T3O_VERSION`, which is compared with nothing; it is upstream's
-  `serviceVersion` that the message shows for the worker.
-- After a sync, check that the notes header names the new T3 Code version.
+- If `BOARD_WORKER_PROTOCOL_FLOOR` or `T3O_TUNNEL_PROTOCOL_VERSION` changed since the previous tag, say
+  in the release notes that board workers must update too: a central board refuses workers below the
+  floor, naming `BOARD_WORKER_PROTOCOL_FLOOR_T3O_VERSION` (beside upstream's `serviceVersion` for the
+  worker, not its T3o tag). That constant must then name this release, and the script refuses
+  otherwise. The board CI stage checks the same on every card, against the tag the script would cut
+  from that HEAD, so it only disagrees here when an upstream sync landed since. Release soon after such
+  a bump: until you do, workers on the latest tag show **Needs update** against a board built from
+  `t3o`, with no newer tag to move to.

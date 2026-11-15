@@ -13,6 +13,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { readWorkspace } from "../.github/scripts/ci-changes.cjs";
+import { predictNextRelease, protocolReleaseProblem, readProtocolPins } from "./lib/t3o-release.ts";
 
 export const ROOT = NodePath.resolve(import.meta.dirname, "..");
 const PARTS = ["install", "changed", "board", "packages", "web", "full"] as const;
@@ -510,19 +511,51 @@ async function install(base: Base | undefined, tier: Tier | undefined) {
   writeResult(`install ok (${tier ? tierLabel(tier) : "tier unknown"})`, []);
 }
 
+/** A worker protocol bump must name the release that will ship it (see docs/t3o/releasing.md). */
+export function releasePinFailures(root = ROOT): Array<Failure> {
+  const current = readProtocolPins(root, null);
+  if (current === null) {
+    return [{ title: "[release] cannot read the worker protocol constants in packages/contracts" }];
+  }
+  const next = predictNextRelease(root);
+  if (next === null) {
+    return [
+      {
+        title: "[release] no stable upstream vX.Y.Z tag in HEAD; fetch upstream tags",
+        machine: true,
+      },
+    ];
+  }
+  const problem = protocolReleaseProblem({
+    previous: next.previous ? readProtocolPins(root, next.previous) : null,
+    current,
+    tag: next.tag,
+  });
+  return problem
+    ? [{ title: `[release] ${problem}`, file: "packages/contracts/src/boardWorkers.ts" }]
+    : [];
+}
+
 async function changed(base: Base, tier: Tier) {
+  const pinFailures = releasePinFailures();
   const args = ["scripts/check-changed.ts", base.ref, ...(tier.full ? ["--no-tests"] : [])];
   progress(
     `check:changed against ${base.ref}${tier.full ? " (no tests: the suite steps run server, web and package tests; desktop, mobile and .github/scripts tests are not run)" : ""}`,
   );
   const result = await run("node", args);
-  if (result.code === 0)
+  if (result.code === 0 && pinFailures.length === 0)
     return writeResult(`check:changed passed against ${base.ref} (${tierLabel(tier)})`, []);
-  const failures = checkChangedFailures(result.output);
+  const failures = result.code === 0 ? [] : checkChangedFailures(result.output);
   fail(
     "changed",
     `check:changed failed against ${base.ref} (${tierLabel(tier)})`,
-    failures.length > 0 ? failures : [{ title: "[check] check:changed failed" }],
+    [
+      ...pinFailures,
+      ...(result.code !== 0 && failures.length === 0
+        ? [{ title: "[check] check:changed failed" }]
+        : failures),
+    ],
+    isMachineFailure(pinFailures) && result.code === 0,
   );
 }
 

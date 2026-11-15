@@ -16,8 +16,10 @@ import {
   parseStatPpid,
   parseT3oTag,
   parseUnitFile,
+  parseProtocolPins,
   porcelainIsDirty,
   probeHost,
+  protocolReleaseProblem,
   relationOf,
   selectUpstreamBase,
   type Relation,
@@ -66,6 +68,36 @@ describe("T3o tags", () => {
     expect(nextT3oTag([0, 1, 8], tags)).toBe("t3o0.1.8.4");
     expect(nextT3oTag([0, 1, 9], tags)).toBe("t3o0.1.9.1");
     expect(nextT3oTag([0, 1, 8], [])).toBe("t3o0.1.8.1");
+  });
+});
+
+describe("worker protocol pins", () => {
+  const boardWorkers = (floor: number, release: string) =>
+    `export const BOARD_WORKER_PROTOCOL_VERSION = 9;\nexport const BOARD_WORKER_PROTOCOL_FLOOR = ${floor};\nexport const BOARD_WORKER_PROTOCOL_FLOOR_T3O_VERSION = "${release}";\n`;
+  const tunnel = (version: number) => `export const T3O_TUNNEL_PROTOCOL_VERSION = ${version};\n`;
+  const pins = (floor: number, release: string, tunnelVersion = 1) =>
+    parseProtocolPins(boardWorkers(floor, release), tunnel(tunnelVersion))!;
+
+  it("parses the constants and refuses a source missing one", () => {
+    expect(pins(5, "0.1.8.3")).toEqual({ floor: 5, tunnel: 1, floorRelease: "0.1.8.3" });
+    expect(parseProtocolPins(boardWorkers(5, "0.1.8.3"), null)).toBeNull();
+    expect(
+      parseProtocolPins("export const BOARD_WORKER_PROTOCOL_FLOOR = 5;", tunnel(1)),
+    ).toBeNull();
+  });
+
+  it("requires a floor or tunnel bump to name the release being cut", () => {
+    const previous = pins(5, "0.1.8.3");
+    const tag = "t3o0.1.9.2";
+    expect(protocolReleaseProblem({ previous, current: pins(5, "0.1.8.3"), tag })).toBeNull();
+    expect(protocolReleaseProblem({ previous: null, current: pins(6, "0.1.8.3"), tag })).toBeNull();
+    expect(protocolReleaseProblem({ previous, current: pins(6, "0.1.9.2"), tag })).toBeNull();
+    expect(protocolReleaseProblem({ previous, current: pins(6, "0.1.8.3"), tag })).toMatch(
+      /BOARD_WORKER_PROTOCOL_FLOOR 5 → 6 .* to "0\.1\.9\.2"/,
+    );
+    expect(protocolReleaseProblem({ previous, current: pins(5, "0.1.9.1", 2), tag })).toMatch(
+      /T3O_TUNNEL_PROTOCOL_VERSION 1 → 2/,
+    );
   });
 });
 

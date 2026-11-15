@@ -22,6 +22,8 @@ import {
   parseUnitFile,
   porcelainIsDirty,
   probeHost,
+  protocolReleaseProblem,
+  readProtocolPins,
   readStamp,
   selectUpstreamBase,
   unpushedT3oTags,
@@ -136,6 +138,15 @@ const previous = latestT3oTag(
   lines(git(["tag", "--merged", "HEAD", "--list", "t3o*"])).filter((entry) => entry !== tag),
 );
 log(`Release ${tag} (T3 Code v${base})${previous ? `, notes since ${previous}` : ", the first"}.`);
+
+const currentPins = readProtocolPins(repoRoot, "HEAD");
+if (currentPins === null) fail("cannot read the worker protocol constants in packages/contracts.");
+const protocolProblem = protocolReleaseProblem({
+  previous: previous ? readProtocolPins(repoRoot, previous) : null,
+  current: currentPins,
+  tag,
+});
+if (protocolProblem) fail(`${protocolProblem} Commit and push that, then re-run.`);
 
 // 3. Gate: the maintainer's own service runs exactly this commit.
 async function dogfoodGate() {

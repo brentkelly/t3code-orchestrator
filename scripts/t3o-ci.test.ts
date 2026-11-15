@@ -21,6 +21,7 @@ import {
   isMachineFailure,
   isPnpmExeOnlyChange,
   parseVitestJson,
+  releasePinFailures,
   resolveBase,
   ROOT,
   runSuite,
@@ -345,5 +346,42 @@ describe("base and tier", () => {
     const { base } = tierOf(project.root);
     assert.strictEqual(base.ref, "board/group");
     assert.strictEqual(base.ahead, 1);
+  });
+});
+
+describe("worker protocol release pins", () => {
+  it("expects the tag t3o-release would cut from HEAD, across an upstream sync", () => {
+    using project = repo();
+    const write = (floor: number, release: string) => {
+      const dir = NodePath.join(project.root, "packages/contracts/src");
+      NodeFS.mkdirSync(dir, { recursive: true });
+      NodeFS.writeFileSync(
+        NodePath.join(dir, "boardWorkers.ts"),
+        `export const BOARD_WORKER_PROTOCOL_FLOOR = ${floor};\nexport const BOARD_WORKER_PROTOCOL_FLOOR_T3O_VERSION = "${release}";\n`,
+      );
+      NodeFS.writeFileSync(
+        NodePath.join(dir, "boardWorkerTunnel.ts"),
+        "export const T3O_TUNNEL_PROTOCOL_VERSION = 1;\n",
+      );
+      project.git("add", "-A");
+      project.git("commit", "-q", "-m", `floor ${floor} ${release}`);
+    };
+    const titles = () => releasePinFailures(project.root).map((failure) => failure.title);
+
+    project.git("tag", "v0.1.9", "main~10");
+    project.git("merge", "-q", "--no-edit", "main~10");
+    write(5, "0.1.8.3");
+    project.git("tag", "t3o0.1.9.1");
+    project.git("tag", "t3o0.1.9.2");
+    assert.deepStrictEqual(titles(), []);
+
+    write(6, "0.1.8.3");
+    assert.match(titles()[0]!, /^\[release\] .*t3o0\.1\.9\.3 .* to "0\.1\.9\.3"/);
+    write(6, "0.1.9.3");
+    assert.deepStrictEqual(titles(), []);
+
+    project.git("tag", "v0.1.10", "main");
+    project.git("merge", "-q", "--no-edit", "main");
+    assert.match(titles()[0]!, /to "0\.1\.10\.1" \(it is "0\.1\.9\.3"\)/);
   });
 });

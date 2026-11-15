@@ -176,6 +176,91 @@ export function computeStamp(repoRoot: string, now = new Date()): ReleaseStamp {
   });
 }
 
+// ── Worker protocol pins ──────────────────────────────────────────────
+
+const BOARD_WORKERS_CONTRACT = "packages/contracts/src/boardWorkers.ts";
+const TUNNEL_CONTRACT = "packages/contracts/src/boardWorkerTunnel.ts";
+
+export interface ProtocolPins {
+  readonly floor: number;
+  readonly tunnel: number;
+  readonly floorRelease: string;
+}
+
+const exportedConstant = (source: string, name: string) =>
+  new RegExp(`export const ${name} = "?([^";\\s]+)"?;`).exec(source)?.[1] ?? null;
+
+/** The pins from the two contract sources; null when either file or constant is missing. */
+export function parseProtocolPins(
+  boardWorkers: string | null,
+  tunnel: string | null,
+): ProtocolPins | null {
+  const floor = boardWorkers && exportedConstant(boardWorkers, "BOARD_WORKER_PROTOCOL_FLOOR");
+  const floorRelease =
+    boardWorkers && exportedConstant(boardWorkers, "BOARD_WORKER_PROTOCOL_FLOOR_T3O_VERSION");
+  const tunnelVersion = tunnel && exportedConstant(tunnel, "T3O_TUNNEL_PROTOCOL_VERSION");
+  if (!floor || !floorRelease || !tunnelVersion) return null;
+  return { floor: Number(floor), tunnel: Number(tunnelVersion), floorRelease };
+}
+
+/**
+ * Workers on the previous release stop qualifying when the floor or tunnel protocol moves, so
+ * the release that ships the move must be the one `BOARD_WORKER_PROTOCOL_FLOOR_T3O_VERSION`
+ * names. Null when nothing moved, or with no previous release to compare against.
+ */
+export function protocolReleaseProblem(input: {
+  readonly previous: ProtocolPins | null;
+  readonly current: ProtocolPins;
+  readonly tag: string;
+}): string | null {
+  const { previous, current, tag } = input;
+  if (!previous) return null;
+  if (previous.floor === current.floor && previous.tunnel === current.tunnel) return null;
+  const version = tag.slice("t3o".length);
+  if (current.floorRelease === version) return null;
+  const moved = [
+    previous.floor !== current.floor
+      ? `BOARD_WORKER_PROTOCOL_FLOOR ${previous.floor} → ${current.floor}`
+      : null,
+    previous.tunnel !== current.tunnel
+      ? `T3O_TUNNEL_PROTOCOL_VERSION ${previous.tunnel} → ${current.tunnel}`
+      : null,
+  ].filter(Boolean);
+  return `${moved.join(" and ")} since the last release, so ${tag} is the first release workers can update to. Set BOARD_WORKER_PROTOCOL_FLOOR_T3O_VERSION in ${BOARD_WORKERS_CONTRACT} to "${version}" (it is "${current.floorRelease}").`;
+}
+
+/** The pins at `rev` (a tag or commit), or in the working tree when `rev` is null. */
+export function readProtocolPins(repoRoot: string, rev: string | null): ProtocolPins | null {
+  const read = (path: string) => {
+    if (rev !== null) return git(repoRoot, ["show", `${rev}:${path}`]);
+    try {
+      return NodeFS.readFileSync(NodePath.join(repoRoot, path), "utf8");
+    } catch {
+      return null;
+    }
+  };
+  return parseProtocolPins(read(BOARD_WORKERS_CONTRACT), read(TUNNEL_CONTRACT));
+}
+
+const gitLines = (repoRoot: string, args: readonly string[]) =>
+  (git(repoRoot, args) ?? "").split("\n").filter(Boolean);
+
+/**
+ * What `t3o-release` would tag next from HEAD, and the release before it. Reads local tags
+ * only: a clone missing upstream's newest `vX.Y.Z` predicts the old base, which the release
+ * script's own check then catches.
+ */
+export function predictNextRelease(
+  repoRoot: string,
+): { tag: string; previous: string | null } | null {
+  const base = selectUpstreamBase(gitLines(repoRoot, ["tag", "--merged", "HEAD", "--list", "v*"]));
+  if (base === null) return null;
+  return {
+    tag: nextT3oTag(base, gitLines(repoRoot, ["tag", "--list", "t3o*"])),
+    previous: latestT3oTag(gitLines(repoRoot, ["tag", "--merged", "HEAD", "--list", "t3o*"])),
+  };
+}
+
 export function writeStamp(file: string, stamp: ReleaseStamp): void {
   NodeFS.mkdirSync(NodePath.dirname(file), { recursive: true });
   NodeFS.writeFileSync(file, `${JSON.stringify(stamp, null, 2)}\n`);
