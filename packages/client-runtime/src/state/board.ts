@@ -37,7 +37,6 @@ import {
   isBoardCardScheduleDue,
   type EnvironmentId,
   type BoardShellSnapshot,
-  type OrchestrationV2ThreadShell,
   type ProjectId,
   type ThreadId,
   type BoardWorkersCapacityActionInput,
@@ -440,21 +439,10 @@ function pushColumn(
  */
 export function withBoardThreadFields(
   board: BoardShellSnapshot,
-  threads:
-    | ReadonlyArray<OrchestrationV2ThreadShell>
-    | ReadonlyMap<ThreadId, BoardThreadShellFields & { readonly id: ThreadId }>,
+  threadsById: ReadonlyMap<ThreadId, BoardThreadShellFields & { readonly id: ThreadId }>,
   subagentRequests: ReadonlyMap<ThreadId, PendingSubagentRequest> = NO_SUBAGENT_REQUESTS,
 ): BoardShellSnapshot {
   if (board.cards.length === 0) return board;
-  const threadsById =
-    threads instanceof Map
-      ? threads
-      : new Map(
-          (threads as ReadonlyArray<OrchestrationV2ThreadShell>).map((thread) => [
-            thread.id,
-            thread,
-          ]),
-        );
   const liveThreadIdsOf = indexLiveCardThreadIds(board.cardThreads);
   let changed = false;
   const cards = board.cards.map((card) => {

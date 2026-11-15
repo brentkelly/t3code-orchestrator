@@ -938,6 +938,8 @@ describe("board shell reducer", () => {
 });
 
 describe("withBoardThreadFields", () => {
+  const byId = (...threads: ReadonlyArray<OrchestrationV2ThreadShell>) =>
+    new Map(threads.map((thread) => [thread.id, thread]));
   const userInputRequest = {
     id: RuntimeRequestId.make("request-1"),
     kind: "user_input" as const,
@@ -957,24 +959,26 @@ describe("withBoardThreadFields", () => {
     expect(linked.activeThreadId).toBe(threadId);
     expect(linked.threadState).toBe("none");
 
-    const next = withBoardThreadFields(snapshot({ cards: [linked] }), [
-      threadShell({ pendingRuntimeRequest: userInputRequest }),
-    ]);
+    const next = withBoardThreadFields(
+      snapshot({ cards: [linked] }),
+      byId(threadShell({ pendingRuntimeRequest: userInputRequest })),
+    );
     expect(next.cards[0]?.threadState).toBe("waiting");
     expect(next.cards[0]?.awaitingInput).toBe(true);
   });
 
   it("derives the background wait both ways (T3O-20)", () => {
-    const waiting = withBoardThreadFields(snapshot({ cards: [linked] }), [
-      threadShell({ pendingBackgroundTasks: [monitorTask] }),
-    ]);
+    const waiting = withBoardThreadFields(
+      snapshot({ cards: [linked] }),
+      byId(threadShell({ pendingBackgroundTasks: [monitorTask] })),
+    );
     expect(waiting.cards[0]?.waitingOnBackground).toBe(true);
 
     // The provider woke the agent: mid-turn is no longer a wait, and the key
     // goes away rather than resting at false, matching the server's shell.
     const woken = withBoardThreadFields(
       snapshot({ cards: [{ ...linked, waitingOnBackground: true }] }),
-      [threadShell({ pendingBackgroundTasks: [monitorTask], activityRunStatus: "running" })],
+      byId(threadShell({ pendingBackgroundTasks: [monitorTask], activityRunStatus: "running" })),
     );
     expect(woken.cards[0]).not.toHaveProperty("waitingOnBackground");
   });
@@ -985,7 +989,7 @@ describe("withBoardThreadFields", () => {
       pendingBackgroundTasks: [{ taskId: "delegate-1", kind: "subagent" as const }],
     });
     const board = snapshot({ cards: [linked] });
-    const waiting = withBoardThreadFields(board, [parent], new Map([[threadId, "approval"]]));
+    const waiting = withBoardThreadFields(board, byId(parent), new Map([[threadId, "approval"]]));
     expect(waiting.cards[0]).toMatchObject({
       threadState: "waiting",
       awaitingInput: false,
@@ -994,21 +998,26 @@ describe("withBoardThreadFields", () => {
     expect(waiting.cards[0]).not.toHaveProperty("waitingOnBackground");
 
     // The coordinator answers a child's question, so it does not wait on a human.
-    const asking = withBoardThreadFields(board, [parent], new Map([[threadId, "user_input"]]));
+    const asking = withBoardThreadFields(board, byId(parent), new Map([[threadId, "user_input"]]));
     expect(asking.cards[0]?.threadState).toBe("working");
     expect(asking.cards[0]?.waitingOnBackground).toBe(true);
 
     // Answered: the map clears and the key goes away with it.
-    const answered = withBoardThreadFields({ ...board, cards: waiting.cards }, [parent], new Map());
+    const answered = withBoardThreadFields(
+      { ...board, cards: waiting.cards },
+      byId(parent),
+      new Map(),
+    );
     expect(answered.cards[0]).not.toHaveProperty("awaitingSubagent");
     expect(answered.cards[0]?.threadState).toBe("working");
   });
 
   it("leaves a card with no live link at rest, and the board itself untouched", () => {
     const board = snapshot({ cards: [cardShell("card-1")] });
-    const next = withBoardThreadFields(board, [
-      threadShell({ pendingRuntimeRequest: userInputRequest }),
-    ]);
+    const next = withBoardThreadFields(
+      board,
+      byId(threadShell({ pendingRuntimeRequest: userInputRequest })),
+    );
     expect(next).toBe(board);
     expect(next.cards[0]?.threadState).toBe("none");
   });
