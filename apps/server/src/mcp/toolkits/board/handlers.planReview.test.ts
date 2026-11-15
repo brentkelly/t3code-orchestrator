@@ -1,7 +1,7 @@
 /**
  * Plan review through the board tools: `board_propose_plans` hands
- * the planning agent its review instructions, a late turn-on starts the
- * review at once (reopening a finished step), and
+ * the planning agent its review instructions, a late turn-on arms the
+ * review for Start review (reopening a finished step), and
  * `board_get_card_context` carries a running review and its rounds.
  */
 import {
@@ -141,6 +141,17 @@ const turnOn = (cardId: BoardCardId, threadId: ThreadId, rounds: number) =>
     .board_update_card({ cardId, planReview: { enabled: true, rounds } })
     .pipe(as(threadId));
 
+/** Turned on after the plan was posted, a review arms and waits for Start review. */
+const startReview = (cardId: BoardCardId) =>
+  Effect.flatMap(boardStackEngine, (engine) =>
+    engine.dispatch({
+      type: "board.plan-review.start",
+      commandId: CommandId.make(`cmd-start-review-${cardId}`),
+      cardId,
+      createdAt: t0,
+    }),
+  );
+
 it.layer(layer)("plan review through the board tools", (it) => {
   it.effect("the first proposal returns the instructions, and only the first", () =>
     Effect.gen(function* () {
@@ -174,11 +185,14 @@ it.layer(layer)("plan review through the board tools", (it) => {
     }),
   );
 
-  it.effect("turned on after the plan was posted, the review starts at once", () =>
+  it.effect("turned on after the plan was posted, the review starts on Start review", () =>
     Effect.gen(function* () {
       const { cardId, threadId } = yield* seedPlanningCard("late");
       yield* boardHandlers.board_propose_plans({ plans: onePlan }).pipe(as(threadId));
       yield* turnOn(cardId, threadId, 2);
+      const armed = yield* boardHandlers.board_get_card_context().pipe(as(threadId));
+      assert.strictEqual(armed.planReview, undefined);
+      yield* startReview(cardId);
       const between = yield* boardHandlers.board_get_card_context().pipe(as(threadId));
       assert.strictEqual(between.planReview?.rounds, 2);
 
@@ -219,6 +233,7 @@ it.layer(layer)("plan review through the board tools", (it) => {
 
       yield* TestClock.adjust("1 second");
       yield* turnOn(cardId, threadId, 2);
+      yield* startReview(cardId);
       const reopened = yield* boardHandlers.board_get_card_context().pipe(as(threadId));
       assert.strictEqual(reopened.planReview?.rounds, 2);
       assert.isTrue(reopened.activity.some((entry) => entry.kind === "plan-review-started"));
@@ -290,6 +305,30 @@ it.layer(layer)("plan review through the board tools", (it) => {
     }),
   );
 
+  it.effect("finished: true after a round past the target is a no-op success", () =>
+    Effect.gen(function* () {
+      const { cardId, threadId } = yield* seedPlanningCard("finished-after-done");
+      yield* turnOn(cardId, threadId, 1);
+      yield* boardHandlers.board_propose_plans({ plans: onePlan }).pipe(as(threadId));
+      const first = yield* boardHandlers.board_plan_review_round({ round: 1 }).pipe(as(threadId));
+      assert.strictEqual(first.continue, true);
+      const past = yield* boardHandlers.board_plan_review_round({ round: 2 }).pipe(as(threadId));
+      assert.strictEqual(past.continue, false);
+      const finished = yield* boardHandlers
+        .board_plan_review_round({ finished: true })
+        .pipe(as(threadId));
+      assert.deepStrictEqual(finished, {
+        targetRounds: 1,
+        continue: false,
+        unattended: false,
+        splitApprovedAfterReview: false,
+      });
+      // An ended review's instructions are not handed out again.
+      const context = yield* boardHandlers.board_get_card_context().pipe(as(threadId));
+      assert.strictEqual(context.planReview, undefined);
+    }),
+  );
+
   it.effect("turning the review off lifts it from the context", () =>
     Effect.gen(function* () {
       const { cardId, threadId } = yield* seedPlanningCard("stop");
@@ -316,6 +355,7 @@ it.layer(layer)("plan review through the board tools", (it) => {
       assert.strictEqual(stopped.planReview, undefined);
 
       yield* turnOn(cardId, threadId, 4);
+      yield* startReview(cardId);
       const restarted = yield* boardHandlers.board_get_card_context().pipe(as(threadId));
       assert.strictEqual(restarted.planReview?.rounds, 4);
     }),

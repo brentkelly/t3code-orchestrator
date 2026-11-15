@@ -56,6 +56,7 @@ import {
   BoardCardPullRequest,
   BoardCardModelOverrides,
   BoardSplitRecommendation,
+  BoardPendingSplitApproval,
   BoardCardAutoPlan,
   BoardCardPlanReview,
   BoardCardDecision,
@@ -188,6 +189,8 @@ const BoardCardDbRow = Schema.Struct({
   /** NULL for every row written before migration 052 and for every card with
       no recommended split (replay equals rehydration). */
   splitRecommendation: Schema.NullOr(Schema.fromJsonString(BoardSplitRecommendation)),
+  // T3o: NULL before migration 078 and whenever no split approval is pending (T3O-105).
+  pendingSplitApproval: Schema.NullOr(Schema.fromJsonString(BoardPendingSplitApproval)),
   autoPlan: Schema.NullOr(Schema.fromJsonString(BoardCardAutoPlan)),
   /** NULL for every row written before migration 054 and for every card that
       follows the Settings default (plan review). */
@@ -205,6 +208,7 @@ const BoardCardDbRow = Schema.Struct({
       own value. Migration 055 backfilled them from the retired `auto_start` /
       `auto_merge` columns, which are no longer written. */
   autoPlanSetting: Schema.NullOr(Schema.Int),
+  autoSignOffSetting: Schema.NullOr(Schema.Int),
   autoBuildSetting: Schema.NullOr(Schema.Int),
   autoMergeSetting: Schema.NullOr(Schema.Int),
   /** NULL for every row written before migration 043, for every card whose
@@ -232,6 +236,7 @@ const BoardCardDbRow = Schema.Struct({
   groupAutoBuild: Schema.Int,
   groupAutoMerge: Schema.Int,
   groupAutoPlan: Schema.Int,
+  groupAutoSignOff: Schema.Int,
   groupStarted: Schema.Int,
   groupPlaced: Schema.NullOr(BoardStageId),
   groupPrevStage: Schema.NullOr(BoardStageId),
@@ -512,6 +517,12 @@ const BoardCardStepStateDbRow = Schema.Struct({
   // NULL before migration 054 and on every step with no plan review started.
   planReviewStartedAt: Schema.NullOr(IsoDateTime),
   planReviewRounds: Schema.NullOr(Schema.Int),
+  // T3o: NULL before migration 077 and on every step with no review round, end, arming or
+  // delivered policy (T3O-104).
+  planReviewRound: Schema.NullOr(Schema.Int),
+  planReviewDoneAt: Schema.NullOr(IsoDateTime),
+  planReviewAwaitingStart: Schema.NullOr(IsoDateTime),
+  planReviewPolicySent: Schema.NullOr(Schema.String),
   // NULL before migration 067 and on every step Auto-plan never reopened.
   reopenedAt: Schema.NullOr(IsoDateTime),
   reopenedPromptAt: Schema.NullOr(IsoDateTime),
@@ -566,6 +577,8 @@ const BoardPlanDbRow = Schema.Struct({
       }),
     ),
   ),
+  /** T3o: migration 077; NULL outside a plan review (T3O-104). */
+  revisedInRound: Schema.NullOr(Schema.Int),
   body: Schema.String,
   createdAt: BoardPlan.fields.createdAt,
   updatedAt: BoardPlan.fields.updatedAt,
@@ -587,6 +600,7 @@ function rowToBoardPlan(row: BoardPlanDbRow): BoardPlan {
     ...(row.planned === 0 ? { planned: false } : {}),
     ...(row.sizing === null ? {} : { size: row.sizing.size }),
     ...(row.sizing?.reason === undefined ? {} : { sizeReason: row.sizing.reason }),
+    ...(row.revisedInRound === null ? {} : { revisedInRound: row.revisedInRound }),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -639,6 +653,7 @@ const BoardCardShellDbRow = Schema.Struct({
       both carry them — or a card's Automation summary would change on
       reconnect. */
   autoPlanSetting: Schema.NullOr(Schema.Int),
+  autoSignOffSetting: Schema.NullOr(Schema.Int),
   autoBuildSetting: Schema.NullOr(Schema.Int),
   autoMergeSetting: Schema.NullOr(Schema.Int),
   autoPlanPending: Schema.Int,
@@ -673,6 +688,7 @@ const BoardCardShellDbRow = Schema.Struct({
   groupAutoBuild: Schema.Int,
   groupAutoMerge: Schema.Int,
   groupAutoPlan: Schema.Int,
+  groupAutoSignOff: Schema.Int,
   groupStarted: Schema.Int,
   groupPlaced: Schema.NullOr(BoardStageId),
   groupPrevStage: Schema.NullOr(BoardStageId),
@@ -735,11 +751,13 @@ function boardCardToRow(card: BoardCard): BoardCardDbRow {
       : card.modelOverrides,
     splitRationale: card.splitRationale,
     splitRecommendation: card.splitRecommendation ?? null,
+    pendingSplitApproval: card.pendingSplitApproval ?? null,
     autoPlan: card.autoPlan ?? null,
     planReview: card.planReview ?? null,
     baseBranch: card.baseBranch,
     scheduledStartAt: card.scheduledStartAt,
     autoPlanSetting: settingToInt(card.autoPlanSetting),
+    autoSignOffSetting: settingToInt(card.autoSignOffSetting),
     autoBuildSetting: settingToInt(card.autoBuildSetting),
     autoMergeSetting: settingToInt(card.autoMergeSetting),
     autoMergeHold: card.autoMergeHold,
@@ -757,6 +775,7 @@ function boardCardToRow(card: BoardCard): BoardCardDbRow {
     groupAutoBuild: card.group?.autoBuild === true ? 1 : 0,
     groupAutoMerge: card.group?.autoMerge === true ? 1 : 0,
     groupAutoPlan: card.group?.autoPlan === true ? 1 : 0,
+    groupAutoSignOff: card.group?.autoSignOff === true ? 1 : 0,
     groupStarted: card.group?.started === true ? 1 : 0,
     groupPlaced: card.group?.placed ?? null,
     groupPrevStage: card.group?.prevStage ?? null,
@@ -777,6 +796,7 @@ function boardCardGroupFromRow(
     | "groupAutoBuild"
     | "groupAutoMerge"
     | "groupAutoPlan"
+    | "groupAutoSignOff"
     | "groupStarted"
     | "groupPlaced"
     | "groupPrevStage"
@@ -790,6 +810,7 @@ function boardCardGroupFromRow(
     autoBuild: row.groupAutoBuild !== 0,
     autoMerge: row.groupAutoMerge !== 0,
     autoPlan: row.groupAutoPlan !== 0,
+    autoSignOff: row.groupAutoSignOff !== 0,
     started: row.groupStarted !== 0,
     placed: row.groupPlaced ?? row.stage,
     prevStage: row.groupPrevStage,
@@ -838,11 +859,15 @@ function rowToBoardCard(
     modelOverrides: row.modelOverrides,
     splitRationale: row.splitRationale,
     ...(row.splitRecommendation === null ? {} : { splitRecommendation: row.splitRecommendation }),
+    ...(row.pendingSplitApproval === null
+      ? {}
+      : { pendingSplitApproval: row.pendingSplitApproval }),
     ...(row.autoPlan === null ? {} : { autoPlan: row.autoPlan }),
     ...(row.planReview === null ? {} : { planReview: row.planReview }),
     baseBranch: row.baseBranch,
     scheduledStartAt: row.scheduledStartAt,
     autoPlanSetting: settingFromInt(row.autoPlanSetting),
+    autoSignOffSetting: settingFromInt(row.autoSignOffSetting),
     autoBuildSetting: settingFromInt(row.autoBuildSetting),
     autoMergeSetting: settingFromInt(row.autoMergeSetting),
     autoMergeHold: row.autoMergeHold,
@@ -916,11 +941,13 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         model_overrides,
         split_rationale,
         split_recommendation,
+        pending_split_approval,
         auto_plan,
         plan_review,
         base_branch,
         scheduled_start_at,
         auto_plan_setting,
+        auto_sign_off_setting,
         auto_build_setting,
         auto_merge_setting,
         auto_merge_hold,
@@ -938,6 +965,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         group_auto_build,
         group_auto_merge,
         group_auto_plan,
+        group_auto_sign_off,
         group_started,
         group_placed,
         group_prev_stage,
@@ -970,11 +998,13 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ${row.modelOverrides},
         ${row.splitRationale},
         ${row.splitRecommendation},
+        ${row.pendingSplitApproval},
         ${row.autoPlan},
         ${row.planReview},
         ${row.baseBranch},
         ${row.scheduledStartAt},
         ${row.autoPlanSetting},
+        ${row.autoSignOffSetting},
         ${row.autoBuildSetting},
         ${row.autoMergeSetting},
         ${row.autoMergeHold},
@@ -992,6 +1022,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ${row.groupAutoBuild},
         ${row.groupAutoMerge},
         ${row.groupAutoPlan},
+        ${row.groupAutoSignOff},
         ${row.groupStarted},
         ${row.groupPlaced},
         ${row.groupPrevStage},
@@ -1024,11 +1055,13 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         model_overrides = excluded.model_overrides,
         split_rationale = excluded.split_rationale,
         split_recommendation = excluded.split_recommendation,
+        pending_split_approval = excluded.pending_split_approval,
         auto_plan = excluded.auto_plan,
         plan_review = excluded.plan_review,
         base_branch = excluded.base_branch,
         scheduled_start_at = excluded.scheduled_start_at,
         auto_plan_setting = excluded.auto_plan_setting,
+        auto_sign_off_setting = excluded.auto_sign_off_setting,
         auto_build_setting = excluded.auto_build_setting,
         auto_merge_setting = excluded.auto_merge_setting,
         auto_merge_hold = excluded.auto_merge_hold,
@@ -1046,6 +1079,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         group_auto_build = excluded.group_auto_build,
         group_auto_merge = excluded.group_auto_merge,
         group_auto_plan = excluded.group_auto_plan,
+        group_auto_sign_off = excluded.group_auto_sign_off,
         group_started = excluded.group_started,
         group_placed = excluded.group_placed,
         group_prev_stage = excluded.group_prev_stage,
@@ -1088,11 +1122,13 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         model_overrides AS "modelOverrides",
         split_rationale AS "splitRationale",
         split_recommendation AS "splitRecommendation",
+        pending_split_approval AS "pendingSplitApproval",
         auto_plan AS "autoPlan",
         plan_review AS "planReview",
         base_branch AS "baseBranch",
         scheduled_start_at AS "scheduledStartAt",
         auto_plan_setting AS "autoPlanSetting",
+        auto_sign_off_setting AS "autoSignOffSetting",
         auto_build_setting AS "autoBuildSetting",
         auto_merge_setting AS "autoMergeSetting",
         auto_merge_hold AS "autoMergeHold",
@@ -1110,6 +1146,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         group_auto_build AS "groupAutoBuild",
         group_auto_merge AS "groupAutoMerge",
         group_auto_plan AS "groupAutoPlan",
+        group_auto_sign_off AS "groupAutoSignOff",
         group_started AS "groupStarted",
         group_placed AS "groupPlaced",
         group_prev_stage AS "groupPrevStage",
@@ -1214,6 +1251,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         scheduled_start_at AS "scheduledStartAt",
         priority,
         auto_plan_setting AS "autoPlanSetting",
+        auto_sign_off_setting AS "autoSignOffSetting",
         auto_build_setting AS "autoBuildSetting",
         auto_merge_setting AS "autoMergeSetting",
         -- The unattended-run flag (T3O-38): the JS twin is
@@ -1270,6 +1308,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         group_auto_build AS "groupAutoBuild",
         group_auto_merge AS "groupAutoMerge",
         group_auto_plan AS "groupAutoPlan",
+        group_auto_sign_off AS "groupAutoSignOff",
         group_started AS "groupStarted",
         group_placed AS "groupPlaced",
         group_prev_stage AS "groupPrevStage",
@@ -1318,6 +1357,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         scheduled_start_at AS "scheduledStartAt",
         priority,
         auto_plan_setting AS "autoPlanSetting",
+        auto_sign_off_setting AS "autoSignOffSetting",
         auto_build_setting AS "autoBuildSetting",
         auto_merge_setting AS "autoMergeSetting",
         -- The unattended-run flag (T3O-38): the JS twin is
@@ -1374,6 +1414,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         group_auto_build AS "groupAutoBuild",
         group_auto_merge AS "groupAutoMerge",
         group_auto_plan AS "groupAutoPlan",
+        group_auto_sign_off AS "groupAutoSignOff",
         group_started AS "groupStarted",
         group_placed AS "groupPlaced",
         group_prev_stage AS "groupPrevStage",
@@ -1505,11 +1546,13 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         model_overrides AS "modelOverrides",
         split_rationale AS "splitRationale",
         split_recommendation AS "splitRecommendation",
+        pending_split_approval AS "pendingSplitApproval",
         auto_plan AS "autoPlan",
         plan_review AS "planReview",
         base_branch AS "baseBranch",
         scheduled_start_at AS "scheduledStartAt",
         auto_plan_setting AS "autoPlanSetting",
+        auto_sign_off_setting AS "autoSignOffSetting",
         auto_build_setting AS "autoBuildSetting",
         auto_merge_setting AS "autoMergeSetting",
         auto_merge_hold AS "autoMergeHold",
@@ -1527,6 +1570,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         group_auto_build AS "groupAutoBuild",
         group_auto_merge AS "groupAutoMerge",
         group_auto_plan AS "groupAutoPlan",
+        group_auto_sign_off AS "groupAutoSignOff",
         group_started AS "groupStarted",
         group_placed AS "groupPlaced",
         group_prev_stage AS "groupPrevStage",
@@ -1957,8 +2001,9 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
   });
 
   // Returns a tail plus every `card-input-requested` entry, since an outstanding
-  // human gate must never age out of view. UNION dedupes; the outer ORDER restores
-  // log order.
+  // human gate must never age out of view, plus the latest plan-review marker, so the
+  // sidebar's "Reviewed" row survives a long Planning stay. UNION dedupes; the outer
+  // ORDER restores log order.
   const listBoardCardActivityRowsForCard = SqlSchema.findAll({
     Request: BoardCardId,
     Result: BoardCardActivityDbRow,
@@ -1977,6 +2022,25 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
           created_at AS "createdAt"
         FROM board_card_activity
         WHERE card_id = ${cardId} AND kind = 'card-input-requested'
+        UNION
+        SELECT * FROM (
+          SELECT
+            activity_id AS "activityId",
+            card_id AS "cardId",
+            kind,
+            payload,
+            actor_kind AS "actorKind",
+            actor_name AS "actorName",
+            actor_provider_instance_id AS "actorProviderInstanceId",
+            actor_thread_id AS "actorThreadId",
+            thread_id AS "threadId",
+            created_at AS "createdAt"
+          FROM board_card_activity
+          WHERE card_id = ${cardId}
+            AND kind IN ('plan-review-started', 'plan-review-finished', 'card-moved')
+          ORDER BY created_at DESC, activity_id DESC
+          LIMIT 1
+        )
         UNION
         SELECT * FROM (
           SELECT
@@ -2224,7 +2288,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         stage_entry_recoveries, last_nudge_at, prompt,
         provider_instance_id, model, mode, runtime_mode, model_options, base_tip_at_round_start,
         last_error, awaiting_reason, human_turn_at, stalled_reason, retry_at,
-        plan_review_started_at, plan_review_rounds, reopened_at, reopened_prompt_at,
+        plan_review_started_at, plan_review_rounds, plan_review_round, plan_review_done_at,
+        plan_review_awaiting_start, plan_review_policy_sent, reopened_at, reopened_prompt_at,
         human_in_loop, max_attempts, timeout_ms, thread_id, status, slot_held, force_start,
         queued_by, queued_detail, started_at, updated_at
       )
@@ -2234,7 +2299,9 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ${row.providerInstanceId}, ${row.model}, ${row.mode}, ${row.runtimeMode}, ${row.modelOptions},
         ${row.baseTipAtRoundStart},
         ${row.lastError}, ${row.awaitingReason}, ${row.humanTurnAt}, ${row.stalledReason}, ${row.retryAt},
-        ${row.planReviewStartedAt}, ${row.planReviewRounds}, ${row.reopenedAt}, ${row.reopenedPromptAt},
+        ${row.planReviewStartedAt}, ${row.planReviewRounds}, ${row.planReviewRound},
+        ${row.planReviewDoneAt}, ${row.planReviewAwaitingStart}, ${row.planReviewPolicySent},
+        ${row.reopenedAt}, ${row.reopenedPromptAt},
         ${row.humanInLoop}, ${row.maxAttempts},
         ${row.timeoutMs}, ${row.threadId}, ${row.status}, ${row.slotHeld}, ${row.forceStart},
         ${row.queuedBy}, ${row.queuedDetail}, ${row.startedAt}, ${row.updatedAt}
@@ -2262,6 +2329,10 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         retry_at = excluded.retry_at,
         plan_review_started_at = excluded.plan_review_started_at,
         plan_review_rounds = excluded.plan_review_rounds,
+        plan_review_round = excluded.plan_review_round,
+        plan_review_done_at = excluded.plan_review_done_at,
+        plan_review_awaiting_start = excluded.plan_review_awaiting_start,
+        plan_review_policy_sent = excluded.plan_review_policy_sent,
         reopened_at = excluded.reopened_at,
         reopened_prompt_at = excluded.reopened_prompt_at,
         human_in_loop = excluded.human_in_loop,
@@ -2305,6 +2376,10 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         retry_at AS "retryAt",
         plan_review_started_at AS "planReviewStartedAt",
         plan_review_rounds AS "planReviewRounds",
+        plan_review_round AS "planReviewRound",
+        plan_review_done_at AS "planReviewDoneAt",
+        plan_review_awaiting_start AS "planReviewAwaitingStart",
+        plan_review_policy_sent AS "planReviewPolicySent",
         reopened_at AS "reopenedAt",
         reopened_prompt_at AS "reopenedPromptAt",
         human_in_loop AS "humanInLoop",
@@ -2398,13 +2473,19 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
       status: BoardCardStepState.fields.status,
       planReviewStartedAt: Schema.NullOr(IsoDateTime),
       planReviewRounds: Schema.NullOr(Schema.Int),
+      planReviewRound: Schema.NullOr(Schema.Int),
+      planReviewDoneAt: Schema.NullOr(IsoDateTime),
+      planReviewAwaitingStart: Schema.NullOr(IsoDateTime),
     }),
     execute: (cardId) => sql`
       SELECT
         last_error AS "lastError",
         status,
         plan_review_started_at AS "planReviewStartedAt",
-        plan_review_rounds AS "planReviewRounds"
+        plan_review_rounds AS "planReviewRounds",
+        plan_review_round AS "planReviewRound",
+        plan_review_done_at AS "planReviewDoneAt",
+        plan_review_awaiting_start AS "planReviewAwaitingStart"
       FROM board_card_step_state
       WHERE card_id = ${cardId}
     `,
@@ -2554,13 +2635,13 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     Request: BoardPlanDbRow,
     execute: (row) => sql`
       INSERT INTO board_plans (
-        plan_id, card_id, title, summary, depends_on, ordinal, locked, planned, sizing, body,
-        created_at, updated_at
+        plan_id, card_id, title, summary, depends_on, ordinal, locked, planned, sizing,
+        revised_in_round, body, created_at, updated_at
       )
       VALUES (
         ${row.planId}, ${row.cardId}, ${row.title}, ${row.summary}, ${row.dependsOn},
-        ${row.ordinal}, ${row.locked}, ${row.planned}, ${row.sizing}, ${row.body},
-        ${row.createdAt}, ${row.updatedAt}
+        ${row.ordinal}, ${row.locked}, ${row.planned}, ${row.sizing}, ${row.revisedInRound},
+        ${row.body}, ${row.createdAt}, ${row.updatedAt}
       )
       ON CONFLICT (plan_id)
       DO UPDATE SET
@@ -2572,6 +2653,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         locked = excluded.locked,
         planned = excluded.planned,
         sizing = excluded.sizing,
+        revised_in_round = excluded.revised_in_round,
         body = excluded.body,
         created_at = excluded.created_at,
         updated_at = excluded.updated_at
@@ -2581,14 +2663,25 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
   const UpdatePlanBodyRequest = Schema.Struct({
     planId: BoardPlanId,
     body: Schema.String,
+    revisedInRound: Schema.NullOr(Schema.Int),
     updatedAt: BoardPlan.fields.updatedAt,
   });
   const updateBoardPlanBodyRow = SqlSchema.void({
     Request: UpdatePlanBodyRequest,
     execute: (request) => sql`
       UPDATE board_plans
-      SET body = ${request.body}, updated_at = ${request.updatedAt}
+      SET body = ${request.body}, revised_in_round = ${request.revisedInRound},
+        updated_at = ${request.updatedAt}
       WHERE plan_id = ${request.planId}
+    `,
+  });
+
+  // T3o: a new plan review starts every plan unstamped (T3O-104).
+  const clearBoardPlanRevisedInRoundRows = SqlSchema.void({
+    Request: BoardCardId,
+    execute: (cardId) => sql`
+      UPDATE board_plans SET revised_in_round = NULL
+      WHERE card_id = ${cardId} AND revised_in_round IS NOT NULL
     `,
   });
 
@@ -2606,6 +2699,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         locked,
         planned,
         sizing,
+        revised_in_round AS "revisedInRound",
         body,
         created_at AS "createdAt",
         updated_at AS "updatedAt"
@@ -2630,6 +2724,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         locked,
         planned,
         sizing,
+        revised_in_round AS "revisedInRound",
         body,
         created_at AS "createdAt",
         updated_at AS "updatedAt"
@@ -2652,6 +2747,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         locked,
         planned,
         sizing,
+        revised_in_round AS "revisedInRound",
         body,
         created_at AS "createdAt",
         updated_at AS "updatedAt"
@@ -2742,6 +2838,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     deleteBoardCardUsageForCard,
     insertBoardPlanRow,
     updateBoardPlanBodyRow,
+    clearBoardPlanRevisedInRoundRows,
     listBoardPlanRows,
     listBoardPlanRowsForCard,
     findBoardPlanRow,
@@ -3028,6 +3125,10 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
         retryAt: state.retryAt,
         planReviewStartedAt: state.planReviewStartedAt ?? null,
         planReviewRounds: state.planReviewRounds ?? null,
+        planReviewRound: state.planReviewRound ?? null,
+        planReviewDoneAt: state.planReviewDoneAt ?? null,
+        planReviewAwaitingStart: state.planReviewAwaitingStart ?? null,
+        planReviewPolicySent: state.planReviewPolicySent ?? null,
         reopenedAt: state.reopenedAt ?? null,
         reopenedPromptAt: state.reopenedPromptAt ?? null,
         humanInLoop: state.humanInLoop ? 1 : 0,
@@ -3113,6 +3214,7 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
                   size: plan.size,
                   ...(plan.sizeReason === undefined ? {} : { reason: plan.sizeReason }),
                 },
+          revisedInRound: plan.revisedInRound ?? null,
           body: plan.body,
           createdAt: plan.createdAt,
           updatedAt: plan.updatedAt,
@@ -3122,9 +3224,14 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
     Effect.mapError(toPersistenceSqlError("BoardCardsProjection.plans:query")),
   );
 
-  const writePlanBody = (planId: BoardPlanId, body: string, updatedAt: string) =>
+  const writePlanBody = (
+    planId: BoardPlanId,
+    body: string,
+    updatedAt: string,
+    revisedInRound: number | null,
+  ) =>
     queries
-      .updateBoardPlanBodyRow({ planId, body, updatedAt })
+      .updateBoardPlanBodyRow({ planId, body, updatedAt, revisedInRound })
       .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.planBody:query")));
 
   // Two THREAD signals feed board-owned tables. Nothing upstream is
@@ -3194,6 +3301,7 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
                   locked: 0,
                   planned: 1,
                   sizing: planRow.value.sizing,
+                  revisedInRound: null,
                   body: planRow.value.body,
                 })
                 .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.plans:query")));
@@ -3548,6 +3656,7 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
               planReviewRounds: event.payload.planReviewFinished.rounds,
               planReviewRoundsRun: event.payload.planReviewFinished.roundsRun,
               planReviewConverged: event.payload.planReviewFinished.converged,
+              planReviewFindings: event.payload.planReviewFinished.findings,
             },
             threadId: event.payload.completion.threadId,
             activityIdSuffix: ":plan-review-finished",
@@ -3558,6 +3667,9 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
       // Plan review: on the rail, so the card shows a review happened.
       case "board.plan-review-started":
         yield* upsertStepState(event.payload.state);
+        yield* queries
+          .clearBoardPlanRevisedInRoundRows(event.payload.cardId)
+          .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.plans:query")));
         yield* recordActivity({
           event,
           cardId: event.payload.cardId,
@@ -3570,6 +3682,27 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
           },
           threadId: event.payload.state.threadId,
         });
+        return;
+
+      // T3o: a deferred split approval, on the rail (T3O-105).
+      case "board.split-approval-changed":
+        yield* upsertCard(event.payload.card);
+        yield* recordActivity({
+          event,
+          cardId: event.payload.cardId,
+          kind: "split-approval",
+          payload: {
+            splitApproval: event.payload.change,
+            ...(event.payload.round === undefined ? {} : { planReviewRound: event.payload.round }),
+            ...(event.payload.detail === undefined ? {} : { detail: event.payload.detail }),
+          },
+          threadId: null,
+        });
+        return;
+
+      // T3o: review bookkeeping, step state only (T3O-104).
+      case "board.plan-review-progressed":
+        yield* upsertStepState(event.payload.state);
         return;
 
       case "board.plan-review-stopped":
@@ -3594,6 +3727,9 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
             ...(event.payload.state.planReviewRounds === undefined
               ? {}
               : { planReviewRounds: event.payload.state.planReviewRounds }),
+            ...(event.payload.previousRounds === undefined
+              ? {}
+              : { planReviewRoundsBefore: event.payload.previousRounds }),
           },
           threadId: event.payload.state.threadId,
         });
@@ -3778,6 +3914,7 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
           event.payload.planId,
           event.payload.body,
           event.payload.plan.updatedAt,
+          event.payload.plan.revisedInRound ?? null,
         );
         yield* recordActivity({
           event,
@@ -3977,6 +4114,14 @@ function loadBoardState(
               ? {}
               : { planReviewStartedAt: row.planReviewStartedAt }),
             ...(row.planReviewRounds === null ? {} : { planReviewRounds: row.planReviewRounds }),
+            ...(row.planReviewRound === null ? {} : { planReviewRound: row.planReviewRound }),
+            ...(row.planReviewDoneAt === null ? {} : { planReviewDoneAt: row.planReviewDoneAt }),
+            ...(row.planReviewAwaitingStart === null
+              ? {}
+              : { planReviewAwaitingStart: row.planReviewAwaitingStart }),
+            ...(row.planReviewPolicySent === null
+              ? {}
+              : { planReviewPolicySent: row.planReviewPolicySent }),
             ...(row.reopenedAt === null ? {} : { reopenedAt: row.reopenedAt }),
             ...(row.reopenedPromptAt === null ? {} : { reopenedPromptAt: row.reopenedPromptAt }),
             humanInLoop: row.humanInLoop !== 0,
@@ -4177,6 +4322,7 @@ function boardShellCards(
           scheduledStartAt: row.scheduledStartAt,
           priority: row.priority,
           autoPlanSetting: settingFromInt(row.autoPlanSetting),
+          autoSignOffSetting: settingFromInt(row.autoSignOffSetting),
           autoBuildSetting: settingFromInt(row.autoBuildSetting),
           autoMergeSetting: settingFromInt(row.autoMergeSetting),
           autoPlanPending: row.autoPlanPending !== 0,
@@ -4272,6 +4418,7 @@ function boardArchivedShellCards(
             scheduledStartAt: row.scheduledStartAt,
             priority: row.priority,
             autoPlanSetting: settingFromInt(row.autoPlanSetting),
+            autoSignOffSetting: settingFromInt(row.autoSignOffSetting),
             autoBuildSetting: settingFromInt(row.autoBuildSetting),
             autoMergeSetting: settingFromInt(row.autoMergeSetting),
             autoPlanPending: row.autoPlanPending !== 0,
@@ -4536,15 +4683,25 @@ function makeBoardCardDetailLoader(
             stepError: Option.getOrNull(stepErrorRow)?.lastError ?? null,
             ...(() => {
               const step = Option.getOrNull(stepErrorRow);
-              return step === null ||
-                step.planReviewStartedAt === null ||
+              if (step === null) return {};
+              const awaiting = {
+                ...(step.planReviewAwaitingStart === null || step.planReviewStartedAt !== null
+                  ? {}
+                  : { planReviewAwaitingStart: step.planReviewAwaitingStart }),
+                // T3o: the split dock reads whether planning is parked (T3O-105).
+                ...(isBoardTerminalStepStatus(step.status) ? {} : { liveStepStatus: step.status }),
+              };
+              return step.planReviewStartedAt === null ||
                 step.planReviewRounds === null ||
                 isBoardTerminalStepStatus(step.status)
-                ? {}
+                ? awaiting
                 : {
+                    ...awaiting,
                     planReviewStarted: {
                       startedAt: step.planReviewStartedAt,
                       rounds: step.planReviewRounds,
+                      ...(step.planReviewRound === null ? {} : { round: step.planReviewRound }),
+                      ...(step.planReviewDoneAt === null ? {} : { doneAt: step.planReviewDoneAt }),
                     },
                   };
             })(),

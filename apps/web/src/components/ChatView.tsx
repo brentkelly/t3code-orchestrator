@@ -114,6 +114,8 @@ import { resolveThreadReferenceCopyTarget } from "@t3tools/client-runtime/thread
 import { resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
 import { useAtomValue } from "@effect/atom-react";
 import { type SetStateAction, use, useEffect, useLayoutEffect, useRef, useState } from "react";
+// T3o: the board's split dock slot (T3O-105).
+import type { ReactNode } from "react";
 import { BackgroundThreadContext } from "./chat/backgroundThread";
 import { WorkspaceMutationIdContext } from "./chat/ChatMarkdownMedia";
 import { useLocation, useNavigate } from "@tanstack/react-router";
@@ -407,6 +409,8 @@ type ChatViewProps =
       routeKind: "server";
       draftId?: never;
       chrome?: ChatViewChrome;
+      // T3o: the board's split dock, docked directly above the composer (T3O-105).
+      aboveComposer?: ReactNode;
     }
   | {
       environmentId: EnvironmentId;
@@ -418,6 +422,8 @@ type ChatViewProps =
       routeKind: "draft";
       draftId: DraftId;
       chrome?: ChatViewChrome;
+      // T3o: the board's split dock is server-thread only (T3O-105).
+      aboveComposer?: never;
     };
 
 const DismissedFallbackWindowSchema = Schema.NullOr(Schema.String);
@@ -433,6 +439,8 @@ export default function ChatView(props: ChatViewProps) {
     embedded: parentPanel,
     // T3o: see ChatViewChrome.
     chrome = "full",
+    // T3o: the board's split dock (T3O-105).
+    aboveComposer,
   } = props;
   const embedded = parentPanel !== undefined;
   const canOperateThread = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
@@ -3549,6 +3557,8 @@ export default function ChatView(props: ChatViewProps) {
                     }
                   >
                     <ChildThreadApprovals threadRef={activeThreadRef} />
+                    {/* T3o: inside the measured overlay, so the timeline reserves its height. */}
+                    {aboveComposer}
                     <div className="relative">
                       <ComposerSurface.Shell contextRow={showComposerContextStrip}>
                         <ComposerSurface.Host

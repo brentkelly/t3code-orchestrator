@@ -1,38 +1,59 @@
 /**
- * The split approval gate at the end of the planning thread. Approving creates
- * the children and starts nothing. Planned / Needs planning badges are neutral:
- * they describe content, not a work state.
+ * The split approval gate, the split dock's expanded content. Approving creates the children
+ * and starts nothing. Planned / Needs planning and Revised badges are neutral: they describe
+ * content, not a work state.
  */
 import type { BoardPlan, BoardSplitRecommendation } from "@t3tools/contracts";
-import { CircleAlertIcon, FileCheckIcon } from "lucide-react";
-import { useState } from "react";
-
+import { ChevronDownIcon, CircleAlertIcon, FileCheckIcon } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { Switch } from "../components/ui/switch";
 import { Toggle, ToggleGroup } from "../components/ui/toggle-group";
 import { BoardHint } from "./BoardHint";
-import { boardSplitGateView, type BoardSplitGateSettings } from "./boardSplitGate";
+import type { BoardSplitDockFooter } from "./boardSplitDock";
+import {
+  BOARD_SPLIT_GATE_CHOOSER_CLOSED,
+  boardSplitGateView,
+  type BoardSplitGateChooser,
+  type BoardSplitGateSettings,
+} from "./boardSplitGate";
 
 export function BoardSplitGate(props: {
-  readonly plans: ReadonlyArray<Pick<BoardPlan, "planId" | "title" | "dependsOn" | "planned">>;
+  readonly plans: ReadonlyArray<
+    Pick<BoardPlan, "planId" | "title" | "dependsOn" | "planned" | "revisedInRound">
+  >;
   readonly recommendation: BoardSplitRecommendation;
   readonly ownBranch: string;
   readonly landsOn: string;
   readonly readyLabel: string;
   readonly backlogLabel: string;
   readonly splitRationale: string | null;
+  /** How the split may be approved now (T3O-105). */
+  readonly footer: BoardSplitDockFooter;
+  /** An approval the board dropped or could not apply, in violet. */
+  readonly lostNote: string | null;
+  /** The Auto-build and Merge target to approve with, held by the panel so a remount keeps them. */
+  readonly settings: BoardSplitGateSettings;
+  readonly onSettingsChange: (settings: BoardSplitGateSettings) => void;
+  /** The Approve-after-review chooser, held by the panel for the same reason. */
+  readonly chooser: BoardSplitGateChooser;
+  readonly onChooserChange: (chooser: BoardSplitGateChooser) => void;
   readonly onApprove: (settings: BoardSplitGateSettings) => void;
+  readonly onApproveAfterReview: (settings: BoardSplitGateSettings) => void;
   readonly onAskForChanges: () => void;
+  readonly onCollapse: () => void;
 }) {
   const recommended = props.recommendation;
-  const [settings, setSettings] = useState<BoardSplitGateSettings>(recommended);
+  const { settings, onSettingsChange: setSettings } = props;
+  const { chooser, onChooserChange: setChooser } = props;
+  const choosing = chooser.open;
+  const pick = chooser.pick;
   const view = boardSplitGateView({ ...props, recommendation: recommended, settings });
+  const choice = props.footer.kind === "choice" ? props.footer : null;
   return (
-    <section
-      aria-label="Proposed split"
-      className="flex shrink-0 flex-col overflow-hidden rounded-xl border border-attention/50 bg-card shadow-xs"
-    >
-      <div className="flex items-center gap-2 px-3 pt-2.5 pb-2">
+    // The plan list scrolls first; past its floor the whole gate scrolls, so the footer's
+    // Approve buttons stay reachable at any dock height.
+    <section aria-label="Proposed split" className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+      <div className="flex shrink-0 items-center gap-2 px-3 pt-2.5 pb-2">
         <span className="text-board-13 font-semibold text-foreground">Proposed split</span>
         <span className="truncate text-board-12 text-muted-foreground">
           {view.count} · {view.mix}
@@ -42,14 +63,24 @@ export function BoardSplitGate(props: {
           <CircleAlertIcon className="size-3" />
           Needs your approval
         </span>
+        <BoardHint label="Collapse">
+          <Button aria-label="Collapse" onClick={props.onCollapse} size="icon-xs" variant="ghost">
+            <ChevronDownIcon />
+          </Button>
+        </BoardHint>
       </div>
+      {props.lostNote === null ? null : (
+        <p className="shrink-0 border-t border-attention/40 bg-attention/8 px-3 py-1.5 text-board-12 font-medium text-attention-foreground">
+          {props.lostNote}
+        </p>
+      )}
       {props.splitRationale === null ? null : (
-        <p className="border-t border-border px-3 py-2 text-board-12 text-muted-foreground">
+        <p className="shrink-0 border-t border-border px-3 py-2 text-board-12 text-muted-foreground">
           <span className="font-medium text-foreground">Why split: </span>
           {props.splitRationale}
         </p>
       )}
-      <ul className="max-h-56 overflow-y-auto">
+      <ul className="min-h-16 flex-1 overflow-y-auto">
         {view.rows.map((row) => (
           <li
             className="flex items-center gap-2.5 border-t border-border px-3 py-2"
@@ -66,6 +97,13 @@ export function BoardSplitGate(props: {
                 <span className="text-board-11 text-muted-foreground">{row.after}</span>
               )}
             </span>
+            {row.revised === null ? null : (
+              <BoardHint label={row.revised.hint}>
+                <span className="inline-flex h-5 shrink-0 items-center rounded-md border border-input px-1.5 text-board-11 font-medium text-muted-foreground">
+                  {row.revised.label}
+                </span>
+              </BoardHint>
+            )}
             {row.planned ? (
               <BoardHint label="Comes with an approved plan">
                 <span className="inline-flex h-5 shrink-0 items-center gap-1 rounded-md border border-input bg-card px-1.5 text-board-11 font-medium text-foreground">
@@ -86,7 +124,7 @@ export function BoardSplitGate(props: {
           </li>
         ))}
       </ul>
-      <div className="grid grid-cols-2 gap-4 border-t border-border bg-muted px-3 py-2.5">
+      <div className="grid shrink-0 grid-cols-2 gap-4 border-t border-border bg-muted px-3 py-2.5">
         <label className="flex cursor-pointer items-start gap-2.5">
           <Switch
             aria-label="Auto-build"
@@ -125,22 +163,75 @@ export function BoardSplitGate(props: {
           </ToggleGroup>
         </div>
       </div>
-      <div className="flex items-center gap-2 border-t border-border px-3 py-2.5">
-        <span className="min-w-0 flex-1 text-board-11-5 leading-board-1-45 text-pretty text-muted-foreground">
-          {view.foot}
-        </span>
-        {view.edited ? (
-          <Button onClick={() => setSettings(recommended)} size="sm" variant="ghost-muted">
-            Use recommended
+      {choice !== null && choosing ? (
+        <div className="flex shrink-0 flex-col gap-2 border-t border-border px-3 py-2.5">
+          <span className="text-board-12 text-muted-foreground">{choice.lead}</span>
+          {[
+            { value: "after" as const, option: choice.afterReview },
+            ...(choice.now === null ? [] : [{ value: "now" as const, option: choice.now }]),
+          ].map(({ value, option }) => (
+            <label
+              className="flex cursor-pointer items-start gap-2 rounded-lg border border-input px-2.5 py-2"
+              key={value}
+            >
+              <input
+                checked={pick === value}
+                className="mt-0.5"
+                name="split-approval"
+                onChange={() => setChooser({ ...chooser, pick: value })}
+                type="radio"
+              />
+              <span className="flex min-w-0 flex-col gap-0.5">
+                <span className="text-board-12 font-medium text-foreground">{option.label}</span>
+                <span className="text-board-11-5 leading-board-1-45 text-pretty text-muted-foreground">
+                  {option.note}
+                </span>
+              </span>
+            </label>
+          ))}
+          <div className="flex items-center justify-end gap-2">
+            <Button
+              onClick={() => setChooser(BOARD_SPLIT_GATE_CHOOSER_CLOSED)}
+              size="sm"
+              variant="ghost-muted"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                setChooser(BOARD_SPLIT_GATE_CHOOSER_CLOSED);
+                if (pick === "now" && choice.now !== null) props.onApprove(settings);
+                else props.onApproveAfterReview(settings);
+              }}
+              size="sm"
+            >
+              {pick === "now" && choice.now !== null ? choice.now.label : choice.afterReview.label}
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex shrink-0 items-center gap-2 border-t border-border px-3 py-2.5">
+          <span className="min-w-0 flex-1 text-board-11-5 leading-board-1-45 text-pretty text-muted-foreground">
+            {view.foot}
+          </span>
+          {view.edited ? (
+            <Button onClick={() => setSettings(recommended)} size="sm" variant="ghost-muted">
+              Use recommended
+            </Button>
+          ) : null}
+          <Button onClick={props.onAskForChanges} size="sm" variant="outline">
+            Ask for changes
           </Button>
-        ) : null}
-        <Button onClick={props.onAskForChanges} size="sm" variant="outline">
-          Ask for changes
-        </Button>
-        <Button onClick={() => props.onApprove(settings)} size="sm">
-          Approve split
-        </Button>
-      </div>
+          <Button
+            onClick={() =>
+              choice === null ? props.onApprove(settings) : setChooser({ ...chooser, open: true })
+            }
+            size="sm"
+          >
+            {choice === null ? "Approve split" : "Approve split…"}
+          </Button>
+        </div>
+      )}
     </section>
   );
 }

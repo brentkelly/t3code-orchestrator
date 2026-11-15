@@ -4,7 +4,7 @@
  * publish on the single worker fiber after commit, in order, which `streamBoardEvents` relies on
  * to hand over from the durable log to the live tail without a gap or duplicate.
  */
-import { type CommandId, type OrchestrationClientOrigin } from "@t3tools/contracts";
+import { boardPlanId, type CommandId, type OrchestrationClientOrigin } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -25,6 +25,7 @@ import { makeBoardEventStore } from "./boardEventStore.ts";
 import {
   boardCommandAggregateRef,
   boardCommandNeedsBrief,
+  boardCommandNeedsPlanBodies,
   boardCommandNeedsProjects,
   boardCommandNeedsThread,
   boardDecidedEvents,
@@ -112,7 +113,19 @@ export const loadDecisionContext = Effect.fn("BoardEngine.loadDecisionContext")(
         ),
       }
     : {};
-  return { ...brief, ...projects, ...thread } satisfies BoardDecisionContext;
+  const planBodies = boardCommandNeedsPlanBodies(command)
+    ? {
+        planBodies: new Map(
+          (yield* Effect.forEach(command.plans, (plan) => {
+            const planId = boardPlanId(command.cardId, plan.key);
+            return queries
+              .boardPlanBody(planId)
+              .pipe(Effect.map((body) => [String(planId), body] as const));
+          })).flatMap(([planId, body]) => (body === null ? [] : [[planId, body] as const])),
+        ),
+      }
+    : {};
+  return { ...brief, ...projects, ...thread, ...planBodies } satisfies BoardDecisionContext;
 });
 
 const makeBoardEngine = Effect.gen(function* () {

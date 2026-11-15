@@ -6,8 +6,17 @@ per part. Nothing is created until you approve it. While the proposal waits, the
 
 ## Reviewing the proposal
 
-Open the card. The proposal sits at the end of its planning thread, and **Review split** in the
-card's actions takes you there. Each child shows its dependencies and one of two badges:
+Open the card. The proposal docks just above the planning thread's composer, so the conversation
+stays readable. **Review split** in the card's actions opens and closes it. Collapsed, it is one row
+(**Proposed split · 7 cards · 2 revised · Needs approval**); expanded, its card list scrolls inside
+it, and you can drag its top edge to make it taller or shorter. Each card remembers whether you
+collapsed it and how tall you made it, in this browser.
+
+While a plan review is running the dock starts collapsed, so you can follow the review. It opens again
+by itself when the review finishes or the split changes, unless you collapsed it since.
+
+Each child shows its dependencies, **Revised r2** when a review round changed its plan, and one of
+two badges:
 
 - **Planned**: the agent wrote a full implementation plan. The child lands in Ready, ready to build.
 - **Needs planning**: the agent wrote a brief only. The child lands in Backlog and gets its own
@@ -34,6 +43,22 @@ branch usually inherits.
 stays in Planning until you start it. **Ask for changes** puts a reply in the planning thread's
 composer, so you can tell the agent what to change and it can propose again.
 
-A card with **Auto-plan** and **Auto-build** both on skips this gate: its split is approved with the
-card's own automation settings rather than the agent's recommendation, and the new group starts. With
-Auto-plan alone the split waits here for you. See [Automation](board-auto-plan.md).
+A split always waits for a person, even when every automation gate is on. See
+[Automation](board-auto-plan.md).
+
+## Approving during a plan review
+
+Approving creates the cards from the plans as they are, which would end a running review. So while
+one runs, **Approve split…** offers **Approve after review** instead: you approve now, with the
+settings you chose, and the cards are created from the final plans when the review finishes. The
+dock turns into a bar, **Split approved · N cards created after review**, and the planning
+agent is told it can finish without waiting for you.
+
+**Undo** on the bar takes the approval back at any time before the cards are created; the split then
+waits for you as usual. If a later review round adds, removes, merges, renames or reorders a card,
+or changes which cards depend on which, the approval is dropped and the dock asks you to approve
+again. Edits to a plan's text keep it.
+
+When planning is paused or waiting on a question, you can choose either: approve after review, or
+**Approve now**, which ends the review and creates the cards straight away. If planning fails, an
+approval stays waiting and fires when planning completes.

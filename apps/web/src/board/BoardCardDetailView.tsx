@@ -59,6 +59,7 @@ import {
   isLiveBoardCardThreadLink,
   type BoardProjectExecutionConfig,
   boardStalledWords,
+  boardSplitFingerprint,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { Debouncer } from "@tanstack/react-pacer";
@@ -180,8 +181,27 @@ import { BoardHint } from "./BoardHint";
 import { boardDecisionFollowUp, boardDecisionLogView } from "./boardDecisionLog";
 import { BOARD_DEFERRED_STAGE } from "./boardScope";
 import { BoardSplitGate } from "./BoardSplitGate";
+import { BoardSplitDock } from "./BoardSplitDock";
+import {
+  boardSplitApprovalLostFromActivity,
+  boardSplitDockApprovedBar,
+  boardSplitDockChoice,
+  boardSplitDockExpanded,
+  boardSplitDockFooter,
+  boardSplitDockLostNote,
+  boardSplitDockSummary,
+  readBoardSplitDockStored,
+  writeBoardSplitDockStored,
+  type BoardSplitDockInput,
+  type BoardSplitDockStored,
+} from "./boardSplitDock";
 import { boardGroupUsesCardActions } from "./boardGroups";
-import { BOARD_SPLIT_CHANGE_REQUEST_PREFILL, type BoardSplitGateSettings } from "./boardSplitGate";
+import {
+  BOARD_SPLIT_CHANGE_REQUEST_PREFILL,
+  BOARD_SPLIT_GATE_CHOOSER_CLOSED,
+  type BoardSplitGateChooser,
+  type BoardSplitGateSettings,
+} from "./boardSplitGate";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { threadWorkerOpensOn, type BoardThreadWorker } from "./workers/threadWorker";
 import {
@@ -471,6 +491,10 @@ export interface BoardCardDetailViewProps {
   /** The Plan review section (plan review); null where it is hidden. */
   readonly planReview?: BoardCardPlanReviewView | null | undefined;
   readonly onSetPlanReview?: ((next: BoardCardPlanReview) => void) | undefined;
+  /** Start review on an armed plan review. */
+  readonly onStartPlanReview?: (() => void) | undefined;
+  /** When the plan was last posted, for "Plan posted <time>". */
+  readonly planPostedAt?: string | null | undefined;
   readonly labelsById: ReadonlyMap<BoardLabelId, BoardLabel>;
   /** Project title, or null when the project is not on disk (archived card). */
   readonly projectName: string | null;
@@ -657,6 +681,10 @@ export interface BoardCardDetailViewProps {
   readonly canApproveSplit: boolean;
   readonly splitGate: BoardSplitGateContext | null;
   readonly onApproveSplit: (settings: BoardSplitGateSettings) => void;
+  /** T3o: approve the split to take effect when the plan review finishes, and its Undo
+      (T3O-105). */
+  readonly onApproveSplitAfterReview: (settings: BoardSplitGateSettings) => void;
+  readonly onUndoSplitApproval: () => void;
   readonly onLinkThread: (threadId: ThreadId, role: string) => void;
   readonly onUnlinkThread: (threadId: ThreadId) => void;
   /** The parent this card is a child of, for the identity row's
@@ -1214,22 +1242,42 @@ function QueueSection({ props }: { readonly props: BoardCardDetailViewProps }) {
   );
 }
 
-/** How long a mid-review rounds change waits for another click before it is sent. */
-const PLAN_REVIEW_ROUNDS_SETTLE_MS = 800;
+/** How long a mid-review rounds change waits for another click before it commits, so a burst
+    of clicks lands as one change on the activity rail. */
+const PLAN_REVIEW_ROUNDS_SETTLE_MS = 1500;
+
+/** One bar segment per target round: done green, running blue, to come neutral. */
+function PlanReviewProgress({ segments }: { readonly segments: ReadonlyArray<string> }) {
+  return (
+    <div aria-hidden className="flex gap-0.5" data-board-plan-review-progress>
+      {segments.map((segment, index) => (
+        <span
+          className={cn(
+            "h-1 flex-1 rounded-full",
+            segment === "done" ? "bg-success" : segment === "running" ? "bg-info" : "bg-muted",
+          )}
+          data-segment={segment}
+          // oxlint-disable-next-line react/no-array-index-key -- segments are positional rounds
+          key={index}
+        />
+      ))}
+    </div>
+  );
+}
 
 /**
- * Plan review: an adversarial review of the plan once it is posted,
- * run by the planning agent with subagents. While one runs, a rounds change
- * tells the agent the new total, and turning the switch off stops the review.
+ * Plan review: an adversarial review of the plan once it is posted, run by the planning agent
+ * with subagents. Its rounds are a target the agent reads at each round; a review turned on
+ * after the plan was posted waits for Start review.
  */
 function PlanReviewSection({ props }: { readonly props: BoardCardDetailViewProps }) {
   const view = props.planReview;
   const onSet = props.onSetPlanReview;
-  // Mid-review every commit sends the planning agent a turn, so a run of
-  // stepper clicks lands as one change once it settles.
   const [pendingRounds, setPendingRounds] = useState<number | null>(null);
-  // The settled commit is built from the view as it is when the timer fires:
-  // a review stopped elsewhere in the meantime must not be turned back on.
+  // What a mid-review rounds change moved the target from, for the note under the stepper.
+  const [targetChange, setTargetChange] = useState<{ from: number; to: number } | null>(null);
+  // Built from the view as it is when the timer fires: a review stopped elsewhere in the
+  // meantime must not be turned back on.
   const commitRounds = useStableCallback((next: number) => {
     setPendingRounds(null);
     if (view == null || onSet === undefined || !view.enabled || !view.inProgress) return;
@@ -1242,6 +1290,16 @@ function PlanReviewSection({ props }: { readonly props: BoardCardDetailViewProps
   useEffect(() => () => roundsCommit.flush(), [roundsCommit]);
   if (view == null || onSet === undefined) return null;
   const rounds = pendingRounds ?? view.rounds;
+  if (view.phase === "reviewed") {
+    return (
+      <div className="flex items-center gap-1.5 border-t border-border p-3.5">
+        <SectionHeading>Plan review</SectionHeading>
+        <span className="flex-1" />
+        <span className="text-board-11 font-medium text-foreground">{view.summary}</span>
+      </div>
+    );
+  }
+  const shownChange = view.inProgress ? targetChange : null;
   return (
     <div className="flex flex-col gap-2 border-t border-border p-3.5">
       <div className="flex items-center gap-1.5">
@@ -1249,6 +1307,7 @@ function PlanReviewSection({ props }: { readonly props: BoardCardDetailViewProps
         <span className="flex-1" />
         <span className="text-board-11 font-medium text-foreground">{view.summary}</span>
       </div>
+      {view.progress === null ? null : <PlanReviewProgress segments={view.progress} />}
       {/* A div, not a label: the switch is a button, as in the auto-start row. */}
       <div className="flex items-start gap-2.5 text-board-12-5">
         <Switch
@@ -1258,6 +1317,7 @@ function PlanReviewSection({ props }: { readonly props: BoardCardDetailViewProps
           onCheckedChange={(next) => {
             roundsCommit.cancel();
             setPendingRounds(null);
+            setTargetChange(null);
             onSet(nextBoardCardPlanReview({ ...view, rounds }, { enabled: next }));
           }}
         />
@@ -1266,28 +1326,90 @@ function PlanReviewSection({ props }: { readonly props: BoardCardDetailViewProps
           <span className="text-board-11-5 leading-board-1-45 text-muted-foreground">
             {view.note}
           </span>
+          {view.provenance === null ? null : (
+            <span className="text-board-11 text-muted-foreground" data-board-plan-review-provenance>
+              {view.provenance}
+            </span>
+          )}
         </span>
       </div>
+      {view.enabled && view.phase !== "waiting-for-you" ? (
+        <div className="flex flex-col gap-1 pl-9.5">
+          <div className="flex items-center gap-2.5">
+            <span className="flex-1 text-board-12 font-medium text-foreground">Rounds</span>
+            <NumberStepper
+              ariaLabel="plan review rounds"
+              max={BOARD_PLAN_REVIEW_ROUNDS_MAX}
+              min={BOARD_PLAN_REVIEW_ROUNDS_MIN}
+              onChange={(next) => {
+                const change = nextBoardCardPlanReview(view, { rounds: next });
+                if (!view.inProgress) {
+                  roundsCommit.cancel();
+                  setPendingRounds(null);
+                  onSet(change);
+                  return;
+                }
+                setTargetChange((current) => ({
+                  from: current?.from ?? view.rounds,
+                  to: change.rounds,
+                }));
+                setPendingRounds(change.rounds);
+                roundsCommit.maybeExecute(change.rounds);
+              }}
+              value={rounds}
+            />
+          </div>
+          {shownChange === null || shownChange.from === shownChange.to ? null : (
+            <span className="text-board-11 text-muted-foreground">
+              Target changed from {shownChange.from} to {shownChange.to}. The agent picks it up at
+              its next round.
+            </span>
+          )}
+        </div>
+      ) : null}
       {view.enabled ? (
-        <div className="flex items-center gap-2.5 pl-9.5">
-          <span className="flex-1 text-board-12 font-medium text-foreground">Rounds</span>
-          <NumberStepper
-            ariaLabel="plan review rounds"
-            max={BOARD_PLAN_REVIEW_ROUNDS_MAX}
-            min={BOARD_PLAN_REVIEW_ROUNDS_MIN}
-            onChange={(next) => {
-              const change = nextBoardCardPlanReview(view, { rounds: next });
-              if (!view.inProgress) {
-                roundsCommit.cancel();
-                setPendingRounds(null);
-                onSet(change);
-                return;
-              }
-              setPendingRounds(change.rounds);
-              roundsCommit.maybeExecute(change.rounds);
-            }}
-            value={rounds}
+        <div className="flex items-start gap-2.5 pl-9.5 text-board-12-5">
+          <Switch
+            aria-label="Run plan review unattended"
+            checked={view.unattended}
+            className="mt-0.5 shrink-0"
+            onCheckedChange={(next) =>
+              onSet(nextBoardCardPlanReview({ ...view, rounds }, { unattended: next }))
+            }
+            size="sm"
           />
+          <span className="flex min-w-0 flex-col gap-0.5">
+            <span className="font-medium text-foreground">Unattended</span>
+            <span className="text-board-11-5 leading-board-1-45 text-muted-foreground">
+              {view.unattendedNote}
+            </span>
+            {view.signOffNote === null ? null : (
+              <span className="text-board-11-5 leading-board-1-45 text-muted-foreground">
+                {view.signOffNote}
+              </span>
+            )}
+          </span>
+        </div>
+      ) : null}
+      {view.phase === "ready-to-start" && props.onStartPlanReview !== undefined ? (
+        <div className="flex flex-col gap-1 pl-9.5">
+          <Button
+            className="self-start"
+            data-board-start-plan-review
+            onClick={() => {
+              roundsCommit.flush();
+              props.onStartPlanReview?.();
+            }}
+            size="compact"
+          >
+            Start review · {rounds === 1 ? "1 round" : `${rounds} rounds`}
+          </Button>
+          <span className="text-board-11 text-muted-foreground">
+            {props.planPostedAt == null
+              ? ""
+              : `Plan posted ${formatRelativeTimeLabel(props.planPostedAt)}. `}
+            Nothing is sent until you start.
+          </span>
         </div>
       ) : null}
     </div>
@@ -1798,7 +1920,7 @@ function ActionsSection({
       review controls, plus Open board. Its stage is derived, so no hand move. */
   readonly group?: BoardCardDetailGroup | null;
   readonly unmet: ReadonlyArray<BoardDetailDependency>;
-  /** Opens the split gate's pane. */
+  /** Toggles the split dock, bringing the thread pane forward. */
   readonly onReviewSplit: () => void;
 }) {
   const { card } = props.detail;
@@ -2819,6 +2941,66 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
     setSelectedThreadId(threadId);
     if (activePane === "planning") setPane("thread");
   };
+  // T3o: the split dock's per-viewer state, read again when the panel moves to another card
+  // (T3O-105).
+  const [splitDockState, setSplitDockState] = useState(() => ({
+    cardId: card.id,
+    stored: readBoardSplitDockStored(card.id),
+  }));
+  let splitDockStored = splitDockState.stored;
+  if (splitDockState.cardId !== card.id) {
+    // Adjusted during render, so storage is read once per card switch, not every render.
+    splitDockStored = readBoardSplitDockStored(card.id);
+    setSplitDockState({ cardId: card.id, stored: splitDockStored });
+  }
+  const storeSplitDock = (stored: BoardSplitDockStored) => {
+    writeBoardSplitDockStored(card.id, stored);
+    setSplitDockState({ cardId: card.id, stored });
+  };
+  const splitDockInput: BoardSplitDockInput = {
+    plans: props.detail.plans,
+    review: props.detail.planReviewStarted ?? null,
+    stepStatus:
+      planStageId !== null && card.stage === planStageId
+        ? (props.detail.liveStepStatus ?? null)
+        : null,
+    pendingApproval: card.pendingSplitApproval ?? null,
+    // Only the dock reads it; a card with no split to approve skips the walk.
+    approvalLost: props.canApproveSplit
+      ? boardSplitApprovalLostFromActivity(props.detail.activity)
+      : null,
+  };
+  // The gate's unsaved Auto-build, Merge target and chooser state live here, not in the gate: it
+  // renders inside the per-thread chat and remounts on a tab switch, a chat load or a collapse.
+  // A changed split or recommendation is a new gate; a plan body edit keeps the edits.
+  const splitGateKey =
+    props.splitGate === null
+      ? null
+      : `${card.id}:${boardSplitFingerprint(props.detail.plans)}:${JSON.stringify(props.splitGate.recommendation)}`;
+  const [splitGateEdit, setSplitGateEdit] = useState<{
+    readonly key: string;
+    readonly settings: BoardSplitGateSettings;
+    readonly chooser: BoardSplitGateChooser;
+  } | null>(null);
+  const splitGateLive =
+    splitGateEdit !== null && splitGateEdit.key === splitGateKey ? splitGateEdit : null;
+  const splitDockExpanded = boardSplitDockExpanded(splitDockInput, splitDockStored);
+  const setSplitDockExpanded = (expanded: boolean) =>
+    storeSplitDock(boardSplitDockChoice(splitDockInput, splitDockStored, expanded));
+  // Review split toggles the dock, and brings the thread pane forward when another is open.
+  // While an approval is pending the dock shows only its green bar, so there is nothing to toggle.
+  const reviewSplit = () => {
+    if (splitDockInput.pendingApproval !== null) {
+      if (activePane !== "thread") setPane("thread");
+      return;
+    }
+    if (activePane !== "thread") {
+      setPane("thread");
+      if (!splitDockExpanded) setSplitDockExpanded(true);
+      return;
+    }
+    setSplitDockExpanded(!splitDockExpanded);
+  };
   // Derived only while the Summary pane is showing: the panel re-renders on
   // every thread-link or detail push, and the walk over step completions is
   // wasted on any other pane.
@@ -3344,7 +3526,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 plans={props.detail.plans}
                 childCards={props.detail.children}
                 stages={props.stages}
-                onReviewSplit={props.canApproveSplit ? () => setPane("thread") : undefined}
+                onReviewSplit={props.canApproveSplit ? reviewSplit : undefined}
                 onOpenChild={props.onOpenChildInSubBoard}
               />
             </Suspense>
@@ -3371,35 +3553,67 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 onQueueForceStart={props.onQueueForceStart}
                 footer={
                   props.canApproveSplit && props.splitGate !== null ? (
-                    <BoardSplitGate
-                      // A re-proposal is a new gate: start from its own
-                      // recommendation rather than the last one's edits.
-                      key={props.detail.plans.map((plan) => plan.planId + plan.updatedAt).join()}
-                      {...props.splitGate}
-                      onApprove={props.onApproveSplit}
-                      onAskForChanges={() => {
-                        // The planning thread, not whichever tab is open: that
-                        // conversation proposed the split and must revise it.
-                        const planningThread = initialBoardCardThreadId(
-                          props.stages,
-                          card.stage,
-                          card.threadLinks,
-                        );
-                        const link = props.threadLinks.find(
-                          (candidate) => candidate.threadId === planningThread,
-                        );
-                        if (link === undefined || link.tombstoned) return;
-                        selectThread(link.threadId);
-                        useComposerDraftStore
-                          .getState()
-                          .setPrompt(
-                            scopeThreadRef(link.worker.environmentId, link.threadId),
-                            BOARD_SPLIT_CHANGE_REQUEST_PREFILL,
+                    <BoardSplitDock
+                      approvedBar={boardSplitDockApprovedBar(splitDockInput)}
+                      expanded={splitDockExpanded}
+                      onExpandedChange={setSplitDockExpanded}
+                      onResize={(height) => storeSplitDock({ ...splitDockStored, height })}
+                      onUndo={props.onUndoSplitApproval}
+                      storedHeight={splitDockStored.height}
+                      summary={boardSplitDockSummary(splitDockInput)}
+                    >
+                      <BoardSplitGate
+                        key={splitGateKey}
+                        {...props.splitGate}
+                        settings={splitGateLive?.settings ?? props.splitGate.recommendation}
+                        onSettingsChange={(settings) =>
+                          splitGateKey === null
+                            ? undefined
+                            : setSplitGateEdit({
+                                key: splitGateKey,
+                                settings,
+                                chooser: splitGateLive?.chooser ?? BOARD_SPLIT_GATE_CHOOSER_CLOSED,
+                              })
+                        }
+                        chooser={splitGateLive?.chooser ?? BOARD_SPLIT_GATE_CHOOSER_CLOSED}
+                        onChooserChange={(chooser) =>
+                          splitGateKey === null || props.splitGate === null
+                            ? undefined
+                            : setSplitGateEdit({
+                                key: splitGateKey,
+                                settings: splitGateLive?.settings ?? props.splitGate.recommendation,
+                                chooser,
+                              })
+                        }
+                        footer={boardSplitDockFooter(splitDockInput)}
+                        lostNote={boardSplitDockLostNote(splitDockInput.approvalLost)}
+                        onApprove={props.onApproveSplit}
+                        onApproveAfterReview={props.onApproveSplitAfterReview}
+                        onCollapse={() => setSplitDockExpanded(false)}
+                        onAskForChanges={() => {
+                          // The planning thread, not whichever tab is open: that
+                          // conversation proposed the split and must revise it.
+                          const planningThread = initialBoardCardThreadId(
+                            props.stages,
+                            card.stage,
+                            card.threadLinks,
                           );
-                      }}
-                      plans={props.detail.plans}
-                      splitRationale={card.splitRationale}
-                    />
+                          const link = props.threadLinks.find(
+                            (candidate) => candidate.threadId === planningThread,
+                          );
+                          if (link === undefined || link.tombstoned) return;
+                          selectThread(link.threadId);
+                          useComposerDraftStore
+                            .getState()
+                            .setPrompt(
+                              scopeThreadRef(link.worker.environmentId, link.threadId),
+                              BOARD_SPLIT_CHANGE_REQUEST_PREFILL,
+                            );
+                        }}
+                        plans={props.detail.plans}
+                        splitRationale={card.splitRationale}
+                      />
+                    </BoardSplitDock>
                   ) : null
                 }
               />
@@ -3411,7 +3625,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
             {group === null || groupUsesCardActions ? (
               <ActionsSection
                 group={group}
-                onReviewSplit={() => setPane("thread")}
+                onReviewSplit={reviewSplit}
                 props={props}
                 unmet={unmet}
               />
@@ -3513,7 +3727,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
               {group === null || groupUsesCardActions ? (
                 <ActionsSection
                   group={group}
-                  onReviewSplit={() => setPane("thread")}
+                  onReviewSplit={reviewSplit}
                   props={props}
                   unmet={unmet}
                 />

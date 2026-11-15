@@ -54,14 +54,14 @@ const BOARD_AUTO_PLAN_REOPENED_NOTE =
 const reopenedSuffix = (options: { readonly reopened?: boolean } | undefined) =>
   options?.reopened === true ? ` ${BOARD_AUTO_PLAN_REOPENED_NOTE}` : "";
 
-/** The full auto-plan instruction: with Auto-build on the plan is approved and
-    built without a human; without it the plan waits for the user's approval. */
+/** The full auto-plan instruction: with Auto sign-off on a single plan is approved without a
+    human; without it the plan waits for the user's approval. A split always waits. */
 export function boardAutoPlanInstruction(
-  autoBuild: boolean,
+  autoSignOff: boolean,
   options?: { readonly reopened?: boolean },
 ): string {
-  const base = autoBuild
-    ? `${BOARD_AUTO_PLAN_INSTRUCTION} Auto-build is on: the plan you propose is approved and built automatically, unclear decisions included, so make each call the way you would defend it in review.`
+  const base = autoSignOff
+    ? `${BOARD_AUTO_PLAN_INSTRUCTION} Auto sign-off is on: a single plan you propose is approved automatically, unclear decisions included, so make each call the way you would defend it in review. A proposed split always waits for the user's approval.`
     : `${BOARD_AUTO_PLAN_INSTRUCTION} Your plan will be presented to the user for approval, so make each call the way you would defend it in review.`;
   return `${base}${reopenedSuffix(options)}`;
 }
@@ -115,8 +115,8 @@ export interface ComposeStepPromptStep {
   readonly humanInLoop: boolean;
   /** An auto-planned planning run. */
   readonly autoPlan?: boolean;
-  /** With `autoPlan`: Auto-build is on, so the plan is approved and built. */
-  readonly autoBuild?: boolean;
+  /** With `autoPlan`: Auto sign-off is on, so a single plan is approved without a human. */
+  readonly autoSignOff?: boolean;
   /** The plan review this step is running (plan review): set once a
       review has started, so a respawned or nudged thread resumes it. */
   readonly planReview?: { readonly instructions: string };
@@ -247,8 +247,8 @@ export function boardStepPostamble(input: {
   readonly step: Pick<ComposeStepPromptStep, "stepId" | "stepLabel">;
   /** An auto-planned planning run. */
   readonly autoPlan?: boolean;
-  /** With `autoPlan`: the plan is approved and built without a human. */
-  readonly autoBuild?: boolean;
+  /** With `autoPlan`: a single plan is approved without a human. */
+  readonly autoSignOff?: boolean;
 }): string {
   const { step } = input;
   const call = completionCall(step);
@@ -275,7 +275,7 @@ export function boardStepPostamble(input: {
   const deliverable =
     input.role === "plan"
       ? input.autoPlan === true
-        ? [BOARD_ENVELOPE_PLAN_DELIVERABLE, boardAutoPlanInstruction(input.autoBuild === true)]
+        ? [BOARD_ENVELOPE_PLAN_DELIVERABLE, boardAutoPlanInstruction(input.autoSignOff === true)]
         : [BOARD_ENVELOPE_PLAN_DELIVERABLE]
       : input.role === "build"
         ? [BOARD_ENVELOPE_BUILD_DELIVERABLE]
@@ -295,7 +295,7 @@ export function composeStepPrompt(input: ComposeStepPromptInput): string {
     role: input.role,
     step: input.step,
     ...(input.step.autoPlan === true ? { autoPlan: true } : {}),
-    ...(input.step.autoBuild === true ? { autoBuild: true } : {}),
+    ...(input.step.autoSignOff === true ? { autoSignOff: true } : {}),
   });
   // The build draft line rides on the body, so an empty-body
   // re-entry stays the clean conversational thread it is.
@@ -336,11 +336,12 @@ export function planReviewInstructionsClosing(input: {
   return [
     "Board rules for the plan review. These come after the text above and take precedence over it:",
     `- ${input.rounds} is a maximum. Stop as soon as a round produces no new substantive finding, and record that call (rounds run, converged or not) with board_record_decisions.`,
+    "- If the board_plan_review_round tool is available, call it with { round } before each round, and with { finished: true } before summarising (including when you converge early). Its returned targetRounds overrides any round count above, since the human can change the target between rounds; if it returns continue: false, stop reviewing, summarise, and finish. Otherwise run the stated rounds.",
     "- Run the reviewers in the foreground and do not end your turn while waiting for them.",
     "- If your runtime cannot spawn subagents, run each reviewer pass yourself in turn, and say so in the thread.",
     "- Post each reviewer's findings in the thread, and record any new decisions with board_record_decisions.",
     "- Patch plan changes in place with board_edit_plan. Re-propose with board_propose_plans only if titles, summaries or the set of plans changed; if you only edited bodies, do not re-propose (re-proposing does not start another review). If board_edit_plan or board_propose_plans refuses because the plans are frozen, stop reviewing and summarise.",
-    "- When you call board_complete_step, add `planReview: { roundsRun, converged }` to the payload.",
+    "- When you call board_complete_step, add `planReview: { roundsRun, converged, findings }` to the payload, where findings is the number of substantive findings across all rounds.",
     `- ${finish}`,
     ...(input.humanInLoop
       ? [
@@ -374,12 +375,6 @@ export function composePlanReviewInstructions(input: {
     posted (plan review). The review instructions follow it. */
 export const BOARD_PLAN_REVIEW_LATE_START_LEAD =
   "Plan review was turned on after you posted the plan. Review the plan you proposed now, as below.";
-
-/** Leads the turn sent when a human changes a running plan review's rounds.
-    Only the agent knows how many it has run, so it decides. */
-export function boardPlanReviewRoundsChangedLead(rounds: number): string {
-  return `The plan review limit is now ${rounds} ${rounds === 1 ? "round" : "rounds"} in total. If you have already run ${rounds} or more, stop reviewing: summarise what the reviews found, patch any plan changes in place with board_edit_plan (re-propose with board_propose_plans only if titles, summaries or the set of plans changed; if you only edited bodies, do not re-propose), and finish as normal. Otherwise continue until you reach ${rounds}, as below.`;
-}
 
 /** The turn sent into a planning thread when a human turns its running plan
     review off (plan review). */

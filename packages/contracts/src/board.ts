@@ -990,6 +990,11 @@ export function clampBoardPlanReviewRounds(rounds: number): number {
 export const BoardCardPlanReview = Schema.Struct({
   enabled: Schema.Boolean,
   rounds: BoardPlanReviewRounds,
+  /** The review runs like Auto-plan: the agent asks nothing, and Auto sign-off decides
+      whether the reviewed plan is approved. Absent is off, as on every older setting. */
+  unattended: Schema.optionalKey(Schema.Boolean),
+  /** Stamped from the new-card defaults at creation; cleared by the first human edit. */
+  source: Schema.optionalKey(Schema.Literal("default")),
 });
 export type BoardCardPlanReview = typeof BoardCardPlanReview.Type;
 
@@ -999,14 +1004,17 @@ export const BoardPlanReviewFinished = Schema.Struct({
   rounds: BoardPlanReviewRounds,
   roundsRun: Schema.NullOr(NonNegativeInt),
   converged: Schema.NullOr(Schema.Boolean),
+  /** Substantive findings across the review; null when not reported or on older events. */
+  findings: Schema.NullOr(NonNegativeInt).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
 });
 export type BoardPlanReviewFinished = typeof BoardPlanReviewFinished.Type;
 
-/** Read `planReview: { roundsRun, converged }` off a completion's JSON payload,
+/** Read `planReview: { roundsRun, converged, findings }` off a completion's JSON payload,
     tolerating anything the agent sent. */
 export function readBoardPlanReviewReport(payload: string | null): {
   readonly roundsRun: number | null;
   readonly converged: boolean | null;
+  readonly findings: number | null;
 } {
   let parsed: unknown = null;
   try {
@@ -1018,17 +1026,19 @@ export function readBoardPlanReviewReport(payload: string | null): {
     typeof parsed === "object" && parsed !== null
       ? (parsed as { readonly planReview?: unknown }).planReview
       : undefined;
-  if (typeof report !== "object" || report === null) return { roundsRun: null, converged: null };
-  const { roundsRun, converged } = report as {
+  if (typeof report !== "object" || report === null)
+    return { roundsRun: null, converged: null, findings: null };
+  const { roundsRun, converged, findings } = report as {
     readonly roundsRun?: unknown;
     readonly converged?: unknown;
+    readonly findings?: unknown;
   };
+  const count = (value: unknown) =>
+    typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : null;
   return {
-    roundsRun:
-      typeof roundsRun === "number" && Number.isInteger(roundsRun) && roundsRun >= 0
-        ? roundsRun
-        : null,
+    roundsRun: count(roundsRun),
     converged: typeof converged === "boolean" ? converged : null,
+    findings: count(findings),
   };
 }
 
@@ -1206,6 +1216,9 @@ export const BoardCardGroup = Schema.Struct({
   autoMerge: Schema.Boolean,
   /** Children are planned by the agent, unattended. */
   autoPlan: Schema.Boolean,
+  /** An auto-planned child's single plan is approved without a human. Decodes to false on
+      group objects written before the sign-off gate. */
+  autoSignOff: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /** The group has begun: a human (or the group cascade) moved it, or one of
       its children, into the build stage. A child's own Auto-build start does
       not count. */
@@ -1230,6 +1243,22 @@ export const BoardSplitRecommendation = Schema.Struct({
   mergeTarget: BoardCardGroupTarget,
 });
 export type BoardSplitRecommendation = typeof BoardSplitRecommendation.Type;
+
+/**
+ * T3o: a split a human approved during a plan review, fired when the planning step completes
+ * (T3O-105). `fingerprint` is `boardSplitFingerprint` of the plans approved: a re-proposal that
+ * changes it drops the approval.
+ */
+export const BoardPendingSplitApproval = Schema.Struct({
+  autoBuild: Schema.Boolean,
+  mergeTarget: BoardCardGroupTarget,
+  autoPlan: Schema.optionalKey(Schema.Boolean),
+  autoSignOff: Schema.optionalKey(Schema.Boolean),
+  autoMerge: Schema.optionalKey(Schema.Boolean),
+  fingerprint: Schema.String,
+  approvedAt: IsoDateTime,
+});
+export type BoardPendingSplitApproval = typeof BoardPendingSplitApproval.Type;
 
 /**
  * Marks the current planning run unattended and stays after it ends; `endedAt` marks it spent.
@@ -1262,8 +1291,8 @@ export type BoardCardDecisionMaker = typeof BoardCardDecisionMaker.Type;
 
 /** Caps on what one decision may carry: the log rides every detail frame. */
 const BOARD_DECISION_QUESTION_MAX_LENGTH = 300;
-export const BOARD_DECISION_TEXT_MAX_LENGTH = 600;
-export const BOARD_DECISION_REASON_MAX_LENGTH = 400;
+const BOARD_DECISION_TEXT_MAX_LENGTH = 600;
+const BOARD_DECISION_REASON_MAX_LENGTH = 400;
 export const BOARD_DECISIONS_PER_CALL_MAX = 40;
 
 export const BoardCardDecisionInput = Schema.Struct({
@@ -2126,6 +2155,9 @@ export const BoardCard = Schema.Struct({
       proposals; absent on older ones, which read the fallback rules
       (`boardSplitRecommendationOf`). Migration 052's NULL column. */
   splitRecommendation: Schema.optionalKey(BoardSplitRecommendation),
+  /** T3o: a split approved to take effect when the plan review finishes (T3O-105).
+      Migration 078's NULL column. */
+  pendingSplitApproval: Schema.optionalKey(BoardPendingSplitApproval),
   /** Local branch override, or null to follow the project default resolved LIVE, so cards
       follow a moved default instead of pinning a dead branch. Never `origin/` or `refs/`
       qualified (`isBoardCardBaseBranchShape`). Read via `resolveBoardCardEffectiveBase`: a
@@ -2143,6 +2175,9 @@ export const BoardCard = Schema.Struct({
       effective value also depends on the group and the board-wide auto-merge. On a group card
       `autoMergeSetting` is the group's own merge. */
   autoPlanSetting: Schema.NullOr(Schema.Boolean).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  autoSignOffSetting: Schema.NullOr(Schema.Boolean).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   autoBuildSetting: Schema.NullOr(Schema.Boolean).pipe(
@@ -2350,6 +2385,25 @@ export function isBoardTerminalStepStatus(status: BoardStepStatus): boolean {
   return (BOARD_TERMINAL_STEP_STATUSES as ReadonlyArray<string>).includes(status);
 }
 
+/**
+ * A plan review is running: started, not done, and its plan step still live. Done means the
+ * agent finished, passed the target, or the step succeeded.
+ */
+export function isBoardPlanReviewRunning(
+  state: {
+    readonly status: BoardStepStatus;
+    readonly planReviewStartedAt?: string | undefined;
+    readonly planReviewDoneAt?: string | undefined;
+  } | null,
+): boolean {
+  return (
+    state !== null &&
+    state.planReviewStartedAt !== undefined &&
+    state.planReviewDoneAt === undefined &&
+    !isBoardTerminalStepStatus(state.status)
+  );
+}
+
 /** The PARKED step statuses: non-terminal, holding no slot, driven by
     nothing until a human (or a schedule) acts. The single reader
     the decider's two resume paths share, so "what can be resumed" has one
@@ -2359,6 +2413,37 @@ const BOARD_PARKED_STEP_STATUSES = ["stalled", "awaiting-input", "paused"] as co
 /** Whether a step status is parked — see `BOARD_PARKED_STEP_STATUSES`. */
 export function isBoardParkedStepStatus(status: BoardStepStatus): boolean {
   return (BOARD_PARKED_STEP_STATUSES as ReadonlyArray<string>).includes(status);
+}
+
+/** T3o: how a proposed split may be approved given the card's live plan step (T3O-105). A
+    running review takes only Approve after review, since approving now freezes the plans and
+    ends it; a parked step takes either; otherwise the direct approve alone. */
+export function boardSplitApprovalModes(
+  planStep: {
+    readonly status: BoardStepStatus;
+    readonly planReviewStartedAt?: string | undefined;
+    readonly planReviewDoneAt?: string | undefined;
+  } | null,
+): { readonly afterReview: boolean; readonly now: boolean } {
+  const parked = planStep !== null && isBoardParkedStepStatus(planStep.status);
+  const reviewing = isBoardPlanReviewRunning(planStep);
+  return { afterReview: reviewing || parked, now: !reviewing || parked };
+}
+
+/** T3o: what a deferred split approval approved: each plan's key, title, dependencies and
+    planned flag, in plan order. Body edits leave it unchanged (T3O-105). */
+export function boardSplitFingerprint(
+  plans: ReadonlyArray<
+    Pick<BoardPlan, "planId" | "title" | "dependsOn" | "ordinal"> & {
+      readonly planned?: boolean | undefined;
+    }
+  >,
+): string {
+  return JSON.stringify(
+    [...plans]
+      .sort((left, right) => left.ordinal - right.ordinal)
+      .map((plan) => [plan.planId, plan.title, [...plan.dependsOn].sort(), plan.planned !== false]),
+  );
 }
 
 /**
@@ -2533,8 +2618,18 @@ export const BoardCardStepState = Schema.Struct({
       rehydrated row (NULL column → no key) agree. A stage entry builds a fresh
       row without it, so a card re-entering Planning reviews again. */
   planReviewStartedAt: Schema.optionalKey(IsoDateTime),
-  /** The round count that review runs to, locked when it started. */
+  /** The round target the review runs to: set when it started, moved by the card's rounds. */
   planReviewRounds: Schema.optionalKey(BoardPlanReviewRounds),
+  /** The round the agent last reported starting (`board_plan_review_round`), 1-based. */
+  planReviewRound: Schema.optionalKey(PositiveInt),
+  /** When the review ended: the agent said it finished, the target was passed, or the step
+      succeeded. A started review with this set is no longer running. */
+  planReviewDoneAt: Schema.optionalKey(IsoDateTime),
+  /** Review was turned on after the plan was posted: armed, waiting for Start review.
+      Neither automatic start path starts it while set. */
+  planReviewAwaitingStart: Schema.optionalKey(IsoDateTime),
+  /** The review policy last delivered to the agent, as `boardPlanReviewPolicyFingerprint`. */
+  planReviewPolicySent: Schema.optionalKey(Schema.String),
   /** When turning Auto-plan on reopened this succeeded plan step, so the
       agent's next completion supersedes the pinned one. Never written as null;
       a stage entry builds a fresh row without it. */
@@ -2653,6 +2748,8 @@ export const BoardPlan = Schema.Struct({
   /** T3o: the planner's suggested size and why (T3O-86); absent is M on every dimension. */
   size: Schema.optionalKey(BoardCardSize),
   sizeReason: Schema.optionalKey(TrimmedNonEmptyString),
+  /** The plan review round that last changed this plan; absent outside a review. */
+  revisedInRound: Schema.optionalKey(PositiveInt),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
@@ -2760,6 +2857,9 @@ const BOARD_CARD_ACTIVITY_KINDS = [
   "plan-review-stopped",
   "plan-review-rounds-changed",
   "plan-review-finished",
+  /** T3o: a split approved after review, undone, dropped by a changed split, or refused
+      when it fired (T3O-105). */
+  "split-approval",
   /** CI: a pass ended (its outcome on the row), the card was sent
       back to review, or a human skipped CI. Each links to the CI tab. */
   "card-ci-pass-finished",
@@ -2875,8 +2975,15 @@ export const BoardCardActivityPayload = Schema.Struct({
   /** plan-review-started / -rounds-changed / -finished: the round limit, and what the
       agent reported. A null `roundsRun` is "rounds not reported". */
   planReviewRounds: Schema.optionalKey(PositiveInt),
+  /** plan-review-rounds-changed: the target before the change. */
+  planReviewRoundsBefore: Schema.optionalKey(PositiveInt),
   planReviewRoundsRun: Schema.optionalKey(Schema.NullOr(NonNegativeInt)),
   planReviewConverged: Schema.optionalKey(Schema.NullOr(Schema.Boolean)),
+  planReviewFindings: Schema.optionalKey(Schema.NullOr(NonNegativeInt)),
+  /** split-approval: what happened to the deferred approval, and the review round it
+      happened in. A refusal's reason rides in `detail`. */
+  splitApproval: Schema.optionalKey(Schema.Literals(["approved", "undone", "dropped", "refused"])),
+  planReviewRound: Schema.optionalKey(PositiveInt),
   /** card-ci-*: how the pass ended, the step that failed, and the
       fix attempts used. */
   ciOutcome: Schema.optionalKey(BoardCiPassOutcome),
@@ -3771,12 +3878,13 @@ export function boardStageBeforeBuild(board: BoardState): BoardStageDefinition |
 
 // ── Automation ────────────────────────────────────────────────
 
-const BOARD_AUTOMATION_TOGGLES = ["autoPlan", "autoBuild", "autoMerge"] as const;
+const BOARD_AUTOMATION_TOGGLES = ["autoPlan", "autoSignOff", "autoBuild", "autoMerge"] as const;
 export type BoardAutomationToggle = (typeof BOARD_AUTOMATION_TOGGLES)[number];
 
 /** Each toggle's name as the card and the tools show it. */
 export const BOARD_AUTOMATION_TOGGLE_LABELS: Readonly<Record<BoardAutomationToggle, string>> = {
   autoPlan: "Auto-plan",
+  autoSignOff: "Auto sign-off",
   autoBuild: "Auto-build",
   autoMerge: "Auto-merge",
 };
@@ -3812,6 +3920,7 @@ export type BoardAutomationNode = {
   readonly parentCardId?: string | null | undefined;
   readonly stage: string;
   readonly autoPlanSetting?: boolean | null | undefined;
+  readonly autoSignOffSetting?: boolean | null | undefined;
   readonly autoBuildSetting?: boolean | null | undefined;
   readonly autoMergeSetting?: boolean | null | undefined;
   readonly group?: BoardCardGroup | null | undefined;
@@ -3827,9 +3936,11 @@ function ownAutomationSetting(
   const value =
     toggle === "autoPlan"
       ? node.autoPlanSetting
-      : toggle === "autoBuild"
-        ? node.autoBuildSetting
-        : node.autoMergeSetting;
+      : toggle === "autoSignOff"
+        ? node.autoSignOffSetting
+        : toggle === "autoBuild"
+          ? node.autoBuildSetting
+          : node.autoMergeSetting;
   return value ?? null;
 }
 
@@ -3895,6 +4006,7 @@ export function resolveBoardCardAutomation(input: {
       : null;
 
   const autoPlan = resolve("autoPlan", group === null ? null : group.autoPlan, planLock);
+  const autoSignOff = resolve("autoSignOff", group === null ? null : group.autoSignOff, planLock);
   const autoBuild = resolve(
     "autoBuild",
     group === null ? null : group.autoBuild && group.started,
@@ -3916,7 +4028,22 @@ export function resolveBoardCardAutomation(input: {
         parent === undefined ? null : group === null ? true : group.autoMerge,
         null,
       );
-  return { autoPlan, autoBuild, autoMerge };
+  return { autoPlan, autoSignOff, autoBuild, autoMerge };
+}
+
+/**
+ * What automates the card's planning, which is when the Auto sign-off gate applies. Null means
+ * a person plans, so the plan always waits for them. Plan review's unattended mode adds "review".
+ */
+export type BoardPlanAutomatedBy = "auto-plan" | "review" | null;
+
+export function boardPlanAutomatedBy(
+  resolved: BoardResolvedAutomation,
+  /** The card sits in Planning with an unattended plan review on. */
+  review?: { readonly unattendedInPlanning: boolean },
+): BoardPlanAutomatedBy {
+  if (resolved.autoPlan.value) return "auto-plan";
+  return review?.unattendedInPlanning === true ? "review" : null;
 }
 
 /** Whether the card's planning run for its current stay in Planning finished:
@@ -3929,6 +4056,21 @@ export function boardCardPlanningFinished(
   if (stage === null || effectiveBoardStageRole(stage) !== "plan") return false;
   const state = boardCardStepState(board, card.id);
   return state !== null && state.stepId === card.stage && state.status === "succeeded";
+}
+
+/**
+ * An unattended plan review finished on the card's plan step and its single plan waits on the
+ * Sign-off gate. Auto sign-off then approves it; a split always waits for a human.
+ */
+export function isBoardCardReviewSignOffPending(
+  board: BoardState,
+  card: Pick<BoardCard, "id" | "stage" | "planReview">,
+): boolean {
+  if (card.planReview?.enabled !== true || card.planReview.unattended !== true) return false;
+  if (!boardCardPlanningFinished(board, card)) return false;
+  const state = boardCardStepState(board, card.id);
+  if (state?.planReviewStartedAt === undefined) return false;
+  return boardCardPlans(board, card.id).length === 1;
 }
 
 /** `resolveBoardCardAutomation` over the full board state. */
@@ -3968,6 +4110,8 @@ export function boardAutomationTogglesTurnedOn(input: {
     card: {
       ...card,
       autoPlanSetting: change.autoPlan === undefined ? card.autoPlanSetting : change.autoPlan,
+      autoSignOffSetting:
+        change.autoSignOff === undefined ? card.autoSignOffSetting : change.autoSignOff,
       autoBuildSetting: change.autoBuild === undefined ? card.autoBuildSetting : change.autoBuild,
       autoMergeSetting: change.autoMerge === undefined ? card.autoMergeSetting : change.autoMerge,
     },
@@ -4999,6 +5143,9 @@ export const BoardCardCreateCommand = Schema.Struct({
   /** The outside item this card tracks, such as a webhook's GitHub issue. The decider
       refuses one a live card already carries. */
   externalRef: Schema.optional(BoardCardExternalRef),
+  /** The card's own plan review. The server stamps the new-card defaults when absent
+      (`boardPlanReviewCreationDefaults`); a heading never carries one. */
+  planReview: Schema.optional(BoardCardPlanReview),
   createdAt: IsoDateTime,
 });
 export type BoardCardCreateCommand = typeof BoardCardCreateCommand.Type;
@@ -5048,6 +5195,7 @@ export const BoardCardSetGroupSettingsCommand = Schema.Struct({
   autoBuild: Schema.optional(Schema.Boolean),
   autoMerge: Schema.optional(Schema.Boolean),
   autoPlan: Schema.optional(Schema.Boolean),
+  autoSignOff: Schema.optional(Schema.Boolean),
   createdAt: IsoDateTime,
 });
 export type BoardCardSetGroupSettingsCommand = typeof BoardCardSetGroupSettingsCommand.Type;
@@ -5062,6 +5210,7 @@ export const BoardCardSetAutomationCommand = Schema.Struct({
   commandId: CommandId,
   cardId: BoardCardId,
   autoPlan: Schema.optional(Schema.NullOr(Schema.Boolean)),
+  autoSignOff: Schema.optional(Schema.NullOr(Schema.Boolean)),
   autoBuild: Schema.optional(Schema.NullOr(Schema.Boolean)),
   autoMerge: Schema.optional(Schema.NullOr(Schema.Boolean)),
   createdAt: IsoDateTime,
@@ -5072,6 +5221,7 @@ export type BoardCardSetAutomationCommand = typeof BoardCardSetAutomationCommand
     toggle flip from any other edit of the same card. */
 export const BoardAutomationChanged = Schema.Struct({
   autoPlan: Schema.optional(Schema.Literal(true)),
+  autoSignOff: Schema.optional(Schema.Literal(true)),
   autoBuild: Schema.optional(Schema.Literal(true)),
   autoMerge: Schema.optional(Schema.Literal(true)),
   /** A group's own `group` settings changed, so its inheriting children are
@@ -5141,8 +5291,8 @@ export const BoardCardUpdateCommand = Schema.Struct({
       The decider rejects a key for a stage the board does not have. */
   modelOverrides: Schema.optional(Schema.NullOr(BoardCardModelOverrides)),
   /** The card's plan-review setting (plan review). Absent leaves it,
-      `null` resets it to the Settings default, a struct writes it. Rounds are
-      locked once a review has started; turning it off stops that review. */
+      `null` resets it to the Settings default, a struct writes it. Turning it off stops a
+      running review; a rounds change moves its target, read at the agent's next round. */
   planReview: Schema.optional(Schema.NullOr(BoardCardPlanReview)),
   /** The card's base branch. Absent leaves it unchanged; `null`
       clears it back to the project default; a string pins it. Rejected outright
@@ -5754,14 +5904,88 @@ export const BoardPlansApproveCommand = Schema.Struct({
       defaults to the card's split recommendation when absent. */
   autoBuild: Schema.optionalKey(Schema.Boolean),
   mergeTarget: Schema.optionalKey(BoardCardGroupTarget),
-  /** The new group's Auto-plan and Auto-merge, so a split seeds the
-      group from the card's resolved toggles atomically. Absent: Auto-plan
-      off, Auto-merge on for an own-branch group and off otherwise. */
+  /** The new group's Auto-plan, Auto sign-off and Auto-merge. Absent: Auto-plan
+      and Auto sign-off take the card's resolved values, Auto-merge is on for an
+      own-branch group and off otherwise. */
   autoPlan: Schema.optionalKey(Schema.Boolean),
+  autoSignOff: Schema.optionalKey(Schema.Boolean),
   autoMerge: Schema.optionalKey(Schema.Boolean),
   createdAt: IsoDateTime,
 });
 export type BoardPlansApproveCommand = typeof BoardPlansApproveCommand.Type;
+
+/** T3o: approve a proposed split to take effect when the card's plan review finishes, so the
+    review is not cut short (T3O-105). The settings are the split gate's, as for approve. */
+export const BoardSplitApproveAfterReviewCommand = Schema.Struct({
+  type: Schema.Literal("board.split.approve-after-review"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  autoBuild: Schema.optionalKey(Schema.Boolean),
+  mergeTarget: Schema.optionalKey(BoardCardGroupTarget),
+  autoPlan: Schema.optionalKey(Schema.Boolean),
+  autoSignOff: Schema.optionalKey(Schema.Boolean),
+  autoMerge: Schema.optionalKey(Schema.Boolean),
+  createdAt: IsoDateTime,
+});
+export type BoardSplitApproveAfterReviewCommand = typeof BoardSplitApproveAfterReviewCommand.Type;
+
+/** T3o: Undo a split approved after review, before it fires (T3O-105). */
+export const BoardSplitCancelApprovalCommand = Schema.Struct({
+  type: Schema.Literal("board.split.cancel-approval"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  createdAt: IsoDateTime,
+});
+export type BoardSplitCancelApprovalCommand = typeof BoardSplitCancelApprovalCommand.Type;
+
+/** T3o: server-internal. The deferred approval fired and was refused; clear it so the split
+    gate asks again (T3O-105). */
+export const BoardSplitRecordApprovalRefusedCommand = Schema.Struct({
+  type: Schema.Literal("board.split.record-approval-refused"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  detail: TrimmedNonEmptyString,
+  createdAt: IsoDateTime,
+});
+export type BoardSplitRecordApprovalRefusedCommand =
+  typeof BoardSplitRecordApprovalRefusedCommand.Type;
+
+/** Start an armed plan review: one turned on after the plan was posted, which waits for this.
+    Reopens a settled plan step or resumes a paused one, as turning review on used to. */
+export const BoardPlanReviewStartCommand = Schema.Struct({
+  type: Schema.Literal("board.plan-review.start"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  createdAt: IsoDateTime,
+});
+export type BoardPlanReviewStartCommand = typeof BoardPlanReviewStartCommand.Type;
+
+/**
+ * The planning agent's round report (`board_plan_review_round`): the round it is starting, or
+ * that it finished. Refused when no review is running. `policySent` records the policy the
+ * tool's response delivered, so the reactor does not steer it again.
+ */
+export const BoardPlanReviewRoundStartedCommand = Schema.Struct({
+  type: Schema.Literal("board.plan-review.round-started"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  round: Schema.optionalKey(PositiveInt),
+  finished: Schema.optionalKey(Schema.Literal(true)),
+  policySent: Schema.optionalKey(Schema.String),
+  createdAt: IsoDateTime,
+});
+export type BoardPlanReviewRoundStartedCommand = typeof BoardPlanReviewRoundStartedCommand.Type;
+
+/** The reactor delivered the review policy to the planning thread: store its fingerprint. */
+export const BoardPlanReviewPolicySentCommand = Schema.Struct({
+  type: Schema.Literal("board.plan-review.policy-sent"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  stepId: TrimmedNonEmptyString,
+  policySent: Schema.String,
+  createdAt: IsoDateTime,
+});
+export type BoardPlanReviewPolicySentCommand = typeof BoardPlanReviewPolicySentCommand.Type;
 // Server-internal: dispatched after the git work has happened. A client cannot create a
 // worktree on the server's filesystem, so letting one record it would desync card and disk.
 
@@ -6493,6 +6717,9 @@ export const BoardCardCreatedPayload = Schema.Struct({
   priority: Schema.optionalKey(BoardCardPriority),
   /** Key-optional: absent is no reference, the null the column defaults to. */
   externalRef: Schema.optionalKey(BoardCardExternalRef),
+  /** The card's own plan review at birth: the new-card defaults, or a split parent's.
+      Absent follows the Settings default, as every older card does. */
+  planReview: Schema.optionalKey(BoardCardPlanReview),
   /** The decider has no SQL client, so the payload names the plan and the SQL projector
       copies its body in the same transaction. Replay-safe because approval freezes the plans.
       Mutually exclusive with `brief`. */
@@ -7125,6 +7352,17 @@ export const BoardCardStepSteeredPayload = Schema.Struct({
 });
 export type BoardCardStepSteeredPayload = typeof BoardCardStepSteeredPayload.Type;
 
+/** T3o: the card's deferred split approval changed (T3O-105). `card` is the card after it;
+    `round` is the review round it happened in, when one was recorded. */
+export const BoardSplitApprovalChangedPayload = Schema.Struct({
+  cardId: BoardCardId,
+  card: BoardCard,
+  change: Schema.Literals(["approved", "undone", "dropped", "refused"]),
+  round: Schema.optionalKey(PositiveInt),
+  detail: Schema.optionalKey(TrimmedNonEmptyString),
+});
+export type BoardSplitApprovalChangedPayload = typeof BoardSplitApprovalChangedPayload.Type;
+
 /** A plan review started on the live plan step (plan review). */
 export const BoardPlanReviewStartedPayload = Schema.Struct({
   cardId: BoardCardId,
@@ -7146,13 +7384,23 @@ export const BoardPlanReviewStoppedPayload = Schema.Struct({
 });
 export type BoardPlanReviewStoppedPayload = typeof BoardPlanReviewStoppedPayload.Type;
 
-/** A human changed a running plan review's rounds. `state` carries
-    the new `planReviewRounds`; the reactor tells the planning thread. */
+/** A human changed a running plan review's rounds. `state` carries the new
+    `planReviewRounds`; the agent reads it at its next `board_plan_review_round`. */
 export const BoardPlanReviewRoundsChangedPayload = Schema.Struct({
   cardId: BoardCardId,
   state: BoardCardStepState,
+  /** The target before the change; absent on older events. */
+  previousRounds: Schema.optionalKey(BoardPlanReviewRounds),
 });
 export type BoardPlanReviewRoundsChangedPayload = typeof BoardPlanReviewRoundsChangedPayload.Type;
+
+/** A plan review's bookkeeping moved on the step: its round, its end, its arming, or the
+    policy delivered to the agent. Step state only; never on the activity rail. */
+export const BoardPlanReviewProgressedPayload = Schema.Struct({
+  cardId: BoardCardId,
+  state: BoardCardStepState,
+});
+export type BoardPlanReviewProgressedPayload = typeof BoardPlanReviewProgressedPayload.Type;
 
 // ── Thread todo lists ───────────────────────────────
 
@@ -7431,6 +7679,7 @@ export const BoardCardShell = Schema.Struct({
       budget). An explicit `false` overrides the group. Resolve with
       `resolveBoardCardAutomation`. */
   autoPlanSetting: Schema.optionalKey(Schema.Boolean),
+  autoSignOffSetting: Schema.optionalKey(Schema.Boolean),
   autoBuildSetting: Schema.optionalKey(Schema.Boolean),
   autoMergeSetting: Schema.optionalKey(Schema.Boolean),
   /** The current planning run is unattended, absent otherwise. */
@@ -7819,6 +8068,7 @@ export function makeBoardCardShell(input: {
       On the card aggregate, so both producers carry them; the keys
       are omitted while a toggle inherits. */
   readonly autoPlanSetting?: boolean | null | undefined;
+  readonly autoSignOffSetting?: boolean | null | undefined;
   readonly autoBuildSetting?: boolean | null | undefined;
   readonly autoMergeSetting?: boolean | null | undefined;
   readonly autoPlanPending?: boolean | null | undefined;
@@ -7926,6 +8176,7 @@ export function makeBoardCardShell(input: {
     // The Automation toggles: omitted while inheriting; an explicit
     // `false` is carried because it overrides the group.
     ...(input.autoPlanSetting == null ? {} : { autoPlanSetting: input.autoPlanSetting }),
+    ...(input.autoSignOffSetting == null ? {} : { autoSignOffSetting: input.autoSignOffSetting }),
     ...(input.autoBuildSetting == null ? {} : { autoBuildSetting: input.autoBuildSetting }),
     ...(input.autoMergeSetting == null ? {} : { autoMergeSetting: input.autoMergeSetting }),
     ...(input.autoPlanPending === true ? { autoPlanPending: true } : {}),
@@ -8044,6 +8295,7 @@ export function boardCardShellFromCard(
     scheduledStartAt: card.scheduledStartAt,
     priority: card.priority,
     autoPlanSetting: card.autoPlanSetting,
+    autoSignOffSetting: card.autoSignOffSetting,
     autoBuildSetting: card.autoBuildSetting,
     autoMergeSetting: card.autoMergeSetting,
     autoPlanPending: isBoardCardAutoPlanPending(card),
@@ -8314,6 +8566,11 @@ const BOARD_CLIENT_COMMANDS = [
   BoardPlansProposeCommand,
   BoardPlanWriteCommand,
   BoardPlansApproveCommand,
+  // T3o: Start review on an armed plan review (T3O-104).
+  BoardPlanReviewStartCommand,
+  // T3o: approve a split after review, and its Undo (T3O-105).
+  BoardSplitApproveAfterReviewCommand,
+  BoardSplitCancelApprovalCommand,
 ] as const;
 
 /**
@@ -8321,6 +8578,8 @@ const BOARD_CLIENT_COMMANDS = [
  * they reach the board decider without ever becoming client-dispatchable.
  */
 const BOARD_INTERNAL_COMMANDS = [
+  // T3o: a deferred split approval refused when it fired (T3O-105).
+  BoardSplitRecordApprovalRefusedCommand,
   BoardCardSyncGroupsCommand,
   BoardCardProvisionWorktreeCommand,
   BoardCardRecordWorktreeCommand,
@@ -8374,6 +8633,9 @@ const BOARD_INTERNAL_COMMANDS = [
   // CI passes, and the board's own stage moves.
   BoardCardRecordCiCommand,
   BoardCardPipelineMoveCommand,
+  // T3o: plan review progress, reported by the agent or recorded by the reactor (T3O-104).
+  BoardPlanReviewRoundStartedCommand,
+  BoardPlanReviewPolicySentCommand,
 ] as const;
 
 /**
@@ -8480,6 +8742,10 @@ export const BOARD_EVENT_TYPES = [
   "board.plan-review-started",
   "board.plan-review-stopped",
   "board.plan-review-rounds-changed",
+  // Its round, end, arming or delivered policy moved (T3O-104).
+  "board.plan-review-progressed",
+  // T3o: a split approved after review, undone, dropped or refused (T3O-105).
+  "board.split-approval-changed",
   // The worker registry.
   "board.worker-registered",
   "board.worker-removed",
@@ -8820,6 +9086,11 @@ export function makeBoardOrchestrationEvents<const Base extends Schema.Struct.Fi
     }),
     Schema.Struct({
       ...base,
+      type: Schema.Literal("board.split-approval-changed"),
+      payload: BoardSplitApprovalChangedPayload,
+    }),
+    Schema.Struct({
+      ...base,
       type: Schema.Literal("board.plan-review-stopped"),
       payload: BoardPlanReviewStoppedPayload,
     }),
@@ -8827,6 +9098,11 @@ export function makeBoardOrchestrationEvents<const Base extends Schema.Struct.Fi
       ...base,
       type: Schema.Literal("board.plan-review-rounds-changed"),
       payload: BoardPlanReviewRoundsChangedPayload,
+    }),
+    Schema.Struct({
+      ...base,
+      type: Schema.Literal("board.plan-review-progressed"),
+      payload: BoardPlanReviewProgressedPayload,
     }),
     Schema.Struct({
       ...base,
@@ -9563,8 +9839,20 @@ export const BoardCardDetail = Schema.Struct({
   /** The plan review started on the card's live step (plan review);
       absent when none has, or the step has settled. */
   planReviewStarted: Schema.optionalKey(
-    Schema.Struct({ startedAt: IsoDateTime, rounds: BoardPlanReviewRounds }),
+    Schema.Struct({
+      startedAt: IsoDateTime,
+      rounds: BoardPlanReviewRounds,
+      /** The round the agent last reported starting. */
+      round: Schema.optionalKey(PositiveInt),
+      /** The review ended; an attended one waits for the human here. */
+      doneAt: Schema.optionalKey(IsoDateTime),
+    }),
   ),
+  /** Plan review was turned on after the plan was posted and waits for Start review. */
+  planReviewAwaitingStart: Schema.optionalKey(IsoDateTime),
+  /** T3o: the live step's status; absent when it has settled or there is none. The split
+      dock reads whether planning is parked (T3O-105). */
+  liveStepStatus: Schema.optionalKey(BoardStepStatus),
 });
 export type BoardCardDetail = typeof BoardCardDetail.Type;
 
@@ -12013,14 +12301,40 @@ Once the review process has been completed, summarise the finalised plan in the 
  * for the plan-role stage. `prompt` null means the compiled-in default, so the
  * default text never lands in settings.json and Reset is a retained null.
  */
+const DEFAULT_BOARD_PLAN_REVIEW_NEW_CARD_ROUNDS = 3;
+
+export const BoardPlanReviewNewCards = Schema.Struct({
+  enabled: Schema.optionalKey(Schema.Boolean),
+  rounds: Schema.optionalKey(BoardPlanReviewRounds),
+  unattended: Schema.optionalKey(Schema.Boolean),
+});
+export type BoardPlanReviewNewCards = typeof BoardPlanReviewNewCards.Type;
+
 export const BoardPlanReviewSettings = Schema.Struct({
   enabledByDefault: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   defaultRounds: BoardPlanReviewRounds.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_PLAN_REVIEW_ROUNDS)),
   ),
   prompt: Schema.NullOr(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  /** What a NEW card is stamped with at creation (T3O-104). No decoding defaults: an unset
+      key falls to `boardPlanReviewCreationDefaults`, and cards with no setting of their own
+      keep following the live keys above. */
+  newCards: Schema.optionalKey(BoardPlanReviewNewCards),
 });
 export type BoardPlanReviewSettings = typeof BoardPlanReviewSettings.Type;
+
+/** The plan review a new card is created with: on, 3 rounds, attended, unless set. */
+export function boardPlanReviewCreationDefaults(
+  execution: { readonly planReview?: BoardPlanReviewSettings | undefined } | null | undefined,
+): BoardCardPlanReview {
+  const newCards = execution?.planReview?.newCards;
+  return {
+    enabled: newCards?.enabled ?? true,
+    rounds: newCards?.rounds ?? DEFAULT_BOARD_PLAN_REVIEW_NEW_CARD_ROUNDS,
+    unattended: newCards?.unattended ?? false,
+    source: "default",
+  };
+}
 
 export interface ResolvedBoardPlanReviewSettings {
   readonly enabledByDefault: boolean;
@@ -12054,7 +12368,7 @@ export function resolveBoardCardPlanReview(
 ): BoardCardPlanReview {
   if (card.planReview != null) return card.planReview;
   const settings = resolveBoardPlanReviewSettings(planStageExecution);
-  return { enabled: settings.enabledByDefault, rounds: settings.defaultRounds };
+  return { enabled: settings.enabledByDefault, rounds: settings.defaultRounds, unattended: false };
 }
 
 /**
@@ -12709,6 +13023,7 @@ export const BoardStageExecutionPatch = Schema.Struct({
       enabledByDefault: Schema.optionalKey(Schema.Boolean),
       defaultRounds: Schema.optionalKey(BoardPlanReviewRounds),
       prompt: Schema.optionalKey(Schema.NullOr(Schema.String)),
+      newCards: Schema.optionalKey(BoardPlanReviewNewCards),
     }),
   ),
   rounds: Schema.optionalKey(PositiveInt),
@@ -12815,12 +13130,18 @@ function applyBoardStageExecutionPatch<E extends BoardStageExecution>(
     } else if (key === "submit" && base.kind === "build") {
       out.submit = { ...base.submit, ...withoutUndefined(value as object) };
     } else if (key === "planReview" && base.kind === "simple") {
+      const planReview = value as NonNullable<BoardStageExecutionPatch["planReview"]>;
+      const newCards =
+        planReview.newCards === undefined
+          ? base.planReview?.newCards
+          : { ...base.planReview?.newCards, ...withoutUndefined(planReview.newCards) };
       out.planReview = {
         enabledByDefault: false,
         defaultRounds: DEFAULT_BOARD_PLAN_REVIEW_ROUNDS,
         prompt: null,
         ...base.planReview,
-        ...withoutUndefined(value as object),
+        ...withoutUndefined(planReview),
+        ...(newCards === undefined ? {} : { newCards }),
       };
     } else {
       out[key] = value;

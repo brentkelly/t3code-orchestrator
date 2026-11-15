@@ -4,6 +4,8 @@
  * same session as a second line, with the same `EnvironmentAuthorizationError` shape.
  */
 import {
+  EMPTY_BOARD_STATE,
+  type BoardCardCreateCommand,
   BOARD_RPC_SCOPES,
   BOARD_WS_METHODS,
   BoardDispatchCommandError,
@@ -51,6 +53,8 @@ import * as Stream from "effect/Stream";
 
 import type { AuthenticatedSession } from "../auth/EnvironmentAuth.ts";
 import * as ServerConfig from "../config.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import { withPlanReviewCreationDefaults } from "./planReview.ts";
 import { parseCardPullRequestText } from "./cardPullRequestTarget.ts";
 import { guardBoardHandlers } from "./tunnel/boardSubjectGuard.ts";
 import {
@@ -142,6 +146,7 @@ export const boardRpcHandlers = Effect.fn("boardRpc.handlers")(function* (
     : baseSubscriptionContext;
   const workerConnections = yield* Effect.serviceOption(WorkerConnections);
   const capacityClientForPins = yield* Effect.serviceOption(BoardCapacityClient);
+  const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
   const pinContext = yield* Effect.context<BoardEngine | ThreadGateway>();
   // Board RPCs on a worker trust only a board's own session (T3O-84).
   return guardBoardHandlers(deps.currentSession.subject, {
@@ -158,6 +163,18 @@ export const boardRpcHandlers = Effect.fn("boardRpc.handlers")(function* (
       stampActor,
       projectActorName,
       projectConfig: yield* makeBoardProjectConfigService,
+      withPlanReviewDefaults: Option.isNone(serverSettings)
+        ? Effect.succeed
+        : (command) =>
+            Effect.gen(function* () {
+              const settings = yield* serverSettings.value.getSettings;
+              const model = yield* boardEngine.getReadModel;
+              return withPlanReviewCreationDefaults(
+                command,
+                model.board ?? EMPTY_BOARD_STATE,
+                settings.board,
+              );
+            }).pipe(Effect.orElseSucceed(() => command)),
       pinRefusal: Option.isNone(capacityClientForPins)
         ? () => Effect.succeed(null)
         : (target, workerId) =>
@@ -204,6 +221,10 @@ function makeBoardRpcHandlers(
     readonly mover: BoardCardMoverShape;
     readonly ciLogWorker: BoardCiLogDeps<unknown>["worker"];
     readonly projectTokenStatus: ReturnType<typeof boardProjectTokenStatus>;
+    /** T3o: the create with the project's new-card plan review stamped on (T3O-104). */
+    readonly withPlanReviewDefaults: (
+      command: BoardCardCreateCommand,
+    ) => Effect.Effect<BoardCardCreateCommand>;
     /** T3o: why a pin can't go to a worker yet (T3O-86), or null. */
     readonly pinRefusal: (
       target: { readonly cardId: BoardCardId } | { readonly projectId: ProjectId },
@@ -300,9 +321,15 @@ function makeBoardRpcHandlers(
               : Effect.fail(new BoardDispatchCommandError({ message: refusal })),
           ),
           Effect.andThen(services.stampActor(command)),
+          // T3o: a new card carries the project's new-card plan review (T3O-104).
           Effect.andThen(
+            command.type === "board.card.create"
+              ? services.withPlanReviewDefaults(command)
+              : Effect.succeed<BoardClientCommand>(command),
+          ),
+          Effect.flatMap((stamped: BoardClientCommand) =>
             boardEngine.dispatch(
-              command,
+              stamped,
               clientOrigin === undefined ? undefined : { origin: clientOrigin },
             ),
           ),

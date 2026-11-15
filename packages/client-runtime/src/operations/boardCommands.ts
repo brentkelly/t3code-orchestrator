@@ -89,6 +89,9 @@ export type SetBoardProjectResourcesInput = SettingsCommandInput<"board.project.
 export type DismissBoardProjectImportInput = SettingsCommandInput<"board.project.dismiss-import">;
 export type StartBoardStageThreadInput = CommandInput<"board.card.start-stage-thread">;
 export type ApproveBoardPlansInput = CommandInput<"board.plans.approve">;
+export type StartBoardPlanReviewInput = CommandInput<"board.plan-review.start">;
+export type ApproveBoardSplitAfterReviewInput = CommandInput<"board.split.approve-after-review">;
+export type CancelBoardSplitApprovalInput = CommandInput<"board.split.cancel-approval">;
 
 type DispatchTag = typeof BOARD_WS_METHODS.dispatchCommand;
 type CommandEffect = Effect.Effect<
@@ -445,6 +448,44 @@ export const approveBoardPlans: (input: ApproveBoardPlansInput) => CommandEffect
     createdAt: metadata.createdAt,
   });
 });
+
+/** Start a card's armed plan review: one turned on after the plan was posted. */
+export const startBoardPlanReview: (input: StartBoardPlanReviewInput) => CommandEffect = Effect.fn(
+  "BoardCommands.startBoardPlanReview",
+)(function* (input) {
+  const metadata = yield* commandMetadata(input);
+  return yield* dispatch({
+    ...input,
+    type: "board.plan-review.start",
+    commandId: metadata.commandId,
+    createdAt: metadata.createdAt,
+  });
+});
+
+/** Approve a card's proposed split to take effect when its plan review finishes. Human-only. */
+export const approveBoardSplitAfterReview: (
+  input: ApproveBoardSplitAfterReviewInput,
+) => CommandEffect = Effect.fn("BoardCommands.approveBoardSplitAfterReview")(function* (input) {
+  const metadata = yield* commandMetadata(input);
+  return yield* dispatch({
+    ...input,
+    type: "board.split.approve-after-review",
+    commandId: metadata.commandId,
+    createdAt: metadata.createdAt,
+  });
+});
+
+/** Undo a split approved after review, before it fires. */
+export const cancelBoardSplitApproval: (input: CancelBoardSplitApprovalInput) => CommandEffect =
+  Effect.fn("BoardCommands.cancelBoardSplitApproval")(function* (input) {
+    const metadata = yield* commandMetadata(input);
+    return yield* dispatch({
+      ...input,
+      type: "board.split.cancel-approval",
+      commandId: metadata.commandId,
+      createdAt: metadata.createdAt,
+    });
+  });
 
 export const createBoardLabel: (input: CreateBoardLabelInput) => CommandEffect = Effect.fn(
   "BoardCommands.createBoardLabel",

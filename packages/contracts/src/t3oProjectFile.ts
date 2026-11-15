@@ -45,7 +45,7 @@ export interface ResolvedT3oProjectFile {
 
 const STAGE_FILE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 const NESTED_STEP_KEYS = new Set(["prompt", "model", "runtimeMode", "timeoutMs", "maxAttempts"]);
-const PLAN_REVIEW_KEYS = new Set(["enabledByDefault", "defaultRounds", "prompt"]);
+const PLAN_REVIEW_KEYS = new Set(["enabledByDefault", "defaultRounds", "prompt", "newCards"]);
 const REVIEW_PHASES = new Set(["review", "triage", "adjudicate"]);
 
 const decodePatch = Schema.decodeUnknownOption(BoardStageExecutionPatch);
@@ -192,7 +192,15 @@ function mergePatches(
       : { submit: { ...base.submit, ...next.submit } }),
     ...(base.planReview === undefined && next.planReview === undefined
       ? {}
-      : { planReview: { ...base.planReview, ...next.planReview } }),
+      : {
+          planReview: {
+            ...base.planReview,
+            ...next.planReview,
+            ...(base.planReview?.newCards === undefined && next.planReview?.newCards === undefined
+              ? {}
+              : { newCards: { ...base.planReview?.newCards, ...next.planReview?.newCards } }),
+          },
+        }),
   };
 }
 

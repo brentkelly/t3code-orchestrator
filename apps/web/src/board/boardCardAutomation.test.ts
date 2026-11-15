@@ -1,5 +1,5 @@
 /**
- * The Automation section's decisions: the header summary, the source
+ * The Automation section's decisions: the header's gate tags, Make hands-off, the source
  * tag, what a locked row shows, and what a group flip does to its children.
  */
 import {
@@ -18,14 +18,15 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  boardAutomationRowsSummary,
+  boardAutomationPastPlanning,
   boardAutomationSourceTag,
-  boardAutomationSummary,
+  boardAutomationStrip,
   boardCardAutoBuildChip,
   boardCardAutomationRows,
   boardCardPlanningFinishedFromDetail,
   boardGroupAutomationEffects,
   boardGroupAutomationRows,
+  boardMakeHandsOffPatch,
   boardShellAutomationNode,
   resolveBoardShellAutomation,
 } from "./boardCardAutomation";
@@ -39,6 +40,7 @@ function group(overrides: Partial<BoardCardGroup> = {}): BoardCardGroup {
     autoBuild: false,
     autoMerge: false,
     autoPlan: false,
+    autoSignOff: false,
     started: false,
     placed: BoardStageId.make("planning"),
     prevStage: BoardStageId.make("planning"),
@@ -92,13 +94,56 @@ function toggle(overrides: Partial<BoardResolvedAutomationToggle>): BoardResolve
   };
 }
 
-describe("the header summary", () => {
-  it("names the toggles that are on in pipeline order, or says Off", () => {
-    expect(boardAutomationSummary(["autoMerge", "autoPlan"])).toBe("Plan · Merge");
-    expect(boardAutomationSummary(["autoPlan", "autoBuild", "autoMerge"])).toBe(
-      "Plan · Build · Merge",
-    );
-    expect(boardAutomationSummary([])).toBe("Off");
+describe("the header's gate tags", () => {
+  const strip = (card: BoardCardShell, shells: ReadonlyArray<BoardCardShell> = [card]) =>
+    boardAutomationStrip({
+      rows: boardCardAutomationRows({
+        resolved: resolve(shells, card),
+        inPlanning: card.stage === BOARD_SEED_STAGE_IDS.planning,
+      }),
+      pastPlanning: boardAutomationPastPlanning(STAGES, card.stage),
+    });
+  const read = (value: ReturnType<typeof strip>) =>
+    value.tags.map((tag) => `${tag.gate} · ${tag.auto ? "auto" : "you"}`);
+
+  it("shows Sign-off only while planning is automated", () => {
+    const manual = strip(shell("c-1", "backlog"));
+    expect(read(manual)).toEqual(["Plan · you", "Build · you", "Merge · you"]);
+    expect(manual.handsOff).toBe(false);
+    const auto = strip(shell("c-2", "backlog", { autoPlanSetting: true, autoBuildSetting: true }));
+    expect(read(auto)).toEqual(["Plan · auto", "Sign-off · you", "Build · auto", "Merge · you"]);
+  });
+
+  it("is hands-off when every gate is automatic", () => {
+    const all = shell("c-1", "planning", {
+      autoPlanSetting: true,
+      autoSignOffSetting: true,
+      autoBuildSetting: true,
+      autoMergeSetting: true,
+    });
+    expect(strip(all).handsOff).toBe(true);
+    expect(strip({ ...all, autoSignOffSetting: false }).handsOff).toBe(false);
+  });
+
+  it("an unattended plan review automates the Plan gate and brings in Sign-off", () => {
+    const card = shell("c-1", "planning");
+    const rows = boardCardAutomationRows({
+      resolved: resolve([card], card),
+      inPlanning: true,
+      planReviewUnattended: true,
+    });
+    const value = boardAutomationStrip({ rows, pastPlanning: false, planReviewUnattended: true });
+    expect(value.tags.slice(0, 2)).toEqual([
+      { gate: "Plan", auto: true, via: "review" },
+      { gate: "Sign-off", auto: false },
+    ]);
+  });
+
+  it("drops the settled Plan and Sign-off gates past Planning", () => {
+    const ready = shell("c-1", "ready", { autoBuildSetting: true, autoMergeSetting: true });
+    const value = strip(ready);
+    expect(read(value)).toEqual(["Build · auto", "Merge · auto"]);
+    expect(value.handsOff).toBe(true);
   });
 
   it("reads a group's two merges as one Merge", () => {
@@ -114,7 +159,65 @@ describe("the header summary", () => {
     });
     expect(rows.map((r) => r.id)).toEqual(["autoPlan", "autoBuild", "autoMerge", "ownMerge"]);
     expect(rows[3]!.label).toBe("Auto-merge board/g-1 into trunk");
-    expect(boardAutomationRowsSummary(rows)).toBe("Merge");
+    expect(read(boardAutomationStrip({ rows, pastPlanning: false }))).toEqual([
+      "Plan · you",
+      "Build · you",
+      "Merge · auto",
+    ]);
+  });
+
+  it("gives a group with Auto-plan an indented sign-off row", () => {
+    const g = shell("g-1", "planning", { group: group({ autoPlan: true, autoSignOff: true }) });
+    const rows = boardGroupAutomationRows({
+      vm: boardGroupSettingsVm([g], STAGES, g)!,
+      groupKey: g.key,
+      ownMerge: resolve([g], g).autoMerge,
+    });
+    expect(rows.find((r) => r.id === "autoSignOff")).toMatchObject({ on: true, indent: true });
+  });
+});
+
+describe("Make hands-off", () => {
+  const patch = (card: BoardCardShell, shells: ReadonlyArray<BoardCardShell> = [card]) =>
+    boardMakeHandsOffPatch(resolve(shells, card));
+
+  it("turns on every gate that is off in Planning", () => {
+    expect(patch(shell("c-1", "planning"))).toEqual({
+      autoPlan: true,
+      autoSignOff: true,
+      autoBuild: true,
+      autoMerge: true,
+    });
+    expect(
+      patch(shell("c-1", "planning", { autoPlanSetting: true, autoBuildSetting: true })),
+    ).toEqual({ autoSignOff: true, autoMerge: true });
+  });
+
+  it("sends only the unlocked gates in Ready and Building", () => {
+    expect(patch(shell("c-1", "ready"))).toEqual({ autoBuild: true, autoMerge: true });
+    expect(patch(shell("c-1", "building"))).toEqual({ autoMerge: true });
+  });
+
+  it("is hidden once every applicable, unlocked gate is on", () => {
+    expect(
+      patch(shell("c-1", "building", { autoBuildSetting: true, autoMergeSetting: true })),
+    ).toBeNull();
+    // A board-wide merge is on and locked, so it is not sent.
+    expect(
+      boardMakeHandsOffPatch(resolve([shell("c-1", "building")], shell("c-1", "building"), true)),
+    ).toBeNull();
+  });
+
+  it("leaves an Auto-build waiting for its group to start with the group", () => {
+    const g = shell("g-1", "ready", { group: group({ autoBuild: true, autoMerge: true }) });
+    const ready = child("c-1", "ready");
+    expect(resolve([g, ready], ready).autoBuild.waitingForGroupStart).toBe(true);
+    expect(patch(ready, [g, ready])).toBeNull();
+    const value = boardAutomationStrip({
+      rows: boardCardAutomationRows({ resolved: resolve([g, ready], ready), inPlanning: false }),
+      pastPlanning: boardAutomationPastPlanning(STAGES, ready.stage),
+    });
+    expect(value.handsOff).toBe(true);
   });
 });
 
@@ -201,13 +304,27 @@ describe("a leaf's rows", () => {
     expect(build).toMatchObject({ on: false, locked: true, switchDisabled: true });
   });
 
-  it("says an unattended plan waits for approval unless Auto-build is on too", () => {
-    const solo = shell("c-1", "backlog", { autoPlanSetting: true });
+  it("shows Auto sign-off, indented, only while Auto-plan is on", () => {
+    const manual = shell("c-1", "backlog");
+    expect(
+      boardCardAutomationRows({ resolved: resolve([manual], manual), inPlanning: false }).map(
+        (r) => r.id,
+      ),
+    ).toEqual(["autoPlan", "autoBuild", "autoMerge"]);
+    const solo = shell("c-2", "backlog", { autoPlanSetting: true });
     const waits = boardCardAutomationRows({ resolved: resolve([solo], solo), inPlanning: false });
-    expect(waits[0]!.note).toContain("waits for your approval");
-    const both = shell("c-2", "backlog", { autoPlanSetting: true, autoBuildSetting: true });
-    const builds = boardCardAutomationRows({ resolved: resolve([both], both), inPlanning: false });
-    expect(builds[0]!.note).toContain("approved and built");
+    expect(waits[1]).toMatchObject({
+      id: "autoSignOff",
+      on: false,
+      indent: true,
+      note: "Off: the agent's plan waits for you.",
+    });
+    const signed = shell("c-3", "backlog", { autoPlanSetting: true, autoSignOffSetting: true });
+    const approves = boardCardAutomationRows({
+      resolved: resolve([signed], signed),
+      inPlanning: false,
+    });
+    expect(approves[1]).toMatchObject({ on: true, note: "Approve the agent's plan without you." });
   });
 
   it("locks Auto-merge on, from the board, under the board-wide setting", () => {
@@ -264,7 +381,7 @@ describe("planning finished, from the detail", () => {
 describe("what a group flip does to its children", () => {
   const effects = (
     shells: ReadonlyArray<BoardCardShell>,
-    toggleName: "autoPlan" | "autoBuild" | "autoMerge",
+    toggleName: "autoPlan" | "autoSignOff" | "autoBuild" | "autoMerge",
     next: boolean,
     boardWide = false,
   ) =>
@@ -291,17 +408,26 @@ describe("what a group flip does to its children", () => {
     ]);
   });
 
-  it("approves waiting plans and starts ready children only once the group has started", () => {
+  it("starts ready children only once the group has started, and never approves a plan", () => {
     const shells = (started: boolean) => [
       shell("g-1", "building", { group: group({ started }) }),
-      child("c-1", "planning", { autoPlanPending: true }),
+      child("c-1", "planning", { autoPlanPending: true, planCount: 1 }),
       child("c-2", "ready"),
     ];
     expect(effects(shells(true), "autoBuild", true)).toEqual([
-      "1 waiting plan will be approved and built.",
       "1 ready child will start building once its dependencies are done.",
     ]);
     expect(effects(shells(false), "autoBuild", true)).toEqual([]);
+  });
+
+  it("approves waiting single plans when sign-off turns on, never a split", () => {
+    const shells = [
+      shell("g-1", "planning", { group: group({ autoPlan: true }) }),
+      child("c-1", "planning", { autoPlanPending: true, planCount: 1 }),
+      child("c-2", "planning", { autoPlanPending: true, planCount: 2 }),
+    ];
+    expect(effects(shells, "autoSignOff", true)).toEqual(["1 waiting plan will be approved."]);
+    expect(effects(shells, "autoSignOff", false)).toEqual([]);
   });
 
   it("says children in progress will no longer auto-merge", () => {

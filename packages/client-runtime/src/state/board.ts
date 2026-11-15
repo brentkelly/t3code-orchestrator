@@ -66,6 +66,9 @@ import {
 } from "../operations/boardWorkers.ts";
 import {
   approveBoardPlans,
+  startBoardPlanReview,
+  approveBoardSplitAfterReview,
+  cancelBoardSplitApproval,
   archiveBoardCard,
   createBoardCard,
   createBoardLabel,
@@ -125,6 +128,9 @@ import {
   type PinBoardCardWorkerInput,
   updateBoardLabel,
   type ApproveBoardPlansInput,
+  type StartBoardPlanReviewInput,
+  type ApproveBoardSplitAfterReviewInput,
+  type CancelBoardSplitApprovalInput,
   type ArchiveBoardCardInput,
   type CreateBoardCardInput,
   type CreateBoardLabelInput,
@@ -1109,6 +1115,18 @@ export function createBoardEnvironmentAtoms<R, ER>(
     approvePlans: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:approve-plans",
       execute: (input: ApproveBoardPlansInput) => approveBoardPlans(input),
+    }),
+    startPlanReview: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:start-plan-review",
+      execute: (input: StartBoardPlanReviewInput) => startBoardPlanReview(input),
+    }),
+    approveSplitAfterReview: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:approve-split-after-review",
+      execute: (input: ApproveBoardSplitAfterReviewInput) => approveBoardSplitAfterReview(input),
+    }),
+    cancelSplitApproval: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:cancel-split-approval",
+      execute: (input: CancelBoardSplitApprovalInput) => cancelBoardSplitApproval(input),
     }),
     createLabel: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:create-label",

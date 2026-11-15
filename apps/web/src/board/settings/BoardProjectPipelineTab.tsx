@@ -8,9 +8,12 @@ import {
   BOARD_CONFIG_VERSION_MISMATCH,
   BOARD_SEED_STAGE_IDS,
   BOARD_SEED_STAGES,
+  boardPlanReviewCreationDefaults,
   boardStageExecutionKind,
   boardStagesInOrder,
+  effectiveBoardStageRole,
   resolveBoardStageExecution,
+  type BoardPlanReviewSettings,
   type BoardStageDefinition,
   type BoardStageExecutionPatch,
   type ProjectId,
@@ -32,8 +35,10 @@ import { boardToast } from "../boardToast";
 import { useBoardSettings } from "../useBoardEnvironmentId";
 import {
   boardProjectOverrideEdit,
+  boardProjectPlanReviewOverrideEdit,
   boardProjectStageState,
   isBoardCiStage,
+  type BoardPlanReviewOverrideKey,
 } from "./boardProjectSettings.logic";
 import { useBoardSettingsContext } from "./BoardSettingsLayout";
 import type { BoardProjectConfigState } from "./useBoardProjectConfig";
@@ -52,18 +57,27 @@ const report = (title: string) => (result: { readonly _tag: string }) => {
 };
 
 /** The settings a project may override, per stage kind. */
+type OverrideControl =
+  | { readonly kind: "boolean"; readonly label: string }
+  | { readonly kind: "number"; readonly label: string; readonly min: number; readonly max: number }
+  | { readonly kind: "text"; readonly label: string };
+
 type OverrideField =
-  | { readonly key: "autoExecute" | "autoMerge"; readonly kind: "boolean"; readonly label: string }
-  | {
-      readonly key: "rounds" | "maxFixAttempts";
-      readonly kind: "number";
-      readonly label: string;
-      readonly min: number;
-      readonly max: number;
-    }
-  | { readonly key: "prompt"; readonly kind: "text"; readonly label: string };
+  | ({ readonly key: "autoExecute" | "autoMerge" } & Extract<OverrideControl, { kind: "boolean" }>)
+  | ({ readonly key: "rounds" | "maxFixAttempts" } & Extract<OverrideControl, { kind: "number" }>)
+  | ({ readonly key: "prompt" } & Extract<OverrideControl, { kind: "text" }>);
 
 const PROMPT: OverrideField = { key: "prompt", kind: "text", label: "Prompt" };
+
+/** The planning stage's new-card plan review, each overridable on its own. */
+const PLAN_REVIEW_FIELDS: ReadonlyArray<{
+  readonly key: BoardPlanReviewOverrideKey;
+  readonly field: OverrideControl;
+}> = [
+  { key: "enabled", field: { kind: "boolean", label: "Auto-review plans" } },
+  { key: "rounds", field: { kind: "number", label: "Plan review rounds", min: 1, max: 20 } },
+  { key: "unattended", field: { kind: "boolean", label: "Run unattended" } },
+];
 const AUTO: OverrideField = { key: "autoExecute", kind: "boolean", label: "Auto execute" };
 
 const FIELDS: Readonly<
@@ -105,7 +119,14 @@ export function BoardProjectPipelineTab(props: {
     }).then(report("Couldn't switch the stage"));
 
   const onOverride = (stage: BoardStageDefinition, key: string, value: unknown) => {
-    const edit = boardProjectOverrideEdit(full, stage.stageId, key, value);
+    const edit = key.startsWith("planReview.")
+      ? boardProjectPlanReviewOverrideEdit(
+          full,
+          stage.stageId,
+          key.slice("planReview.".length) as BoardPlanReviewOverrideKey,
+          value as boolean | number | undefined,
+        )
+      : boardProjectOverrideEdit(full, stage.stageId, key, value);
     if (edit === null) return;
     void setOverride({
       environmentId,
@@ -160,7 +181,21 @@ function StageRow(props: {
     unknown
   >;
   const fields = FIELDS[boardStageExecutionKind(stage.stageId)];
-  const overridden = fields.filter((field) => props.overrides[field.key] !== undefined).length;
+  // The planning stage also carries what its new cards' plan review is stamped with.
+  const planReviewRows =
+    effectiveBoardStageRole(stage) === "plan"
+      ? PLAN_REVIEW_FIELDS.map((entry) => ({
+          ...entry,
+          value: props.overrides.planReview?.newCards?.[entry.key],
+          global:
+            boardPlanReviewCreationDefaults({
+              planReview: global.planReview as BoardPlanReviewSettings | undefined,
+            })[entry.key] ?? false,
+        }))
+      : [];
+  const overridden =
+    fields.filter((field) => props.overrides[field.key] !== undefined).length +
+    planReviewRows.filter((row) => row.value !== undefined).length;
   const isCi = isBoardCiStage(stage);
   const off = state.kind === "switchable" && !state.on;
   return (
@@ -260,6 +295,17 @@ function StageRow(props: {
               />
             ))
           )}
+          {planReviewRows.map((row) => (
+            <OverrideRow
+              canWrite={props.canWrite && props.promptsLoaded}
+              field={row.field}
+              global={row.global}
+              key={`planReview.${row.key}`}
+              loaded
+              onChange={(value) => props.onOverride(`planReview.${row.key}`, value)}
+              value={row.value}
+            />
+          ))}
         </div>
       ) : null}
     </div>
@@ -267,7 +313,7 @@ function StageRow(props: {
 }
 
 function OverrideRow(props: {
-  readonly field: OverrideField;
+  readonly field: OverrideControl;
   readonly value: unknown;
   readonly global: unknown;
   readonly loaded: boolean;

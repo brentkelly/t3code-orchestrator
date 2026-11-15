@@ -13,6 +13,9 @@ import {
   withBoardCardSizeEdit,
   BOARD_DECISIONS_PER_CALL_MAX,
   isBoardCardAutoPlanPending,
+  isBoardPlanReviewRunning,
+  boardSplitApprovalModes,
+  boardSplitFingerprint,
   BOARD_CARD_BRIEF_BODY_KIND,
   BOARD_CARD_LABELS_MAX,
   boardAppendOrderKey,
@@ -116,6 +119,7 @@ import {
   type BoardLabelId,
   type BoardPlan,
   type BoardPlanWithBody,
+  type BoardPlansProposeCommand,
   type BoardStageDefinition,
   type BoardStageId,
   type BoardState,
@@ -797,7 +801,7 @@ const planReviewStartedEvent = Effect.fn("planReviewStartedEvent")(function* (in
     payload: {
       cardId: input.command.cardId,
       state: {
-        ...input.state,
+        ...withoutPlanReviewProgress(input.state),
         planReviewStartedAt: input.command.createdAt,
         planReviewRounds: input.rounds,
         updatedAt: input.command.createdAt,
@@ -808,10 +812,97 @@ const planReviewStartedEvent = Effect.fn("planReviewStartedEvent")(function* (in
   return event;
 });
 
+/** T3o: the card's deferred split approval changed (T3O-105). An approval carries the card
+    with it; every other change carries the card without one. */
+const splitApprovalChangedEvent = Effect.fn("splitApprovalChangedEvent")(function* (input: {
+  readonly command: BoardCardCommand;
+  readonly card: BoardCard;
+  readonly change: "approved" | "undone" | "dropped" | "refused";
+  readonly round: number | undefined;
+  readonly detail?: string;
+}) {
+  const { pendingSplitApproval, ...rest } = input.card;
+  const card: BoardCard = {
+    ...rest,
+    ...(input.change === "approved" && pendingSplitApproval !== undefined
+      ? { pendingSplitApproval }
+      : {}),
+    updatedAt: input.command.createdAt,
+  };
+  const event: PlannedBoardEvent = {
+    ...(yield* makeBoardEventBase({
+      cardId: input.card.id,
+      occurredAt: input.command.createdAt,
+      commandId: input.command.commandId,
+    })),
+    type: "board.split-approval-changed",
+    payload: {
+      cardId: input.card.id,
+      card,
+      change: input.change,
+      ...(input.round === undefined ? {} : { round: input.round }),
+      ...(input.detail === undefined ? {} : { detail: input.detail }),
+    },
+  };
+  return event;
+});
+
 /** The step with its plan review cleared (plan review). */
 function clearedPlanReviewState(state: BoardCardStepState, at: string): BoardCardStepState {
-  const { planReviewStartedAt: _startedAt, planReviewRounds: _rounds, ...rest } = state;
+  const {
+    planReviewStartedAt: _startedAt,
+    planReviewRounds: _rounds,
+    ...rest
+  } = withoutPlanReviewProgress(state);
   return { ...rest, updatedAt: at };
+}
+
+/** The step without a review's round, end, arming and delivered policy. */
+function withoutPlanReviewProgress(state: BoardCardStepState): BoardCardStepState {
+  const {
+    planReviewRound: _round,
+    planReviewDoneAt: _doneAt,
+    planReviewAwaitingStart: _awaiting,
+    planReviewPolicySent: _policy,
+    ...rest
+  } = state;
+  return rest;
+}
+
+/** A review's step-state bookkeeping moved (T3O-104). */
+const planReviewProgressedEvent = Effect.fn("planReviewProgressedEvent")(function* (input: {
+  readonly command: BoardCardCommand;
+  readonly state: BoardCardStepState;
+}) {
+  const event: PlannedBoardEvent = {
+    ...(yield* makeBoardEventBase({
+      cardId: input.command.cardId,
+      occurredAt: input.command.createdAt,
+      commandId: input.command.commandId,
+    })),
+    type: "board.plan-review-progressed",
+    payload: {
+      cardId: input.command.cardId,
+      state: { ...input.state, updatedAt: input.command.createdAt },
+    },
+  };
+  return event;
+});
+
+/** Whether a re-proposed plan differs from the one it replaces in anything the review reads. */
+function boardPlanChanged(
+  prior: BoardPlan | undefined,
+  next: Pick<BoardPlanWithBody, "title" | "summary" | "dependsOn" | "body">,
+  body: string | undefined,
+) {
+  return (
+    prior === undefined ||
+    body === undefined ||
+    prior.title !== next.title ||
+    prior.summary !== next.summary ||
+    prior.dependsOn.join("\n") !== next.dependsOn.join("\n") ||
+    body !== next.body
+  );
 }
 
 /**
@@ -1163,6 +1254,10 @@ export interface BoardDecisionContext {
   /** The thread a link or unlink names, or null when it does not exist.
       Loaded only when `boardCommandNeedsThread` holds. */
   readonly thread?: BoardThreadRef | null;
+  /** The stored body of each plan a proposal names, by plan id; absent where none is stored.
+      Loaded for `board.plans.propose`, so a re-proposal keeps an unchanged plan's
+      `revisedInRound`. */
+  readonly planBodies?: ReadonlyMap<string, string>;
 }
 
 /** What the decider needs to know about a project: that it exists, and enough
@@ -1245,6 +1340,12 @@ function requireBoardStage(
 /** Whether a command needs `BoardDecisionContext` loaded before it is decided:
     an update that edits the brief incrementally or guards it with a
     version. */
+export function boardCommandNeedsPlanBodies(
+  command: BoardCommand,
+): command is BoardPlansProposeCommand {
+  return command.type === "board.plans.propose";
+}
+
 export function boardCommandNeedsBrief(command: BoardCommand): command is BoardCardUpdateCommand {
   return (
     command.type === "board.card.update" &&
@@ -1467,7 +1568,7 @@ function holdsOnlyIntegrationSlice(board: BoardState, card: BoardCard): boolean 
 
 /**
  * The own Automation toggles a backward move turns off: from Building or later back to before
- * it disarms Auto-build; back into Planning or earlier disarms Auto-plan. Only a toggle that is
+ * it disarms Auto-build; back into Planning or earlier disarms Auto-plan and Auto sign-off. Only a toggle that is
  * effectively on is written off, so an inheriting card that was off stays inheriting.
  */
 function backwardMoveDisarms(
@@ -1475,7 +1576,9 @@ function backwardMoveDisarms(
   card: BoardCard,
   toStage: BoardStageId,
 ): {
-  readonly settings: Partial<Pick<BoardCard, "autoPlanSetting" | "autoBuildSetting">>;
+  readonly settings: Partial<
+    Pick<BoardCard, "autoPlanSetting" | "autoSignOffSetting" | "autoBuildSetting">
+  >;
   readonly changed: BoardAutomationChanged | null;
 } {
   const from = boardStageIndex(board, card.stage);
@@ -1492,15 +1595,19 @@ function backwardMoveDisarms(
     buildIndex >= 0 && from >= buildIndex && to < buildIndex && resolved.autoBuild.value;
   const disarmPlan =
     planIndex >= 0 && from >= planIndex && to <= planIndex && resolved.autoPlan.value;
-  if (!disarmBuild && !disarmPlan) return { settings: {}, changed: null };
+  const disarmSignOff =
+    planIndex >= 0 && from >= planIndex && to <= planIndex && resolved.autoSignOff.value;
+  if (!disarmBuild && !disarmPlan && !disarmSignOff) return { settings: {}, changed: null };
   return {
     settings: {
       ...(disarmBuild ? { autoBuildSetting: false } : {}),
       ...(disarmPlan ? { autoPlanSetting: false } : {}),
+      ...(disarmSignOff ? { autoSignOffSetting: false } : {}),
     },
     changed: {
       ...(disarmBuild ? { autoBuild: true as const } : {}),
       ...(disarmPlan ? { autoPlan: true as const } : {}),
+      ...(disarmSignOff ? { autoSignOff: true as const } : {}),
     },
   };
 }
@@ -1553,12 +1660,14 @@ const groupConversionEvents = Effect.fn("groupConversionEvents")(function* (inpu
     ...card,
     group: defaultBoardCardGroup(board, card, {
       autoPlan: resolved.autoPlan.value,
+      autoSignOff: resolved.autoSignOff.value,
       autoBuild: resolved.autoBuild.value,
       autoMerge: resolved.autoBuild.value && boardCardMergesIntoIntegrationBranch(board, card),
     }),
     // Only leaves run, so a group has no priority (T3O-95).
     priority: "normal",
     autoPlanSetting: null,
+    autoSignOffSetting: null,
     autoBuildSetting: null,
     updatedAt: command.createdAt,
   };
@@ -2019,6 +2128,10 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
             : { priority: command.priority }),
           ...(command.externalRef === undefined ? {} : { externalRef: command.externalRef }),
           ...(heading === null ? {} : { group: heading }),
+          // A heading plans nothing, so it never carries a review.
+          ...(command.planReview === undefined || heading !== null
+            ? {}
+            : { planReview: command.planReview }),
           dependsOn,
           stage,
           orderKey,
@@ -2680,6 +2793,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         ...(command.autoBuild === undefined ? {} : { autoBuild: command.autoBuild }),
         ...(command.autoMerge === undefined ? {} : { autoMerge: command.autoMerge }),
         ...(command.autoPlan === undefined ? {} : { autoPlan: command.autoPlan }),
+        ...(command.autoSignOff === undefined ? {} : { autoSignOff: command.autoSignOff }),
         ...transitionMerge,
       };
       if (boardCardGroupsEqual(nextGroup, card.group)) {
@@ -2718,6 +2832,8 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       }
       const nextSettings = {
         autoPlanSetting: command.autoPlan === undefined ? card.autoPlanSetting : command.autoPlan,
+        autoSignOffSetting:
+          command.autoSignOff === undefined ? card.autoSignOffSetting : command.autoSignOff,
         autoBuildSetting:
           command.autoBuild === undefined ? card.autoBuildSetting : command.autoBuild,
         autoMergeSetting:
@@ -2725,6 +2841,9 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       };
       const changed: BoardAutomationChanged = {
         ...(nextSettings.autoPlanSetting === card.autoPlanSetting ? {} : { autoPlan: true }),
+        ...(nextSettings.autoSignOffSetting === card.autoSignOffSetting
+          ? {}
+          : { autoSignOff: true }),
         ...(nextSettings.autoBuildSetting === card.autoBuildSetting ? {} : { autoBuild: true }),
         ...(nextSettings.autoMergeSetting === card.autoMergeSetting ? {} : { autoMerge: true }),
       };
@@ -2878,13 +2997,15 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
 
       const dependsOn = proposedDependsOn ?? card.dependsOn;
 
-      // Plan review. Turning it off is always accepted and stops a
-      // running review; changing its rounds mid-review tells the agent.
+      // Plan review. Turning it off is always accepted and stops a running review; a rounds
+      // change moves the target the agent reads at its next round report, and is only the card's
+      // setting once the review is done: nothing reads that target any more.
       const planReviewStep = livePlanReviewStep(board, card.id);
       const planReviewRunning =
         planReviewStep !== null && planReviewStep.planReviewStartedAt !== undefined;
       const changedPlanReviewRounds =
         planReviewRunning &&
+        planReviewStep.planReviewDoneAt === undefined &&
         command.planReview != null &&
         command.planReview.enabled &&
         command.planReview.rounds !== planReviewStep.planReviewRounds
@@ -2904,18 +3025,28 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         planReviewRunning &&
         command.planReview?.enabled === false &&
         card.planReview?.enabled !== false;
-      // Turned on after the plan was posted: nothing will propose again to
-      // start it, so the update does, and the reactor sends the instructions.
-      // Even after the step finished or was paused: the toggle is a
-      // request for the review, so it reopens or resumes the step.
-      const lateReviewStep =
-        !planReviewRunning &&
-        command.planReview?.enabled === true &&
-        card.planReview?.enabled !== true &&
-        boardCardPlans(board, card.id).length > 0 &&
-        !boardCardChildren(board, card.id).some((child) => child.archivedAt === null)
-          ? latePlanReviewStep(board, card, command.createdAt)
-          : null;
+      // Turned on after the plan was posted: armed, not started. Start review
+      // (`board.plan-review.start`) starts it; until then neither automatic path does.
+      const armedStep = (() => {
+        if (
+          planReviewRunning ||
+          command.planReview?.enabled !== true ||
+          card.planReview?.enabled === true ||
+          boardCardPlans(board, card.id).length === 0 ||
+          boardCardChildren(board, card.id).some((child) => child.archivedAt === null) ||
+          latePlanReviewStep(board, card, command.createdAt) === null
+        )
+          return null;
+        const state = boardCardStepState(board, card.id);
+        return state === null || state.planReviewAwaitingStart !== undefined ? null : state;
+      })();
+      // Turning an armed review off disarms it, and so does a reset to the Settings
+      // default: Start review checks the card's own setting, so an armed reset could never start.
+      const disarmedStep = (() => {
+        if (command.planReview !== null && command.planReview?.enabled !== false) return null;
+        const state = boardCardStepState(board, card.id);
+        return state === null || state.planReviewAwaitingStart === undefined ? null : state;
+      })();
       const { planReview: _priorPlanReview, ...cardWithoutPlanReview } = card;
 
       const mergeStrategy =
@@ -3032,35 +3163,43 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
                 },
               },
             ]
-          : lateReviewStep !== null && command.planReview != null
+          : armedStep !== null
             ? [
-                yield* planReviewStartedEvent({
+                yield* planReviewProgressedEvent({
                   command,
-                  state: lateReviewStep,
-                  rounds: command.planReview.rounds,
-                  turnedOnLate: true,
+                  state: { ...armedStep, planReviewAwaitingStart: command.createdAt },
                 }),
               ]
-            : changedPlanReviewRounds !== null && planReviewStep !== null
+            : disarmedStep !== null
               ? [
-                  {
-                    ...(yield* makeBoardEventBase({
-                      cardId: command.cardId,
-                      occurredAt: command.createdAt,
-                      commandId: command.commandId,
-                    })),
-                    type: "board.plan-review-rounds-changed",
-                    payload: {
-                      cardId: command.cardId,
-                      state: {
-                        ...planReviewStep,
-                        planReviewRounds: changedPlanReviewRounds,
-                        updatedAt: command.createdAt,
+                  yield* planReviewProgressedEvent({
+                    command,
+                    state: withoutPlanReviewProgress(disarmedStep),
+                  }),
+                ]
+              : changedPlanReviewRounds !== null && planReviewStep !== null
+                ? [
+                    {
+                      ...(yield* makeBoardEventBase({
+                        cardId: command.cardId,
+                        occurredAt: command.createdAt,
+                        commandId: command.commandId,
+                      })),
+                      type: "board.plan-review-rounds-changed",
+                      payload: {
+                        cardId: command.cardId,
+                        state: {
+                          ...planReviewStep,
+                          planReviewRounds: changedPlanReviewRounds,
+                          updatedAt: command.createdAt,
+                        },
+                        ...(planReviewStep.planReviewRounds === undefined
+                          ? {}
+                          : { previousRounds: planReviewStep.planReviewRounds }),
                       },
                     },
-                  },
-                ]
-              : [];
+                  ]
+                : [];
       if (proposedDependsOn === undefined)
         return stopped.length === 0 ? updated : [updated, ...stopped];
       // A group's dependencies hold back every card inside it.
@@ -3591,6 +3730,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         priority: "normal",
         ...retireBoardCardPullRequest(card),
         autoPlanSetting: null,
+        autoSignOffSetting: null,
         autoBuildSetting: null,
         autoMergeSetting: null,
         autoMergeHold: null,
@@ -4108,6 +4248,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         reviewStep !== null &&
         command.planReview?.enabled === true &&
         reviewStep.planReviewStartedAt === undefined &&
+        reviewStep.planReviewAwaitingStart === undefined &&
         boardCardPlans(board, command.cardId).length > 0
       ) {
         return yield* planReviewStartedEvent({
@@ -4126,7 +4267,19 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
             }
           : undefined;
       const reviewSummary = reviewSummaryAfter({ board, card, completion });
-      return {
+      // A succeeded completion ends a started review that had not said so itself.
+      const reviewDone =
+        planReviewFinished !== undefined &&
+        reviewStep !== null &&
+        reviewStep.planReviewDoneAt === undefined
+          ? [
+              yield* planReviewProgressedEvent({
+                command,
+                state: { ...reviewStep, planReviewDoneAt: command.createdAt },
+              }),
+            ]
+          : [];
+      const completed: PlannedBoardEvent = {
         ...(yield* makeBoardEventBase({
           cardId: command.cardId,
           occurredAt: command.createdAt,
@@ -4144,6 +4297,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           ...(planReviewFinished === undefined ? {} : { planReviewFinished }),
         },
       };
+      return reviewDone.length === 0 ? completed : [...reviewDone, completed];
     }
 
     case "board.card.reopen-step": {
@@ -4286,10 +4440,29 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       const existingById = new Map(
         boardCardPlans(board, command.cardId).map((plan) => [plan.planId, plan]),
       );
+      // A review round stamps the plans it changed; an unchanged plan keeps its stamp.
+      const reviewRound = (() => {
+        const live = livePlanReviewStep(board, command.cardId);
+        return isBoardPlanReviewRunning(live) ? live?.planReviewRound : undefined;
+      })();
       const plans: ReadonlyArray<BoardPlanWithBody> = command.plans.map((plan, index) => {
         const planId = boardPlanId(command.cardId, plan.key);
         const prior = existingById.get(planId);
+        const resolved = {
+          title: plan.title,
+          summary: plan.summary,
+          dependsOn: plan.dependsOn.map((dependency) => boardPlanId(command.cardId, dependency)),
+          body: plan.body,
+        };
+        const revisedInRound = boardPlanChanged(
+          prior,
+          resolved,
+          context?.planBodies?.get(String(planId)),
+        )
+          ? reviewRound
+          : prior?.revisedInRound;
         return {
+          ...(revisedInRound === undefined ? {} : { revisedInRound }),
           planId,
           cardId: command.cardId,
           title: plan.title,
@@ -4322,6 +4495,21 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
                 mergeTarget: command.recommendedMergeTarget ?? fallback.mergeTarget,
               };
             })();
+      // T3o: a re-proposal that changes the split drops its deferred approval; a body edit
+      // keeps it (T3O-105). First, so the proposal's rationale lands on top of the card.
+      const approvalDropped: ReadonlyArray<PlannedBoardEvent> =
+        proposalCard.pendingSplitApproval !== undefined &&
+        (plans.length < 2 ||
+          boardSplitFingerprint(plans) !== proposalCard.pendingSplitApproval.fingerprint)
+          ? [
+              yield* splitApprovalChangedEvent({
+                command,
+                card: proposalCard,
+                change: "dropped",
+                round: reviewRound,
+              }),
+            ]
+          : [];
       const proposed: PlannedBoardEvent = {
         ...(yield* makeBoardEventBase({
           cardId: command.cardId,
@@ -4345,11 +4533,22 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           : null;
       // T3o: a single plan's size is the card's own planner size (T3O-86); a split's
       // reaches each child at approval.
-      const sized = yield* plannerSizeRecorded({ board, command, card: proposalCard, plans });
-      if (reviewStep === null || reviewStep.planReviewStartedAt !== undefined) {
-        return sized === null ? proposed : [proposed, sized];
+      // T3o: the size event carries the whole card, so it must not restore a dropped approval.
+      const sizedCard =
+        approvalDropped.length === 0
+          ? proposalCard
+          : (({ pendingSplitApproval: _dropped, ...rest }) => rest)(proposalCard);
+      const sized = yield* plannerSizeRecorded({ board, command, card: sizedCard, plans });
+      // An armed review waits for Start review, however many times the agent proposes.
+      if (
+        reviewStep === null ||
+        reviewStep.planReviewStartedAt !== undefined ||
+        reviewStep.planReviewAwaitingStart !== undefined
+      ) {
+        return [...approvalDropped, proposed, ...(sized === null ? [] : [sized])];
       }
       return [
+        ...approvalDropped,
         proposed,
         ...(sized === null ? [] : [sized]),
         yield* planReviewStartedEvent({
@@ -4358,6 +4557,141 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           rounds: command.planReview?.rounds ?? reviewStep.planReviewRounds ?? 1,
         }),
       ];
+    }
+
+    // T3o: approve a split to take effect when the plan review finishes (T3O-105). The reactor
+    // dispatches `board.plans.approve` with these settings when the planning step completes.
+    case "board.split.approve-after-review": {
+      const card = yield* requireActiveBoardCard({ board, command });
+      if (!boardSplitApprovalModes(livePlanReviewStep(board, card.id)).afterReview) {
+        return yield* invariant(
+          command,
+          `No plan review is running on card '${card.key}' and its planning is not paused; approve the split directly instead.`,
+        );
+      }
+      if (!boardCardPendingSplit(board, card.id)) {
+        return yield* invariant(
+          command,
+          `Card '${card.key}' has no proposed split to approve: it needs at least two plans and no live child cards.`,
+        );
+      }
+      const plans = boardCardPlans(board, card.id);
+      const recommendation = boardSplitRecommendationOf(board, card);
+      return yield* splitApprovalChangedEvent({
+        command,
+        card: {
+          ...card,
+          pendingSplitApproval: {
+            autoBuild: command.autoBuild ?? recommendation.autoBuild,
+            mergeTarget: command.mergeTarget ?? recommendation.mergeTarget,
+            ...(command.autoPlan === undefined ? {} : { autoPlan: command.autoPlan }),
+            ...(command.autoSignOff === undefined ? {} : { autoSignOff: command.autoSignOff }),
+            ...(command.autoMerge === undefined ? {} : { autoMerge: command.autoMerge }),
+            fingerprint: boardSplitFingerprint(plans),
+            approvedAt: command.createdAt,
+          },
+        },
+        change: "approved",
+        round: livePlanReviewStep(board, card.id)?.planReviewRound,
+      });
+    }
+
+    case "board.split.cancel-approval":
+    case "board.split.record-approval-refused": {
+      const card = yield* requireActiveBoardCard({ board, command });
+      if (card.pendingSplitApproval === undefined) {
+        return yield* invariant(
+          command,
+          `Card '${card.key}' has no split approval waiting for its review to finish.`,
+        );
+      }
+      return yield* splitApprovalChangedEvent({
+        command,
+        card,
+        change: command.type === "board.split.cancel-approval" ? "undone" : "refused",
+        round: livePlanReviewStep(board, card.id)?.planReviewRound,
+        ...(command.type === "board.split.record-approval-refused"
+          ? { detail: command.detail }
+          : {}),
+      });
+    }
+
+    // T3o: Start review on an armed plan review (T3O-104). Reopens a settled plan step or
+    // resumes a paused one, and the reactor sends the one late-start turn.
+    case "board.plan-review.start": {
+      const card = yield* requireActiveBoardCard({ board, command });
+      const state = boardCardStepState(board, card.id);
+      if (state === null || state.planReviewAwaitingStart === undefined) {
+        return yield* invariant(
+          command,
+          `Card '${card.key}' has no plan review waiting to start. Turn plan review on after the plan is posted, then start it.`,
+        );
+      }
+      if (card.planReview?.enabled !== true) {
+        return yield* invariant(command, `Plan review is off for card '${card.key}'.`);
+      }
+      if (boardCardChildren(board, card.id).some((child) => child.archivedAt === null)) {
+        return yield* invariant(
+          command,
+          `Card '${card.key}' has materialised child cards; its plans are frozen, so there is nothing to review.`,
+        );
+      }
+      const reviewStep = latePlanReviewStep(board, card, command.createdAt);
+      if (reviewStep === null) {
+        return yield* invariant(
+          command,
+          `Card '${card.key}' has no planning step a review can run on; it may have left Planning or its step failed.`,
+        );
+      }
+      return yield* planReviewStartedEvent({
+        command,
+        state: reviewStep,
+        rounds: card.planReview.rounds,
+        turnedOnLate: true,
+      });
+    }
+
+    // T3o: the planning agent's round report (T3O-104). A round past the target ends the
+    // review, so the next call after a lowered target reads `continue: false`.
+    case "board.plan-review.round-started": {
+      const card = yield* requireActiveBoardCard({ board, command });
+      const state = livePlanReviewStep(board, card.id);
+      if (state === null || !isBoardPlanReviewRunning(state)) {
+        return yield* invariant(
+          command,
+          `No plan review is running on card '${card.key}'. Finish as the step's instructions say.`,
+        );
+      }
+      if (command.round === undefined && command.finished !== true) {
+        return yield* invariant(command, "Pass the round you are starting, or finished: true.");
+      }
+      const target = state.planReviewRounds ?? 1;
+      const done =
+        command.finished === true || (command.round !== undefined && command.round > target);
+      return yield* planReviewProgressedEvent({
+        command,
+        state: {
+          ...state,
+          ...(command.round === undefined ? {} : { planReviewRound: command.round }),
+          ...(done ? { planReviewDoneAt: command.createdAt } : {}),
+          ...(command.policySent === undefined ? {} : { planReviewPolicySent: command.policySent }),
+        },
+      });
+    }
+
+    case "board.plan-review.policy-sent": {
+      yield* requireActiveBoardCard({ board, command });
+      const state = boardCardStepState(board, command.cardId);
+      if (state === null || state.stepId !== command.stepId) {
+        return yield* invariant(
+          command,
+          `Step '${command.stepId}' is not the live step of card '${command.cardId}'.`,
+        );
+      }
+      return yield* planReviewProgressedEvent({
+        command,
+        state: { ...state, planReviewPolicySent: command.policySent },
+      });
     }
 
     case "board.plan.write": {
@@ -4387,7 +4721,13 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           `Plan '${command.planId}' is locked (materialised to .plans/); edit the file instead.`,
         );
       }
-      const nextPlan: BoardPlan = { ...plan, updatedAt: command.createdAt };
+      const live = livePlanReviewStep(board, command.cardId);
+      const reviewRound = isBoardPlanReviewRunning(live) ? live?.planReviewRound : undefined;
+      const nextPlan: BoardPlan = {
+        ...plan,
+        ...(reviewRound === undefined ? {} : { revisedInRound: reviewRound }),
+        updatedAt: command.createdAt,
+      };
       return {
         ...(yield* makeBoardEventBase({
           cardId: command.cardId,
@@ -4428,6 +4768,13 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
             )}', ${state.status}); finish or stop it before approving a split.`,
           );
         }
+      }
+      // T3o: approving now freezes the plans, which would end a running review (T3O-105).
+      if (!boardSplitApprovalModes(livePlanReviewStep(board, card.id)).now) {
+        return yield* invariant(
+          command,
+          `A plan review is running on card '${card.key}'; approving the split now would freeze its plans and end the review. Approve it after review instead (board.split.approve-after-review): the cards are created when the review finishes.`,
+        );
       }
       {
         // Only LIVE children block re-approval, so a fully archived first round does not
@@ -4485,10 +4832,18 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       // planned on its own; a planned one lands on the floor.
       const backlog = boardProjectFirstStageId(board, card.projectId);
       const recommendation = boardSplitRecommendationOf(board, card);
+      const cardAutomation = resolveBoardCardAutomationIn({
+        board,
+        card,
+        boardWideAutoMerge: false,
+      });
       const settings = {
         autoBuild: command.autoBuild ?? recommendation.autoBuild,
         target: command.mergeTarget ?? recommendation.mergeTarget,
-        ...(command.autoPlan === undefined ? {} : { autoPlan: command.autoPlan }),
+        // The card's own planning automation carries over to the group: sign-off alone
+        // would sit inert until someone turned the group's Auto-plan on.
+        autoPlan: command.autoPlan ?? cardAutomation.autoPlan.value,
+        autoSignOff: command.autoSignOff ?? cardAutomation.autoSignOff.value,
         ...(command.autoMerge === undefined ? {} : { autoMerge: command.autoMerge }),
       };
       // The graph is agent-authored and therefore re-validated at the gate —
@@ -4578,6 +4933,8 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
                   },
                 }),
             ...(card.priority === "normal" ? {} : { priority: card.priority }),
+            // A child plans the way its parent did; an unplanned one is reviewed again.
+            ...(card.planReview === undefined ? {} : { planReview: card.planReview }),
             stage,
             orderKey,
             createdAt: command.createdAt,
@@ -4598,6 +4955,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         // Its children copied its priority above; a group has none.
         priority: "normal",
         autoPlanSetting: null,
+        autoSignOffSetting: null,
         autoBuildSetting: null,
         updatedAt: command.createdAt,
       };
@@ -6720,6 +7078,28 @@ function boardAdoptionCommands(command: BoardCommand): ReadonlyArray<BoardComman
   ];
 }
 
+/** Strip a pending split approval from any card an event leaves outside the plan stage,
+    archives, or approves the split of. */
+function withSettledSplitApproval(decided: BoardDecision, board: BoardState): BoardDecision {
+  const planStageId = boardStageWithRole(board, "plan")?.stageId;
+  const events = boardDecidedEvents(decided);
+  if (!events.some((event) => settlesSplitApproval(event, planStageId))) return decided;
+  return events.map((event) => {
+    if (!settlesSplitApproval(event, planStageId)) return event;
+    const payload = event.payload as { readonly card: BoardCard };
+    const { pendingSplitApproval: _settled, ...card } = payload.card;
+    return { ...event, payload: { ...payload, card } } as PlannedBoardEvent;
+  });
+}
+
+function settlesSplitApproval(event: PlannedBoardEvent, planStageId: BoardStageId | undefined) {
+  const card = (event.payload as { readonly card?: BoardCard }).card;
+  if (card?.pendingSplitApproval === undefined) return false;
+  return (
+    event.type === "board.plans-approved" || card.archivedAt !== null || card.stage !== planStageId
+  );
+}
+
 export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* (input: {
   readonly command: BoardCommand;
   readonly readModel: BoardReadModel;
@@ -6763,7 +7143,11 @@ const decideOneBoardCommand = Effect.fn("decideOneBoardCommand")(function* (inpu
   BoardCommandInvariantError | PlatformError.PlatformError,
   SecureRandom.SecureRandom
 > {
-  const decided = yield* decideBoardCommandCore(input);
+  // T3o: a deferred split approval never outlives Planning, an archive or the approval (T3O-105).
+  const decided = withSettledSplitApproval(
+    yield* decideBoardCommandCore(input),
+    input.readModel.board ?? EMPTY_BOARD_STATE,
+  );
   const command = input.command;
   if (!GROUP_DERIVING_COMMANDS.has(command.type)) return decided;
   const planned = boardDecidedEvents(decided);

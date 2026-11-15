@@ -59,8 +59,10 @@ import {
   BoardPlansApprovedPayload,
   BoardPlansProposedPayload,
   BoardPlanReviewStartedPayload,
+  BoardSplitApprovalChangedPayload,
   BoardPlanReviewStoppedPayload,
   BoardPlanReviewRoundsChangedPayload,
+  BoardPlanReviewProgressedPayload,
   BoardCardBaseRefRecordedPayload,
   BoardCardPlacedPayload,
   BoardCardWorkerMoveRecordedPayload,
@@ -135,11 +137,17 @@ const decodeBoardPlansProposedPayload = Schema.decodeUnknownEffect(BoardPlansPro
 const decodeBoardPlanReviewStartedPayload = Schema.decodeUnknownEffect(
   BoardPlanReviewStartedPayload,
 );
+const decodeBoardSplitApprovalChangedPayload = Schema.decodeUnknownEffect(
+  BoardSplitApprovalChangedPayload,
+);
 const decodeBoardPlanReviewStoppedPayload = Schema.decodeUnknownEffect(
   BoardPlanReviewStoppedPayload,
 );
 const decodeBoardPlanReviewRoundsChangedPayload = Schema.decodeUnknownEffect(
   BoardPlanReviewRoundsChangedPayload,
+);
+const decodeBoardPlanReviewProgressedPayload = Schema.decodeUnknownEffect(
+  BoardPlanReviewProgressedPayload,
 );
 const decodeBoardPlanWrittenPayload = Schema.decodeUnknownEffect(BoardPlanWrittenPayload);
 const decodeBoardPlansApprovedPayload = Schema.decodeUnknownEffect(BoardPlansApprovedPayload);
@@ -255,6 +263,7 @@ export function boardCardFromCreatedPayload(payload: BoardCardCreatedPayload): B
     threadLinks: [],
     attachments: [],
     externalRef: payload.externalRef ?? null,
+    ...(payload.planReview === undefined ? {} : { planReview: payload.planReview }),
     // No overrides at birth, split children included: that is what makes a
     // child resolve its parent's model overrides.
     humanInLoop: null,
@@ -285,6 +294,7 @@ export function boardCardFromCreatedPayload(payload: BoardCardCreatedPayload): B
     // no create-command field to set it with. Nor born auto-merging, for the same reason — and
     // with nothing merged, nothing held.
     autoPlanSetting: null,
+    autoSignOffSetting: null,
     autoBuildSetting: null,
     autoMergeSetting: null,
     autoMergeHold: null,
@@ -595,6 +605,23 @@ function replaceCardPlans<M extends BoardReadModel>(
   return { ...model, board: { ...board, plans: next } };
 }
 
+/** Drop every `revisedInRound` stamp on a card's plans: a new review starts. */
+function clearPlansRevisedInRound<M extends BoardReadModel>(
+  model: M,
+  cardId: BoardPlan["cardId"],
+): M {
+  const board = model.board ?? EMPTY_BOARD_STATE;
+  const current = board.plans ?? [];
+  if (!current.some((plan) => plan.cardId === cardId && plan.revisedInRound !== undefined))
+    return model;
+  const plans = current.map((plan) => {
+    if (plan.cardId !== cardId || plan.revisedInRound === undefined) return plan;
+    const { revisedInRound: _round, ...rest } = plan;
+    return rest;
+  });
+  return { ...model, board: { ...board, plans } };
+}
+
 /** Upsert one plan's metadata (board_write_plan bumps `updatedAt`). */
 function upsertPlan<M extends BoardReadModel>(model: M, plan: BoardPlan): M {
   const board = model.board ?? EMPTY_BOARD_STATE;
@@ -766,6 +793,13 @@ export function projectBoardEvent<M extends BoardReadModel>(
       return decodeBoardPlanWrittenPayload(event.payload).pipe(
         Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
         Effect.map((payload) => upsertPlan(model, payload.plan)),
+      );
+
+    // T3o: the deferred split approval rides the card (T3O-105).
+    case "board.split-approval-changed":
+      return decodeBoardSplitApprovalChangedPayload(event.payload).pipe(
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => upsertCard(model, payload.card)),
       );
 
     case "board.plans-approved":
@@ -975,6 +1009,15 @@ export function projectBoardEvent<M extends BoardReadModel>(
     case "board.plan-review-started":
       return decodeBoardPlanReviewStartedPayload(event.payload).pipe(
         Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
+        // A new review starts every plan unstamped.
+        Effect.map((payload) =>
+          clearPlansRevisedInRound(upsertStepState(model, payload.state), payload.cardId),
+        ),
+      );
+
+    case "board.plan-review-progressed":
+      return decodeBoardPlanReviewProgressedPayload(event.payload).pipe(
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
         Effect.map((payload) => upsertStepState(model, payload.state)),
       );
 
@@ -1121,6 +1164,8 @@ export function boardShellStreamEvent(event: BoardEvent): Option.Option<BoardShe
     case "board.card-worker-move-recorded":
     // Worker removed is a shell field on the card aggregate.
     case "board.card-worker-removal":
+    // T3o: the deferred split approval is card state (T3O-105).
+    case "board.split-approval-changed":
       return Option.some({
         kind: "card-upserted",
         sequence: event.sequence,
@@ -1392,6 +1437,7 @@ export function boardShellStreamEvent(event: BoardEvent): Option.Option<BoardShe
     case "board.plan-review-started":
     case "board.plan-review-stopped":
     case "board.plan-review-rounds-changed":
+    case "board.plan-review-progressed":
     // Branch cleanup is card DETAIL too: it lands on the activity rail, which
     // rides `board.subscribeCard`, and changes nothing a column card renders.
     case "board.card-note-recorded":

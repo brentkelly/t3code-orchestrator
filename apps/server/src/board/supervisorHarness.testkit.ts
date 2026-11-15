@@ -181,6 +181,7 @@ export const makeBoardCard = (input: {
   /** The card's auto-start arm. Absent is unarmed. */
   readonly autoStart?: boolean;
   readonly autoPlanSetting?: boolean | null;
+  readonly autoSignOffSetting?: boolean | null;
   readonly autoBuildSetting?: boolean | null;
   readonly autoMergeSetting?: boolean | null;
   /** The per-card auto-merge arm. */
@@ -238,6 +239,7 @@ export const makeBoardCard = (input: {
   // `autoStart` / `autoMerge` are the legacy spellings of an own
   // Auto-build / Auto-merge on.
   autoPlanSetting: input.autoPlanSetting ?? null,
+  autoSignOffSetting: input.autoSignOffSetting ?? null,
   autoBuildSetting: input.autoBuildSetting ?? (input.autoStart === true ? true : null),
   autoMergeSetting: input.autoMergeSetting ?? (input.autoMerge === true ? true : null),
   autoMergeHold: input.autoMergeHold ?? null,
@@ -1288,6 +1290,10 @@ export function withGovernor(
           // changed mid-review.
           event.type === "board.plan-review-started" ||
           event.type === "board.plan-review-rounds-changed" ||
+          // And turned off: the card edit's other event, which clears the review off the step.
+          event.type === "board.plan-review-stopped" ||
+          // T3o: a split approved after review, a client command (T3O-105).
+          event.type === "board.split-approval-changed" ||
           // T3o: a delete leaves the board, so the card's room goes back to its worker
           // (T3O-86).
           event.type === "board.card-deleted"
@@ -1540,6 +1546,7 @@ const cardAutomationUpdated = (
   card: BoardCard,
   settings: {
     readonly autoPlan?: boolean | null;
+    readonly autoSignOff?: boolean | null;
     readonly autoBuild?: boolean | null;
     readonly autoMerge?: boolean | null;
   },
@@ -1553,11 +1560,13 @@ const cardAutomationUpdated = (
       card: {
         ...card,
         ...(settings.autoPlan === undefined ? {} : { autoPlanSetting: settings.autoPlan }),
+        ...(settings.autoSignOff === undefined ? {} : { autoSignOffSetting: settings.autoSignOff }),
         ...(settings.autoBuild === undefined ? {} : { autoBuildSetting: settings.autoBuild }),
         ...(settings.autoMerge === undefined ? {} : { autoMergeSetting: settings.autoMerge }),
       },
       automationChanged: {
         ...(settings.autoPlan === undefined ? {} : { autoPlan: true }),
+        ...(settings.autoSignOff === undefined ? {} : { autoSignOff: true }),
         ...(settings.autoBuild === undefined ? {} : { autoBuild: true }),
         ...(settings.autoMerge === undefined ? {} : { autoMerge: true }),
       },
@@ -1645,6 +1654,7 @@ export const setAutomation = (
   cardId: BoardCardId,
   settings: {
     readonly autoPlan?: boolean | null;
+    readonly autoSignOff?: boolean | null;
     readonly autoBuild?: boolean | null;
     readonly autoMerge?: boolean | null;
   },
@@ -1663,6 +1673,9 @@ export const setAutomation = (
             updated = {
               ...card,
               ...(settings.autoPlan === undefined ? {} : { autoPlanSetting: settings.autoPlan }),
+              ...(settings.autoSignOff === undefined
+                ? {}
+                : { autoSignOffSetting: settings.autoSignOff }),
               ...(settings.autoBuild === undefined ? {} : { autoBuildSetting: settings.autoBuild }),
               ...(settings.autoMerge === undefined ? {} : { autoMergeSetting: settings.autoMerge }),
             };

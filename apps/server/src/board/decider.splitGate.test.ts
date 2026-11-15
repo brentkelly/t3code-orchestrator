@@ -8,9 +8,13 @@ import {
   BoardCardId,
   BoardStageId,
   boardPlanId,
+  boardSplitFingerprint,
   CommandId,
   ProjectId,
+  ProviderInstanceId,
+  ThreadId,
   type BoardCard,
+  type BoardCardStepState,
   type BoardCardGroupTarget,
   type BoardPlan,
   type BoardProposedPlanInput,
@@ -60,6 +64,7 @@ function makeCard(
     baseBranch: null,
     scheduledStartAt: null,
     autoPlanSetting: null,
+    autoSignOffSetting: null,
     autoBuildSetting: null,
     autoMergeSetting: null,
     autoMergeHold: null,
@@ -113,11 +118,13 @@ function makeBoard(input: {
   readonly parent?: Partial<Parameters<typeof makeCard>[0]>;
   readonly extraCards?: ReadonlyArray<BoardCard>;
   readonly plans?: ReadonlyArray<BoardPlan>;
+  readonly stepStates?: ReadonlyArray<BoardCardStepState>;
 }): BoardState {
   const parent = makeCard({ id: "card-parent", key: "T3-190", cardNumber: 190, ...input.parent });
   return {
     cards: [parent, ...(input.extraCards ?? [])],
     plans: input.plans ?? [],
+    ...(input.stepStates === undefined ? {} : { stepStates: input.stepStates }),
     nextCardNumberByProject: { [projectId]: 191 },
   };
 }
@@ -184,12 +191,16 @@ const approve = (input?: {
   readonly cardId?: string;
   readonly autoBuild?: boolean;
   readonly mergeTarget?: BoardCardGroupTarget;
+  readonly autoPlan?: boolean;
+  readonly autoSignOff?: boolean;
 }): BoardCommand => ({
   type: "board.plans.approve",
   commandId: CommandId.make("cmd-approve"),
   cardId: BoardCardId.make(input?.cardId ?? "card-parent"),
   ...(input?.autoBuild === undefined ? {} : { autoBuild: input.autoBuild }),
   ...(input?.mergeTarget === undefined ? {} : { mergeTarget: input.mergeTarget }),
+  ...(input?.autoPlan === undefined ? {} : { autoPlan: input.autoPlan }),
+  ...(input?.autoSignOff === undefined ? {} : { autoSignOff: input.autoSignOff }),
   createdAt: NOW,
 });
 
@@ -219,6 +230,7 @@ const ownGroup = makeCard({
     autoBuild: true,
     autoMerge: false,
     autoPlan: false,
+    autoSignOff: false,
     started: true,
     placed: BOARD_SEED_STAGE_IDS.ready,
     prevStage: BOARD_SEED_STAGE_IDS.planning,
@@ -453,7 +465,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("split gate (T3O-
     Effect.gen(function* () {
       const approved = approvedEvent(
         yield* decideEvents(
-          approve({ autoBuild: true, mergeTarget: "own" }),
+          approve({ autoBuild: true, mergeTarget: "own", autoPlan: true, autoSignOff: true }),
           makeBoard({
             parent: {
               splitRationale: WHY,
@@ -466,8 +478,25 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("split gate (T3O-
       expect(approved.payload.card.group).toMatchObject({
         target: "own",
         autoBuild: true,
+        autoPlan: true,
+        autoSignOff: true,
         started: false,
       });
+    }),
+  );
+
+  it.effect("carries the card's own Auto-plan and Auto sign-off to the group by default", () =>
+    Effect.gen(function* () {
+      const plans = [makePlan({ key: "p1", ordinal: 0 }), makePlan({ key: "p2", ordinal: 1 })];
+      const handsOff = approvedEvent(
+        yield* decideEvents(
+          approve(),
+          makeBoard({ parent: { autoPlanSetting: true, autoSignOffSetting: true }, plans }),
+        ),
+      );
+      expect(handsOff.payload.card.group).toMatchObject({ autoPlan: true, autoSignOff: true });
+      const manual = approvedEvent(yield* decideEvents(approve(), makeBoard({ plans })));
+      expect(manual.payload.card.group).toMatchObject({ autoPlan: false, autoSignOff: false });
     }),
   );
 
@@ -527,6 +556,213 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("split gate (T3O-
         expect(created.payload.parentCardId).toBe(child.id);
         expect(created.payload.stage).toBe(BOARD_SEED_STAGE_IDS.ready);
       }
+    }),
+  );
+
+  // ── T3O-105: approve after review ─────────────────────────────────
+
+  const planStep = (overrides: Partial<BoardCardStepState> = {}): BoardCardStepState => ({
+    cardId: parentId,
+    stepId: "planning",
+    stepLabel: null,
+    stageLabel: "Planning",
+    attempt: 1,
+    stallCount: 0,
+    stageEntryRecoveries: 0,
+    humanTurnAt: null,
+    awaitingReason: "question",
+    stalledReason: "gave-up",
+    retryAt: null,
+    lastNudgeAt: null,
+    prompt: "plan it",
+    providerInstanceId: ProviderInstanceId.make("claude"),
+    model: "opus",
+    mode: "plan",
+    runtimeMode: "approval-required",
+    humanInLoop: true,
+    maxAttempts: 3,
+    timeoutMs: 1000,
+    baseTipAtRoundStart: null,
+    lastError: null,
+    threadId: ThreadId.make("thread-plan"),
+    status: "running",
+    slotHeld: false,
+    forceStart: false,
+    queuedBy: null,
+    queuedDetail: null,
+    startedAt: NOW,
+    updatedAt: NOW,
+    planReviewStartedAt: NOW,
+    planReviewRounds: 3,
+    planReviewRound: 2,
+    ...overrides,
+  });
+  const splitPlans = [makePlan({ key: "a", ordinal: 0 }), makePlan({ key: "b", ordinal: 1 })];
+  const reviewing = (overrides?: {
+    readonly step?: Partial<BoardCardStepState>;
+    readonly parent?: Partial<Parameters<typeof makeCard>[0]>;
+  }) =>
+    makeBoard({
+      plans: splitPlans,
+      stepStates: [planStep(overrides?.step)],
+      ...(overrides?.parent === undefined ? {} : { parent: overrides.parent }),
+    });
+  const pending = {
+    autoBuild: false,
+    mergeTarget: "inherit" as const,
+    autoPlan: true,
+    fingerprint: boardSplitFingerprint(splitPlans),
+    approvedAt: NOW,
+  };
+  const approveAfterReview = (overrides?: {
+    readonly autoBuild?: boolean;
+    readonly mergeTarget?: BoardCardGroupTarget;
+    readonly autoPlan?: boolean;
+  }): BoardCommand => ({
+    type: "board.split.approve-after-review",
+    commandId: CommandId.make("cmd-approve-after-review"),
+    cardId: parentId,
+    ...overrides,
+    createdAt: NOW,
+  });
+  const undo: BoardCommand = {
+    type: "board.split.cancel-approval",
+    commandId: CommandId.make("cmd-undo"),
+    cardId: parentId,
+    createdAt: NOW,
+  };
+  const approvalChanged = (events: ReadonlyArray<PlannedBoardEvent>) =>
+    events.flatMap((event) => (event.type === "board.split-approval-changed" ? [event] : []));
+
+  it.effect("refuses a direct approve while a plan review is running", () =>
+    Effect.gen(function* () {
+      const error = yield* Effect.flip(decideEvents(approve(), reviewing()));
+      expect(error.message).toContain("board.split.approve-after-review");
+    }),
+  );
+
+  it.effect("allows a direct approve once the review is done, or while the step is parked", () =>
+    Effect.gen(function* () {
+      approvedEvent(yield* decideEvents(approve(), reviewing({ step: { planReviewDoneAt: NOW } })));
+      approvedEvent(yield* decideEvents(approve(), reviewing({ step: { status: "paused" } })));
+    }),
+  );
+
+  it.effect("stores an approval after review with the gate's settings and the split", () =>
+    Effect.gen(function* () {
+      const [event, ...rest] = approvalChanged(
+        yield* decideEvents(
+          approveAfterReview({ autoBuild: false, mergeTarget: "inherit", autoPlan: true }),
+          reviewing(),
+        ),
+      );
+      expect(rest).toEqual([]);
+      expect(event?.payload).toMatchObject({ change: "approved", round: 2 });
+      expect(event?.payload.card.pendingSplitApproval).toEqual(pending);
+    }),
+  );
+
+  it.effect("refuses approve after review with no review running, or on a single plan", () =>
+    Effect.gen(function* () {
+      yield* Effect.flip(
+        decideEvents(approveAfterReview(), reviewing({ step: { planReviewDoneAt: NOW } })),
+      );
+      yield* Effect.flip(
+        decideEvents(
+          approveAfterReview(),
+          makeBoard({ plans: [splitPlans[0]!], stepStates: [planStep()] }),
+        ),
+      );
+    }),
+  );
+
+  it.effect("Undo clears the approval, and refuses when nothing is pending", () =>
+    Effect.gen(function* () {
+      const [event] = approvalChanged(
+        yield* decideEvents(undo, reviewing({ parent: { pendingSplitApproval: pending } })),
+      );
+      expect(event?.payload.change).toBe("undone");
+      expect(event?.payload.card.pendingSplitApproval).toBeUndefined();
+      yield* Effect.flip(decideEvents(undo, reviewing()));
+    }),
+  );
+
+  it.effect("drops the approval when a re-proposal changes the split, with the round", () =>
+    Effect.gen(function* () {
+      const events = yield* decideEvents(
+        propose({ plans: [proposedPlan("a"), proposedPlan("b"), proposedPlan("c")] }),
+        reviewing({ parent: { pendingSplitApproval: pending } }),
+      );
+      const [dropped] = approvalChanged(events);
+      expect(dropped?.payload).toMatchObject({ change: "dropped", round: 2 });
+      expect(dropped?.payload.card.pendingSplitApproval).toBeUndefined();
+      // Before the proposal, so the proposal's rationale lands on the card last.
+      expect(events.indexOf(dropped!)).toBeLessThan(events.indexOf(proposedEvent(events)));
+      // Folded into one sized plan: the size event must not carry the approval back.
+      const folded = yield* decideEvents(
+        propose({
+          plans: [
+            proposedPlan("a", { size: { cpu: "L", ram: "M", disk: "S" }, sizeReason: "big" }),
+          ],
+        }),
+        reviewing({ parent: { pendingSplitApproval: pending } }),
+      );
+      expect(approvalChanged(folded)).toHaveLength(1);
+      const sized = folded.find((event) => event.type === "board.card-resources-recorded");
+      expect(sized).toBeDefined();
+      expect(
+        (sized!.payload as { card: { pendingSplitApproval?: unknown } }).card.pendingSplitApproval,
+      ).toBeUndefined();
+    }),
+  );
+
+  it.effect("keeps the approval on a body edit or a re-proposal of the same split", () =>
+    Effect.gen(function* () {
+      const board = reviewing({ parent: { pendingSplitApproval: pending } });
+      const write = yield* decideEvents(
+        {
+          type: "board.plan.write",
+          commandId: CommandId.make("cmd-write"),
+          cardId: parentId,
+          planId: splitPlans[0]!.planId,
+          body: "# revised",
+          createdAt: NOW,
+        },
+        board,
+      );
+      expect(approvalChanged(write)).toEqual([]);
+      const same = yield* decideEvents(
+        propose({
+          plans: ["a", "b"].map((key) =>
+            proposedPlan(key, { title: `Plan ${key}`, body: "# revised body" }),
+          ),
+        }),
+        board,
+      );
+      expect(approvalChanged(same)).toEqual([]);
+    }),
+  );
+
+  it.effect("clears the approval when the split is approved or the card leaves Planning", () =>
+    Effect.gen(function* () {
+      const settled = reviewing({
+        parent: { pendingSplitApproval: pending },
+        step: { status: "succeeded" },
+      });
+      const approved = approvedEvent(yield* decideEvents(approve(), settled));
+      expect(approved.payload.card.pendingSplitApproval).toBeUndefined();
+      const moved = (yield* decideEvents(
+        {
+          type: "board.card.move",
+          commandId: CommandId.make("cmd-move"),
+          cardId: parentId,
+          toStage: BOARD_SEED_STAGE_IDS.sprint,
+          createdAt: NOW,
+        },
+        settled,
+      )).find((event) => event.type === "board.card-moved");
+      assert.ok(moved?.type === "board.card-moved");
+      expect(moved.payload.card.pendingSplitApproval).toBeUndefined();
     }),
   );
 });
