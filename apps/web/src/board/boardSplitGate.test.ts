@@ -37,7 +37,13 @@ describe("boardSplitGateView", () => {
       view.rows.map((row) => [row.number, row.after, row.planned, row.lands, row.revised]),
     ).toEqual([
       ["#1", null, true, "→ Ready", null],
-      ["#2", "after #1", false, "→ Backlog", "Revised r2"],
+      [
+        "#2",
+        "after #1",
+        false,
+        "→ Backlog",
+        { label: "Revised r2", hint: "Changed by plan review round 2" },
+      ],
       ["#3", "after #1, #2", true, "→ Ready", null],
     ]);
     expect(view.count).toBe("3 cards");

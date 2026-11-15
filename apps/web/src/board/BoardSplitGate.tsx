@@ -28,13 +28,16 @@ export function BoardSplitGate(props: {
   readonly footer: BoardSplitDockFooter;
   /** An approval the board dropped or could not apply, in violet. */
   readonly lostNote: string | null;
+  /** The Auto-build and Merge target to approve with, held by the panel so a remount keeps them. */
+  readonly settings: BoardSplitGateSettings;
+  readonly onSettingsChange: (settings: BoardSplitGateSettings) => void;
   readonly onApprove: (settings: BoardSplitGateSettings) => void;
   readonly onApproveAfterReview: (settings: BoardSplitGateSettings) => void;
   readonly onAskForChanges: () => void;
   readonly onCollapse: () => void;
 }) {
   const recommended = props.recommendation;
-  const [settings, setSettings] = useState<BoardSplitGateSettings>(recommended);
+  const { settings, onSettingsChange: setSettings } = props;
   const [choosing, setChoosing] = useState(false);
   const [pick, setPick] = useState<"after" | "now">("after");
   const view = boardSplitGateView({ ...props, recommendation: recommended, settings });
@@ -88,9 +91,9 @@ export function BoardSplitGate(props: {
               )}
             </span>
             {row.revised === null ? null : (
-              <BoardHint label="Changed by this plan review round">
+              <BoardHint label={row.revised.hint}>
                 <span className="inline-flex h-5 shrink-0 items-center rounded-md border border-input px-1.5 text-board-11 font-medium text-muted-foreground">
-                  {row.revised}
+                  {row.revised.label}
                 </span>
               </BoardHint>
             )}

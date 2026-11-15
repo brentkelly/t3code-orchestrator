@@ -2961,11 +2961,33 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
       ? boardSplitApprovalLostFromActivity(props.detail.activity)
       : null,
   };
+  // The gate's unsaved Auto-build and Merge target edits live here, not in the gate: the gate
+  // renders inside the per-thread chat and remounts on a tab switch, a chat load or a collapse.
+  // A changed split or recommendation is a new gate; a plan body edit keeps the edits.
+  const splitGateKey =
+    props.splitGate === null
+      ? null
+      : `${card.id}:${boardSplitFingerprint(props.detail.plans)}:${JSON.stringify(props.splitGate.recommendation)}`;
+  const [splitGateEdit, setSplitGateEdit] = useState<{
+    readonly key: string;
+    readonly settings: BoardSplitGateSettings;
+  } | null>(null);
+  const splitGateSettings =
+    props.splitGate === null
+      ? null
+      : splitGateEdit !== null && splitGateEdit.key === splitGateKey
+        ? splitGateEdit.settings
+        : props.splitGate.recommendation;
   const splitDockExpanded = boardSplitDockExpanded(splitDockInput, splitDockStored);
   const setSplitDockExpanded = (expanded: boolean) =>
     storeSplitDock(boardSplitDockChoice(splitDockInput, splitDockStored, expanded));
   // Review split toggles the dock, and brings the thread pane forward when another is open.
+  // While an approval is pending the dock shows only its green bar, so there is nothing to toggle.
   const reviewSplit = () => {
+    if (splitDockInput.pendingApproval !== null) {
+      if (activePane !== "thread") setPane("thread");
+      return;
+    }
     if (activePane !== "thread") {
       setPane("thread");
       if (!splitDockExpanded) setSplitDockExpanded(true);
@@ -3534,13 +3556,14 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                       summary={boardSplitDockSummary(splitDockInput)}
                     >
                       <BoardSplitGate
-                        // A changed split is a new gate: start from its own recommendation
-                        // rather than the last one's edits. A plan body edit keeps the gate.
-                        key={
-                          boardSplitFingerprint(props.detail.plans) +
-                          JSON.stringify(props.splitGate.recommendation)
-                        }
+                        key={splitGateKey}
                         {...props.splitGate}
+                        settings={splitGateSettings ?? props.splitGate.recommendation}
+                        onSettingsChange={(settings) =>
+                          splitGateKey === null
+                            ? undefined
+                            : setSplitGateEdit({ key: splitGateKey, settings })
+                        }
                         footer={boardSplitDockFooter(splitDockInput)}
                         lostNote={boardSplitDockLostNote(splitDockInput.approvalLost)}
                         onApprove={props.onApproveSplit}

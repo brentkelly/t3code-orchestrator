@@ -23,8 +23,8 @@ export type BoardSplitGateRow = {
   readonly after: string | null;
   readonly planned: boolean;
   readonly lands: string;
-  /** "Revised r2": the review round that last changed the plan, or null. */
-  readonly revised: string | null;
+  /** "Revised r2" and its hint: the review round that last changed the plan, or null. */
+  readonly revised: { readonly label: string; readonly hint: string } | null;
 };
 
 export type BoardSplitGateView = {
@@ -71,7 +71,13 @@ export function boardSplitGateView(input: {
       after: after.length === 0 ? null : `after ${after.join(", ")}`,
       planned,
       lands: `→ ${planned ? input.readyLabel : input.backlogLabel}`,
-      revised: plan.revisedInRound === undefined ? null : `Revised r${plan.revisedInRound}`,
+      revised:
+        plan.revisedInRound === undefined
+          ? null
+          : {
+              label: `Revised r${plan.revisedInRound}`,
+              hint: `Changed by plan review round ${plan.revisedInRound}`,
+            },
     };
   });
   const total = rows.length;
