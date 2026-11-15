@@ -190,7 +190,7 @@ export const makeRemoteThreadGateway = (
       const detail = yield* local.project(project.id);
       if (detail === null || detail.deleted) continue;
       const key = boardRepositoryGroupingKey(detail.repositoryIdentity);
-      if (!byKey.has(key)) byKey.set(key, project.id);
+      if (key !== null && !byKey.has(key)) byKey.set(key, project.id);
     }
     return byKey;
   });

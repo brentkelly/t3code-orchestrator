@@ -5,11 +5,13 @@
  * Pinned: the spawn creates its own thread, and a failed spawn leaves the card recoverable.
  */
 import {
+  BOARD_LOCAL_WORKER_ID,
   BoardCardId,
   BOARD_SEED_STAGE_IDS,
   boardCardStepState,
   ProviderInstanceId,
   ThreadId,
+  type BoardCard,
   type BoardCardStepState,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
@@ -592,13 +594,18 @@ it.effect(
           }),
           capacity,
         },
-        ({ pumpDomain, board, commands, reactor }) =>
+        ({ pumpDomain, board, commands, reactor, gitInvocations }) =>
           Effect.gen(function* () {
             yield* pumpDomain(movedToPlanning(1));
             const held = boardCardStepState(yield* board, cardId);
             assert.strictEqual(held?.status, "queued");
             assert.strictEqual(held?.queuedBy, "agent-cap");
             assert.isFalse((yield* commands).some((command) => command.type === "thread.spawn"));
+            // Held on the cap, a pass costs no git: no default-branch read, no fetch.
+            const gitBefore = (yield* gitInvocations).length;
+            yield* reactor.sweep;
+            yield* reactor.sweep;
+            assert.strictEqual((yield* gitInvocations).length, gitBefore);
 
             capacity.agentCap = null;
             yield* reactor.sweep;
@@ -627,6 +634,51 @@ it.effect("Start now runs a step past the worker's agent cap", () =>
           const held = boardCardStepState(yield* board, cardId);
           assert.strictEqual(held?.queuedBy, "agent-cap");
           yield* pumpDomain(forceStartRequested(held!, 2));
+          assert.strictEqual(boardCardStepState(yield* board, cardId)?.status, "running");
+        }),
+    );
+  }),
+);
+
+it.effect("a build step held on the agent cap runs no git before the cap refuses it", () =>
+  Effect.flatMap(makeFakeCapacity(roomForCards(4)), (capacity) => {
+    capacity.agentCap = "This worker runs at most 1 agents at once.";
+    // Placed with its setup done, so only the agent cap stands between it and a spawn.
+    const card: BoardCard = {
+      ...buildingCard("card-1", "m"),
+      placedWorkerId: BOARD_LOCAL_WORKER_ID,
+      resources: {
+        sizing: null,
+        grant: null,
+        setup: {
+          status: "succeeded",
+          stage: "setup-script",
+          exitCode: 0,
+          startedAt: NOW,
+          durationMs: 1,
+          workerId: BOARD_LOCAL_WORKER_ID,
+          detail: null,
+          blocking: false,
+        },
+      },
+    };
+    return withGovernor(
+      {
+        board: { cards: [card], nextCardNumberByProject: {} },
+        settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+        capacity,
+      },
+      ({ pumpDomain, board, reactor, gitInvocations }) =>
+        Effect.gen(function* () {
+          yield* pumpDomain(movedToBuilding(card, 1));
+          assert.strictEqual(boardCardStepState(yield* board, cardId)?.queuedBy, "agent-cap");
+          const gitBefore = (yield* gitInvocations).length;
+          yield* reactor.sweep;
+          yield* reactor.sweep;
+          assert.strictEqual((yield* gitInvocations).length, gitBefore);
+
+          capacity.agentCap = null;
+          yield* reactor.sweep;
           assert.strictEqual(boardCardStepState(yield* board, cardId)?.status, "running");
         }),
     );

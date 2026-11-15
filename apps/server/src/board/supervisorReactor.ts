@@ -1514,7 +1514,8 @@ const make = Effect.gen(function* () {
         folderless.push(workspace);
         continue;
       }
-      const resolved = yield* resolveDefaultBranch(workspace);
+      const checkout = checkoutKey(candidate.workerId, card.projectId);
+      const resolved = yield* passDefaultBranch(checkout, workspace);
       if (resolved.unavailable) continue;
       const { defaultBranch } = resolved;
       const baseRefName = resolveBoardCardBaseRef({
@@ -1549,7 +1550,7 @@ const make = Effect.gen(function* () {
       }
       // The base must exist locally: `measureBaseTip`, `pullMergedBaseBranch` and the rebase all
       // use it as a local name and break silently on a remote-qualified one.
-      const baseExists = yield* ensureLocalBaseBranch(workspace, baseRefName);
+      const baseExists = yield* passEnsureLocalBaseBranch(checkout, workspace, baseRefName);
       if (baseExists === "unavailable") continue;
       if (!baseExists) {
         // Never fall back to the default. A card pinned to `release/2.4` that
@@ -2446,16 +2447,67 @@ const make = Effect.gen(function* () {
       Effect.succeed(new Set<BoardWorkerId>() as ReadonlySet<BoardWorkerId>),
   });
   let repositoryKeyMemo: Map<string, string | null> | null = null;
-  /** Runs `effect` as one scheduling pass for `projectRepositoryKey`; a nested pass joins it. */
+  /** Per scheduling pass, per `worker|project` checkout: what git already answered. Only
+      successes are kept, so a failure is retried by the next card that asks. */
+  let passGitMemo: {
+    readonly defaultBranch: Map<string, Effect.Success<ReturnType<typeof resolveDefaultBranch>>>;
+    /** `worker|project|base` keys whose base exists locally. */
+    readonly baseExists: Set<string>;
+    /** Checkouts fetched for planning this pass. */
+    readonly fetched: Set<string>;
+  } | null = null;
+  /** Runs `effect` as one scheduling pass for `projectRepositoryKey` and the git memo; a nested
+      pass joins it. */
   const withRepositoryKeyMemo = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     Effect.suspend(() => {
       if (repositoryKeyMemo !== null) return effect;
       const memo = new Map<string, string | null>();
+      const gitMemo = {
+        defaultBranch: new Map(),
+        baseExists: new Set<string>(),
+        fetched: new Set<string>(),
+      };
       repositoryKeyMemo = memo;
+      passGitMemo = gitMemo;
       return effect.pipe(
         Effect.ensuring(
           Effect.sync(() => {
             if (repositoryKeyMemo === memo) repositoryKeyMemo = null;
+            if (passGitMemo === gitMemo) passGitMemo = null;
+          }),
+        ),
+      );
+    });
+  const checkoutKey = (workerId: BoardWorkerId, projectId: ProjectId) =>
+    `${workerId}|${projectId}`;
+  /** `resolveDefaultBranch`, once per checkout while a scheduling pass runs. */
+  const passDefaultBranch = (checkout: string, workspace: BoardCardWorkspace) =>
+    Effect.suspend(() => {
+      const memo = passGitMemo;
+      const known = memo?.defaultBranch.get(checkout);
+      if (known !== undefined) return Effect.succeed(known);
+      return resolveDefaultBranch(workspace).pipe(
+        Effect.tap((resolved) =>
+          Effect.sync(() => {
+            if (resolved.defaultBranch !== "") memo?.defaultBranch.set(checkout, resolved);
+          }),
+        ),
+      );
+    });
+  /** `ensureLocalBaseBranch`, once per checkout and base while a scheduling pass runs. */
+  const passEnsureLocalBaseBranch = (
+    checkout: string,
+    workspace: BoardCardWorkspace,
+    base: string,
+  ) =>
+    Effect.suspend(() => {
+      const memo = passGitMemo;
+      const key = `${checkout}|${base}`;
+      if (memo?.baseExists.has(key) === true) return Effect.succeed<boolean | "unavailable">(true);
+      return ensureLocalBaseBranch(workspace, base).pipe(
+        Effect.tap((exists) =>
+          Effect.sync(() => {
+            if (exists === true) memo?.baseExists.add(key);
           }),
         ),
       );
@@ -2611,7 +2663,8 @@ const make = Effect.gen(function* () {
       detail: { workerId: BOARD_LOCAL_WORKER_ID, serverCheckout },
     });
     if (root === null) return checkoutProblem("missing");
-    const resolved = yield* resolveDefaultBranch(workspace);
+    const checkout = checkoutKey(BOARD_LOCAL_WORKER_ID, card.projectId);
+    const resolved = yield* passDefaultBranch(checkout, workspace);
     if (resolved.defaultBranch === "" && !resolved.detachedHead && resolved.unbornBranch === "") {
       const entries = yield* fileSystem
         .readDirectory(root)
@@ -2630,11 +2683,12 @@ const make = Effect.gen(function* () {
         };
       }
     }
-    // Fetch before planning: the plan reads the remote's latest base.
-    if (resolved.defaultBranch !== "") {
+    // Fetch before planning: the plan reads the remote's latest base. Once a pass per checkout.
+    if (resolved.defaultBranch !== "" && passGitMemo?.fetched.has(checkout) !== true) {
       yield* workspace
         .measureBaseTip({ baseRefName: resolved.defaultBranch })
         .pipe(Effect.ignoreCause);
+      passGitMemo?.fetched.add(checkout);
     }
     return null;
   });
@@ -2727,7 +2781,8 @@ const make = Effect.gen(function* () {
     readonly branch: string | null;
     /** Whether to run the worktree setup script — build only. */
     readonly runSetup: boolean;
-    readonly text: string;
+    /** Composed only once the agent cap has let the spawn through. */
+    readonly text: Effect.Effect<string>;
   }) {
     const { card, step } = input;
     const threadId = yield* freshThreadId;
@@ -2754,6 +2809,16 @@ const make = Effect.gen(function* () {
         return "no-agent-model" as const;
       }
     }
+    // T3o: this server's own agent cap holds a board-started turn too (T3O-86). Checked
+    // before any git, so a step held on it costs no worker call per pass.
+    if (remoteWorker === null && Option.isSome(capacityClient)) {
+      const refusal = yield* capacityClient.value.localAgentCapRefusal(
+        threadId,
+        step.providerInstanceId,
+        step.forceStart === true,
+      );
+      if (refusal !== null) return "agent-cap" as const;
+    }
     // T3o: pin the agent's gh to origin on every build-mode spawn,
     // not only at provisioning, so a worktree that predates the pin gets it
     // before its next agent runs. Idempotent and never fails the spawn.
@@ -2763,15 +2828,7 @@ const make = Effect.gen(function* () {
         Effect.ignoreCause,
       );
     }
-    // T3o: this server's own agent cap holds a board-started turn too (T3O-86).
-    if (remoteWorker === null && Option.isSome(capacityClient)) {
-      const refusal = yield* capacityClient.value.localAgentCapRefusal(
-        threadId,
-        step.providerInstanceId,
-        step.forceStart === true,
-      );
-      if (refusal !== null) return "agent-cap" as const;
-    }
+    const text = yield* input.text;
     // A refused spawn leaves no thread. An unreachable worker was sent nothing, so the step waits.
     // A mid-call drop may have created the thread: it is linked and run as spawned, so the worker's
     // reconcile watches or recovers it, never a second agent in the worktree.
@@ -2791,7 +2848,7 @@ const make = Effect.gen(function* () {
         interactionMode: "default",
         branch: input.branch,
         worktreePath: input.worktreePath,
-        text: input.text,
+        text,
         // The brief's attachments on a build/plan spawn (t3o-32, K4). A worker
         // gets none: its gateway sends no attachments, so central copies would
         // only be orphaned; its thread reads the files staged there instead.
@@ -3517,7 +3574,7 @@ const make = Effect.gen(function* () {
         worktreePath: input.worktreePath,
         branch: card.worktree?.branch ?? null,
         runSetup: true,
-        text: yield* stepPromptFor(card, state),
+        text: stepPromptFor(card, state),
       });
       if (threadId === null || threadId === "no-agent-model") {
         yield* escalateSpawnFailure({ card, state, ...spawnFailureError(threadId) });
@@ -3625,7 +3682,7 @@ const make = Effect.gen(function* () {
       worktreePath: cwd,
       branch: null,
       runSetup: false,
-      text: yield* stepPromptFor(card, state),
+      text: stepPromptFor(card, state),
     });
     // A plan step holds no slot, so a failed spawn leaks no capacity — but it
     // must still not be admitted against a thread that was never created.
@@ -3769,6 +3826,17 @@ const make = Effect.gen(function* () {
         // T3o: planning on the board server needs its checkout and the provider signed in
         // there (T3O-87); never CPU or RAM.
         if (placed.workerId === BOARD_LOCAL_WORKER_ID) {
+          // A fresh spawn the agent cap would refuse waits before any git or fetch: the
+          // spawn itself still reserves under the cap.
+          if (
+            state.threadId === null &&
+            state.forceStart !== true &&
+            Option.isSome(capacityClient) &&
+            (yield* capacityClient.value.localAgentCapFull(state.providerInstanceId)) !== null
+          ) {
+            yield* holdQueued(state, "agent-cap");
+            continue;
+          }
           const problem = yield* serverPlanningProblem(card, state.providerInstanceId);
           if (problem !== null) {
             yield* holdQueued(state, problem.queuedBy, problem.detail);
@@ -3922,10 +3990,13 @@ const make = Effect.gen(function* () {
   // input to `planNext` and the crossing/merge-click interceptions.
   const resolveBaseStale = Effect.fn("board-supervisor-resolveBaseStale")(function* (
     card: BoardCard,
+    /** The card's `resolveBaseRetargetTarget`, when the caller already has it. */
+    retargetedTo?: string | null,
   ) {
     // A retarget counts at any level: the stated base and the actual cut point disagree, so a pull
     // request would show commits nobody wrote. This lets even a top-level card get a sync step.
-    if (yield* resolveBaseRetargeted(card)) return true;
+    if ((retargetedTo === undefined ? yield* resolveBaseRetargetTarget(card) : retargetedTo) !== null)
+      return true;
     // Tip movement counts only for sub-board children: siblings are created to collide on their
     // shared base, while a top-level base moving is ordinary trunk development.
     if (card.parentCardId === null) return false;
@@ -3974,10 +4045,14 @@ const make = Effect.gen(function* () {
     },
   );
 
-  const resolveBaseRetargeted = Effect.fn("board-supervisor-resolveBaseRetargeted")(function* (
+  /** `baseStale` and `baseRetargetedTo` for a plan, resolving the retarget once. */
+  const resolveBaseDrift = Effect.fn("board-supervisor-resolveBaseDrift")(function* (
     card: BoardCard,
+    skipStale = false,
   ) {
-    return (yield* resolveBaseRetargetTarget(card)) !== null;
+    const baseRetargetedTo = yield* resolveBaseRetargetTarget(card);
+    const baseStale = skipStale ? false : yield* resolveBaseStale(card, baseRetargetedTo);
+    return { baseStale, baseRetargetedTo };
   });
 
   // Measured fresh when the plan starts a review round (`recordBaseTip`), else carried forward
@@ -4209,8 +4284,7 @@ const make = Effect.gen(function* () {
         completedStepIds: [],
         liveStepId: null,
         settledStepId: null,
-        baseStale: yield* resolveBaseStale(card),
-        baseRetargetedTo: yield* resolveBaseRetargetTarget(card),
+        ...(yield* resolveBaseDrift(card)),
       },
     });
     // CI: entering the stage, or restarting it, runs the steps.
@@ -6473,8 +6547,7 @@ const make = Effect.gen(function* () {
         completedStepIds,
         liveStepId: null,
         settledStepId: state.stepId,
-        baseStale: yield* resolveBaseStale(card),
-        baseRetargetedTo: yield* resolveBaseRetargetTarget(card),
+        ...(yield* resolveBaseDrift(card)),
       },
     });
     switch (plan.kind) {
@@ -6609,8 +6682,7 @@ const make = Effect.gen(function* () {
         completedStepIds,
         liveStepId: null,
         settledStepId: null,
-        baseStale: options.resume === true ? false : yield* resolveBaseStale(card),
-        baseRetargetedTo: yield* resolveBaseRetargetTarget(card),
+        ...(yield* resolveBaseDrift(card, options.resume === true)),
       },
     });
     if (plan.kind !== "run") return;
