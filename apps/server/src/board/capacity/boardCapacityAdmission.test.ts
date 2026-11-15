@@ -677,6 +677,36 @@ it.effect(
     }),
 );
 
+it.effect("a grow denied against a snapshot is asked again once the board frees room there", () =>
+  Effect.gen(function* () {
+    const now = { ms: T0 };
+    const waiting = {
+      ...step("a", "queued"),
+      queuedBy: "capacity" as const,
+      queuedDetail: { workerId: BOARD_LOCAL_WORKER_ID },
+    };
+    const big = { cpuCores: 12, ramGiB: 8, diskGB: 5 };
+    const h = yield* harness(
+      boardWith(
+        [granted("a", { heavy: false, profile: big }), granted("b", { profile: big })],
+        [waiting],
+      ),
+      now,
+    );
+    yield* h.admission.syncAll();
+    h.fake.frozen.set(BOARD_LOCAL_WORKER_ID, (yield* h.fake.client.latest(BOARD_LOCAL_WORKER_ID))!);
+    const light = (yield* Ref.get(h.board)).cards[0]!;
+    assert.deepInclude(yield* h.admission.ensureHeavy(light, "codex", false), {
+      queuedBy: "capacity",
+    });
+    assert.lengthOf(h.fake.claims, 1);
+    // The cut-short releases b; the worker's snapshot doesn't show it yet, but the claim is new.
+    assert.isTrue(yield* h.admission.releaseForWaiting());
+    assert.isNull(yield* h.admission.ensureHeavy(light, "codex", false));
+    assert.lengthOf(h.fake.claims, 2);
+  }),
+);
+
 it("syncCards lists cards provisioning or ready with a grant on that worker, never a group", () => {
   const remote = { ...granted("r"), placedWorkerId: W1 };
   const group = {

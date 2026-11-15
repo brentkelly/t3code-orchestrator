@@ -252,6 +252,54 @@ describe("the remote thread gateway", () => {
     ),
   );
 
+  it.effect("a worker checkout no board project matches costs one walk, not one per read", () =>
+    inCentral(
+      Effect.gen(function* () {
+        const unmatched = [ProjectId.make("worker-x"), ProjectId.make("worker-y")];
+        const { central, connections, threads } = yield* setup(new Map(), {
+          extraProjects: unmatched.map((projectId) => ({
+            projectId,
+            canonicalKey: `github.com/acme/${projectId}`,
+          })),
+        });
+        let walks = 0;
+        const gateway = makeRemoteThreadGateway({
+          workerId: WORKER_ID,
+          connections,
+          local: {
+            projects: () => {
+              walks += 1;
+              return central.gateway.projects();
+            },
+            project: central.gateway.project,
+          },
+          centralEnvironmentId: CENTRAL_ID,
+          fileSystem: yield* FileSystem.FileSystem,
+          digest: yield* Digest.Digest,
+        });
+        const ids = unmatched.map((projectId) => ThreadId.make(`thread-${projectId}`));
+        yield* Ref.update(threads.states, (states) => {
+          const next = new Map(states);
+          ids.forEach((id, index) =>
+            next.set(id, aliveThread(id, { projectId: unmatched[index]! })),
+          );
+          return next;
+        });
+
+        // Alternating reads: each key's first miss walks once, and neither forgets the other.
+        for (const _ of [1, 2, 3]) {
+          for (const [index, id] of ids.entries()) {
+            const state = yield* gateway.threadState(id);
+            assert.isTrue(state !== null && state !== UNKNOWN_THREAD_STATE);
+            if (state === null || state === UNKNOWN_THREAD_STATE) return;
+            assert.strictEqual(state.projectId, unmatched[index]);
+          }
+        }
+        assert.strictEqual(walks, 2);
+      }),
+    ),
+  );
+
   it.effect("a deleted board project never claims a worker checkout", () =>
     inCentral(
       Effect.gen(function* () {

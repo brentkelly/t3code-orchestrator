@@ -214,7 +214,12 @@ export const makeRemoteThreadGateway = (
       if (hit !== undefined) return hit;
       if (fresh.missed.has(key)) return workerProjectId;
     }
-    const memo = { builtAt: now, byKey: yield* walkCentralProjects(), missed: new Set<string>() };
+    const byKey = yield* walkCentralProjects();
+    // A rebuild for one key keeps the other misses it didn't resolve, until the TTL rebuild.
+    const missed = new Set(
+      fresh === null ? [] : [...fresh.missed].filter((missedKey) => !byKey.has(missedKey)),
+    );
+    const memo = { builtAt: fresh?.builtAt ?? now, byKey, missed };
     projectMemo = memo;
     const found = memo.byKey.get(key);
     if (found !== undefined) return found;
