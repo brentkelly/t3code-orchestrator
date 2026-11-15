@@ -44,6 +44,8 @@
         "t3o-pack.mjs",
         // T3o: the board CI stage's steps, run from t3o.json (T3O-88).
         "t3o-ci.ts",
+        // T3o: board worker readiness, run by scripts/t3o-ready.sh from t3o.json.
+        "t3o-ready.ts",
         "verify-windows-desktop-artifact.ts",
       ],
       "ignoreDependencies": ["esbuild"],

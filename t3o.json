@@ -1,5 +1,11 @@
 {
   "version": 2,
+  "resources": {
+    "readiness": {
+      "path": "scripts/t3o-ready.sh",
+      "timeoutSeconds": 120
+    }
+  },
   "stages": {
     "settings": {
       "ci": {
