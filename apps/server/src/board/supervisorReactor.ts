@@ -2478,8 +2478,7 @@ const make = Effect.gen(function* () {
         ),
       );
     });
-  const checkoutKey = (workerId: BoardWorkerId, projectId: ProjectId) =>
-    `${workerId}|${projectId}`;
+  const checkoutKey = (workerId: BoardWorkerId, projectId: ProjectId) => `${workerId}|${projectId}`;
   /** `resolveDefaultBranch`, once per checkout while a scheduling pass runs. */
   const passDefaultBranch = (checkout: string, workspace: BoardCardWorkspace) =>
     Effect.suspend(() => {
@@ -3995,7 +3994,9 @@ const make = Effect.gen(function* () {
   ) {
     // A retarget counts at any level: the stated base and the actual cut point disagree, so a pull
     // request would show commits nobody wrote. This lets even a top-level card get a sync step.
-    if ((retargetedTo === undefined ? yield* resolveBaseRetargetTarget(card) : retargetedTo) !== null)
+    if (
+      (retargetedTo === undefined ? yield* resolveBaseRetargetTarget(card) : retargetedTo) !== null
+    )
       return true;
     // Tip movement counts only for sub-board children: siblings are created to collide on their
     // shared base, while a top-level base moving is ordinary trunk development.

@@ -1096,7 +1096,8 @@ const makeThreadGatewayV2 = Effect.gen(function* () {
         const rows = yield* threadRecordRows(threadIds, true);
         const open = new Set<ThreadId>();
         const deleted = new Set<ThreadId>();
-        for (const row of rows) (row.deleted === 1 ? deleted : open).add(ThreadId.make(row.threadId));
+        for (const row of rows)
+          (row.deleted === 1 ? deleted : open).add(ThreadId.make(row.threadId));
         return { open, unanswered: new Set<ThreadId>(), deleted };
       },
       Effect.mapError(readError("openThreadIds")),

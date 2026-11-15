@@ -655,7 +655,10 @@ it.effect(
         ...heavy,
         resources: { sizing: null, setup: null, grant: grant({ heavy: false }) },
       };
-      h.fake.frozen.set(BOARD_LOCAL_WORKER_ID, (yield* h.fake.client.latest(BOARD_LOCAL_WORKER_ID))!);
+      h.fake.frozen.set(
+        BOARD_LOCAL_WORKER_ID,
+        (yield* h.fake.client.latest(BOARD_LOCAL_WORKER_ID))!,
+      );
       const hold = yield* h.admission.ensureHeavy(light, "codex", false);
       assert.deepInclude(hold, { queuedBy: "capacity", blocksWorker: false });
       assert.lengthOf(h.fake.claims, 2);
