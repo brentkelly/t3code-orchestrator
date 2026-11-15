@@ -652,9 +652,7 @@ it.effect("a split approved after review creates its cards when the planning ste
       yield* approvedDuringReview(h, "deferred");
       assert.strictEqual(children(yield* h.board, "deferred").length, 0);
 
-      yield* h.pumpDomain(
-        stepCompleted(BoardCardId.make("deferred"), "succeeded", 4, "planning"),
-      );
+      yield* h.pumpDomain(stepCompleted(BoardCardId.make("deferred"), "succeeded", 4, "planning"));
 
       const board = yield* h.board;
       assert.strictEqual(children(board, "deferred").length, 2);

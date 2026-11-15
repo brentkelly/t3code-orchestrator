@@ -2440,14 +2440,9 @@ export function boardSplitFingerprint(
   >,
 ): string {
   return JSON.stringify(
-    plans
-      .toSorted((left, right) => left.ordinal - right.ordinal)
-      .map((plan) => [
-        plan.planId,
-        plan.title,
-        plan.dependsOn.toSorted(),
-        plan.planned !== false,
-      ]),
+    [...plans]
+      .sort((left, right) => left.ordinal - right.ordinal)
+      .map((plan) => [plan.planId, plan.title, [...plan.dependsOn].sort(), plan.planned !== false]),
   );
 }
 
@@ -9849,6 +9844,9 @@ export const BoardCardDetail = Schema.Struct({
   ),
   /** Plan review was turned on after the plan was posted and waits for Start review. */
   planReviewAwaitingStart: Schema.optionalKey(IsoDateTime),
+  /** T3o: the live step's status; absent when it has settled or there is none. The split
+      dock reads whether planning is parked (T3O-105). */
+  liveStepStatus: Schema.optionalKey(BoardStepStatus),
 });
 export type BoardCardDetail = typeof BoardCardDetail.Type;
 

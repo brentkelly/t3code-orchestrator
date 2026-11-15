@@ -3,11 +3,15 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { boardSplitGateView } from "./boardSplitGate";
 
-const plan = (key: string, input?: { planned?: boolean; after?: ReadonlyArray<string> }) => ({
+const plan = (
+  key: string,
+  input?: { planned?: boolean; after?: ReadonlyArray<string>; revisedInRound?: number },
+) => ({
   planId: BoardPlanId.make(`card::${key}`),
   title: `Plan ${key}`,
   dependsOn: (input?.after ?? []).map((dependency) => BoardPlanId.make(`card::${dependency}`)),
   ...(input?.planned === undefined ? {} : { planned: input.planned }),
+  ...(input?.revisedInRound === undefined ? {} : { revisedInRound: input.revisedInRound }),
 });
 
 const base = {
@@ -23,16 +27,18 @@ describe("boardSplitGateView", () => {
       ...base,
       plans: [
         plan("a"),
-        plan("b", { planned: false, after: ["a"] }),
+        plan("b", { planned: false, after: ["a"], revisedInRound: 2 }),
         plan("c", { after: ["a", "b"] }),
       ],
       recommendation: { autoBuild: false, mergeTarget: "inherit" },
       settings: { autoBuild: false, mergeTarget: "inherit" },
     });
-    expect(view.rows.map((row) => [row.number, row.after, row.planned, row.lands])).toEqual([
-      ["#1", null, true, "→ Ready"],
-      ["#2", "after #1", false, "→ Backlog"],
-      ["#3", "after #1, #2", true, "→ Ready"],
+    expect(
+      view.rows.map((row) => [row.number, row.after, row.planned, row.lands, row.revised]),
+    ).toEqual([
+      ["#1", null, true, "→ Ready", null],
+      ["#2", "after #1", false, "→ Backlog", "Revised r2"],
+      ["#3", "after #1, #2", true, "→ Ready", null],
     ]);
     expect(view.count).toBe("3 cards");
     expect(view.mix).toBe("2 planned, 1 need planning");

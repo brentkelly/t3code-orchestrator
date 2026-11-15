@@ -23,6 +23,8 @@ export type BoardSplitGateRow = {
   readonly after: string | null;
   readonly planned: boolean;
   readonly lands: string;
+  /** "Revised r2": the review round that last changed the plan, or null. */
+  readonly revised: string | null;
 };
 
 export type BoardSplitGateView = {
@@ -43,7 +45,9 @@ function describe(settings: BoardSplitGateSettings): string {
 }
 
 export function boardSplitGateView(input: {
-  readonly plans: ReadonlyArray<Pick<BoardPlan, "planId" | "title" | "dependsOn" | "planned">>;
+  readonly plans: ReadonlyArray<
+    Pick<BoardPlan, "planId" | "title" | "dependsOn" | "planned" | "revisedInRound">
+  >;
   readonly recommendation: BoardSplitRecommendation;
   readonly settings: BoardSplitGateSettings;
   /** The group's own integration branch, used when it merges to its own. */
@@ -67,6 +71,7 @@ export function boardSplitGateView(input: {
       after: after.length === 0 ? null : `after ${after.join(", ")}`,
       planned,
       lands: `→ ${planned ? input.readyLabel : input.backlogLabel}`,
+      revised: plan.revisedInRound === undefined ? null : `Revised r${plan.revisedInRound}`,
     };
   });
   const total = rows.length;

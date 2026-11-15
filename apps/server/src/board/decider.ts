@@ -7091,9 +7091,7 @@ function settlesSplitApproval(event: PlannedBoardEvent, planStageId: BoardStageI
   const card = (event.payload as { readonly card?: BoardCard }).card;
   if (card?.pendingSplitApproval === undefined) return false;
   return (
-    event.type === "board.plans-approved" ||
-    card.archivedAt !== null ||
-    card.stage !== planStageId
+    event.type === "board.plans-approved" || card.archivedAt !== null || card.stage !== planStageId
   );
 }
 

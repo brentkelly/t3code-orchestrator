@@ -180,6 +180,20 @@ import { BoardHint } from "./BoardHint";
 import { boardDecisionFollowUp, boardDecisionLogView } from "./boardDecisionLog";
 import { BOARD_DEFERRED_STAGE } from "./boardScope";
 import { BoardSplitGate } from "./BoardSplitGate";
+import { BoardSplitDock } from "./BoardSplitDock";
+import {
+  boardSplitApprovalLostFromActivity,
+  boardSplitDockApprovedBar,
+  boardSplitDockChoice,
+  boardSplitDockExpanded,
+  boardSplitDockFooter,
+  boardSplitDockLostNote,
+  boardSplitDockSummary,
+  readBoardSplitDockStored,
+  writeBoardSplitDockStored,
+  type BoardSplitDockInput,
+  type BoardSplitDockStored,
+} from "./boardSplitDock";
 import { boardGroupUsesCardActions } from "./boardGroups";
 import { BOARD_SPLIT_CHANGE_REQUEST_PREFILL, type BoardSplitGateSettings } from "./boardSplitGate";
 import { useComposerDraftStore } from "../composerDraftStore";
@@ -659,6 +673,10 @@ export interface BoardCardDetailViewProps {
   readonly canApproveSplit: boolean;
   readonly splitGate: BoardSplitGateContext | null;
   readonly onApproveSplit: (settings: BoardSplitGateSettings) => void;
+  /** T3o: approve the split to take effect when the plan review finishes, and its Undo
+      (T3O-105). */
+  readonly onApproveSplitAfterReview: (settings: BoardSplitGateSettings) => void;
+  readonly onUndoSplitApproval: () => void;
   readonly onLinkThread: (threadId: ThreadId, role: string) => void;
   readonly onUnlinkThread: (threadId: ThreadId) => void;
   /** The parent this card is a child of, for the identity row's
@@ -1892,7 +1910,7 @@ function ActionsSection({
       review controls, plus Open board. Its stage is derived, so no hand move. */
   readonly group?: BoardCardDetailGroup | null;
   readonly unmet: ReadonlyArray<BoardDetailDependency>;
-  /** Opens the split gate's pane. */
+  /** Toggles the split dock, bringing the thread pane forward. */
   readonly onReviewSplit: () => void;
 }) {
   const { card } = props.detail;
@@ -2913,6 +2931,40 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
     setSelectedThreadId(threadId);
     if (activePane === "planning") setPane("thread");
   };
+  // T3o: the split dock's per-viewer state, read again when the panel moves to another card
+  // (T3O-105).
+  const [splitDockState, setSplitDockState] = useState(() => ({
+    cardId: card.id,
+    stored: readBoardSplitDockStored(card.id),
+  }));
+  const splitDockStored =
+    splitDockState.cardId === card.id ? splitDockState.stored : readBoardSplitDockStored(card.id);
+  const storeSplitDock = (stored: BoardSplitDockStored) => {
+    writeBoardSplitDockStored(card.id, stored);
+    setSplitDockState({ cardId: card.id, stored });
+  };
+  const splitDockInput: BoardSplitDockInput = {
+    plans: props.detail.plans,
+    review: props.detail.planReviewStarted ?? null,
+    stepStatus:
+      planStageId !== null && card.stage === planStageId
+        ? (props.detail.liveStepStatus ?? null)
+        : null,
+    pendingApproval: card.pendingSplitApproval ?? null,
+    approvalLost: boardSplitApprovalLostFromActivity(props.detail.activity),
+  };
+  const splitDockExpanded = boardSplitDockExpanded(splitDockInput, splitDockStored);
+  const setSplitDockExpanded = (expanded: boolean) =>
+    storeSplitDock(boardSplitDockChoice(splitDockInput, splitDockStored, expanded));
+  // Review split toggles the dock, and brings the thread pane forward when another is open.
+  const reviewSplit = () => {
+    if (activePane !== "thread") {
+      setPane("thread");
+      if (!splitDockExpanded) setSplitDockExpanded(true);
+      return;
+    }
+    setSplitDockExpanded(!splitDockExpanded);
+  };
   // Derived only while the Summary pane is showing: the panel re-renders on
   // every thread-link or detail push, and the walk over step completions is
   // wasted on any other pane.
@@ -3438,7 +3490,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 plans={props.detail.plans}
                 childCards={props.detail.children}
                 stages={props.stages}
-                onReviewSplit={props.canApproveSplit ? () => setPane("thread") : undefined}
+                onReviewSplit={props.canApproveSplit ? reviewSplit : undefined}
                 onOpenChild={props.onOpenChildInSubBoard}
               />
             </Suspense>
@@ -3464,35 +3516,49 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 onQueueForceStart={props.onQueueForceStart}
                 footer={
                   props.canApproveSplit && props.splitGate !== null ? (
-                    <BoardSplitGate
-                      // A re-proposal is a new gate: start from its own
-                      // recommendation rather than the last one's edits.
-                      key={props.detail.plans.map((plan) => plan.planId + plan.updatedAt).join()}
-                      {...props.splitGate}
-                      onApprove={props.onApproveSplit}
-                      onAskForChanges={() => {
-                        // The planning thread, not whichever tab is open: that
-                        // conversation proposed the split and must revise it.
-                        const planningThread = initialBoardCardThreadId(
-                          props.stages,
-                          card.stage,
-                          card.threadLinks,
-                        );
-                        const link = props.threadLinks.find(
-                          (candidate) => candidate.threadId === planningThread,
-                        );
-                        if (link === undefined || link.tombstoned) return;
-                        selectThread(link.threadId);
-                        useComposerDraftStore
-                          .getState()
-                          .setPrompt(
-                            scopeThreadRef(link.worker.environmentId, link.threadId),
-                            BOARD_SPLIT_CHANGE_REQUEST_PREFILL,
+                    <BoardSplitDock
+                      approvedBar={boardSplitDockApprovedBar(splitDockInput)}
+                      expanded={splitDockExpanded}
+                      onExpandedChange={setSplitDockExpanded}
+                      onResize={(height) => storeSplitDock({ ...splitDockStored, height })}
+                      onUndo={props.onUndoSplitApproval}
+                      storedHeight={splitDockStored.height}
+                      summary={boardSplitDockSummary(splitDockInput)}
+                    >
+                      <BoardSplitGate
+                        // A re-proposal is a new gate: start from its own
+                        // recommendation rather than the last one's edits.
+                        key={props.detail.plans.map((plan) => plan.planId + plan.updatedAt).join()}
+                        {...props.splitGate}
+                        footer={boardSplitDockFooter(splitDockInput)}
+                        lostNote={boardSplitDockLostNote(splitDockInput.approvalLost)}
+                        onApprove={props.onApproveSplit}
+                        onApproveAfterReview={props.onApproveSplitAfterReview}
+                        onCollapse={() => setSplitDockExpanded(false)}
+                        onAskForChanges={() => {
+                          // The planning thread, not whichever tab is open: that
+                          // conversation proposed the split and must revise it.
+                          const planningThread = initialBoardCardThreadId(
+                            props.stages,
+                            card.stage,
+                            card.threadLinks,
                           );
-                      }}
-                      plans={props.detail.plans}
-                      splitRationale={card.splitRationale}
-                    />
+                          const link = props.threadLinks.find(
+                            (candidate) => candidate.threadId === planningThread,
+                          );
+                          if (link === undefined || link.tombstoned) return;
+                          selectThread(link.threadId);
+                          useComposerDraftStore
+                            .getState()
+                            .setPrompt(
+                              scopeThreadRef(link.worker.environmentId, link.threadId),
+                              BOARD_SPLIT_CHANGE_REQUEST_PREFILL,
+                            );
+                        }}
+                        plans={props.detail.plans}
+                        splitRationale={card.splitRationale}
+                      />
+                    </BoardSplitDock>
                   ) : null
                 }
               />
@@ -3504,7 +3570,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
             {group === null || groupUsesCardActions ? (
               <ActionsSection
                 group={group}
-                onReviewSplit={() => setPane("thread")}
+                onReviewSplit={reviewSplit}
                 props={props}
                 unmet={unmet}
               />
@@ -3606,7 +3672,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
               {group === null || groupUsesCardActions ? (
                 <ActionsSection
                   group={group}
-                  onReviewSplit={() => setPane("thread")}
+                  onReviewSplit={reviewSplit}
                   props={props}
                   unmet={unmet}
                 />

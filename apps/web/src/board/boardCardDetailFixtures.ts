@@ -238,6 +238,8 @@ export const baseProps = {
   canApproveSplit: false,
   splitGate: null,
   onApproveSplit: noop,
+  onApproveSplitAfterReview: noop,
+  onUndoSplitApproval: noop,
   onLinkThread: noop,
   onUnlinkThread: noop,
   boardSettings: DEFAULT_SERVER_SETTINGS.board,

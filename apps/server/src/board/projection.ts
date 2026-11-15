@@ -4681,15 +4681,19 @@ function makeBoardCardDetailLoader(
             ...(() => {
               const step = Option.getOrNull(stepErrorRow);
               if (step === null) return {};
-              const awaiting =
-                step.planReviewAwaitingStart === null || step.planReviewStartedAt !== null
+              const awaiting = {
+                ...(step.planReviewAwaitingStart === null || step.planReviewStartedAt !== null
                   ? {}
-                  : { planReviewAwaitingStart: step.planReviewAwaitingStart };
+                  : { planReviewAwaitingStart: step.planReviewAwaitingStart }),
+                // T3o: the split dock reads whether planning is parked (T3O-105).
+                ...(isBoardTerminalStepStatus(step.status) ? {} : { liveStepStatus: step.status }),
+              };
               return step.planReviewStartedAt === null ||
                 step.planReviewRounds === null ||
                 isBoardTerminalStepStatus(step.status)
                 ? awaiting
                 : {
+                    ...awaiting,
                     planReviewStarted: {
                       startedAt: step.planReviewStartedAt,
                       rounds: step.planReviewRounds,
