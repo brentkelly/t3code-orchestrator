@@ -4533,7 +4533,12 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           : null;
       // T3o: a single plan's size is the card's own planner size (T3O-86); a split's
       // reaches each child at approval.
-      const sized = yield* plannerSizeRecorded({ board, command, card: proposalCard, plans });
+      // T3o: the size event carries the whole card, so it must not restore a dropped approval.
+      const sizedCard =
+        approvalDropped.length === 0
+          ? proposalCard
+          : (({ pendingSplitApproval: _dropped, ...rest }) => rest)(proposalCard);
+      const sized = yield* plannerSizeRecorded({ board, command, card: sizedCard, plans });
       // An armed review waits for Start review, however many times the agent proposes.
       if (
         reviewStep === null ||

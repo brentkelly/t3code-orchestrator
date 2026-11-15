@@ -698,6 +698,21 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("split gate (T3O-
       expect(dropped?.payload.card.pendingSplitApproval).toBeUndefined();
       // Before the proposal, so the proposal's rationale lands on the card last.
       expect(events.indexOf(dropped!)).toBeLessThan(events.indexOf(proposedEvent(events)));
+      // Folded into one sized plan: the size event must not carry the approval back.
+      const folded = yield* decideEvents(
+        propose({
+          plans: [
+            proposedPlan("a", { size: { cpu: "L", ram: "M", disk: "S" }, sizeReason: "big" }),
+          ],
+        }),
+        reviewing({ parent: { pendingSplitApproval: pending } }),
+      );
+      expect(approvalChanged(folded)).toHaveLength(1);
+      const sized = folded.find((event) => event.type === "board.card-resources-recorded");
+      expect(sized).toBeDefined();
+      expect(
+        (sized!.payload as { card: { pendingSplitApproval?: unknown } }).card.pendingSplitApproval,
+      ).toBeUndefined();
     }),
   );
 

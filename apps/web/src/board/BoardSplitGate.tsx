@@ -40,7 +40,9 @@ export function BoardSplitGate(props: {
   const view = boardSplitGateView({ ...props, recommendation: recommended, settings });
   const choice = props.footer.kind === "choice" ? props.footer : null;
   return (
-    <section aria-label="Proposed split" className="flex min-h-0 flex-1 flex-col">
+    // The plan list scrolls first; past its floor the whole gate scrolls, so the footer's
+    // Approve buttons stay reachable at any dock height.
+    <section aria-label="Proposed split" className="flex min-h-0 flex-1 flex-col overflow-y-auto">
       <div className="flex shrink-0 items-center gap-2 px-3 pt-2.5 pb-2">
         <span className="text-board-13 font-semibold text-foreground">Proposed split</span>
         <span className="truncate text-board-12 text-muted-foreground">
@@ -68,7 +70,7 @@ export function BoardSplitGate(props: {
           {props.splitRationale}
         </p>
       )}
-      <ul className="min-h-0 flex-1 overflow-y-auto">
+      <ul className="min-h-16 flex-1 overflow-y-auto">
         {view.rows.map((row) => (
           <li
             className="flex items-center gap-2.5 border-t border-border px-3 py-2"
