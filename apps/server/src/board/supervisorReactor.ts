@@ -4021,6 +4021,8 @@ const make = Effect.gen(function* () {
      * Every other gate still applies, and a refused move leaves the card put.
      */
     readonly toRole?: BoardStageRole;
+    /** The plan's `advanceRegardless`: move to the next stage even with `autoAdvance` off. */
+    readonly regardless?: boolean;
   }) {
     const board = yield* readBoard;
     if (input.toRole !== undefined) {
@@ -4072,7 +4074,7 @@ const make = Effect.gen(function* () {
       input.card.stage,
       boardProjectStageConfig(board, input.card.projectId),
     );
-    if (!exec.autoAdvance) return;
+    if (!exec.autoAdvance && input.regardless !== true) return;
     const next = boardNextStageId(board, input.card.stage, input.card.projectId);
     if (next === null) return;
     // The board's own move: it may carry a card into CI.
@@ -6157,12 +6159,13 @@ const make = Effect.gen(function* () {
       case "complete": {
         // Only a SUCCESSFUL stage may auto-advance (for the review loop, a converged round). A
         // broken payload, a stopped loop, or a loop out of rounds with findings open leaves the
-        // card put with its findings visible.
+        // card put with its findings visible; a human's "Advance after this round" moves it on.
         if (plan.outcome === "succeeded") {
           yield* advanceStage({
             card,
             state,
             ...(plan.advanceToRole === undefined ? {} : { toRole: plan.advanceToRole }),
+            ...(plan.advanceRegardless === true ? { regardless: true } : {}),
           });
         }
         return;

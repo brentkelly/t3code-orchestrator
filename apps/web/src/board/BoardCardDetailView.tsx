@@ -1839,8 +1839,8 @@ function ActionsSection({
     archived || props.onSubmitForMerge === undefined
       ? []
       : boardStageSecondaryActions(props.stages, card.stage, actionContext);
-  // "Stop after this round": offered only while a review loop is
-  // actually mid-flight — there is nothing to stop after otherwise, and a card
+  // "Advance after this round": offered only while a review loop is
+  // actually mid-flight — there is nothing to advance after otherwise, and a card
   // that has never reached review must not show it at all. Toggling it off
   // re-sends null, which the decider reads as "run on".
   const reviewLoop =
@@ -2013,8 +2013,8 @@ function ActionsSection({
         <BoardHint
           label={
             stopRound.pending
-              ? `Round ${stopRound.round} finishes, then the loop holds for you`
-              : "Let the current round finish, then hold instead of starting another"
+              ? `Round ${stopRound.round} finishes, then the card moves to the next stage`
+              : "Let the current round finish, then move to the next stage instead of starting another"
           }
         >
           <button
@@ -2029,8 +2029,8 @@ function ActionsSection({
           >
             <SquareIcon className="size-3" />
             {stopRound.pending
-              ? `Stopping after round ${stopRound.round}`
-              : "Stop after this round"}
+              ? `Advancing after round ${stopRound.round}`
+              : "Advance after this round"}
           </button>
         </BoardHint>
       ) : null}

@@ -199,9 +199,13 @@ export function reviewLoopChip(input: {
     case "advanced":
       // A human advanced past a stuck round: neither a pass nor a call.
       return { label: "Review advanced", tone: "muted" };
+    case "stopped":
+      // "Advance after this round" moved the card on; still in review means the move was held.
+      return input.role === "review"
+        ? { label: boardReviewHeldLabel("stopped"), tone: "warning" }
+        : { label: "Review advanced", tone: "muted" };
     case "unreadable":
     case "round-cap":
-    case "stopped":
       return { label: boardReviewHeldLabel(input.loopStatus), tone: "warning" };
     case "running":
       if (input.role !== "review") return { label: "Review paused", tone: "muted" };

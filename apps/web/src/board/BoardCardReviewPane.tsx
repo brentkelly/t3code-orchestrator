@@ -584,7 +584,7 @@ function statusPill(
       };
     case "stopped":
       return {
-        label: "Stopped after this round, holding for you",
+        label: "Advanced after this round · no convergence",
         spinning: false,
         className: "bg-warning/14 text-board-amber-text",
       };
@@ -634,7 +634,7 @@ function footerNote(
     case "round-cap":
       return "Every round ran without a clean pass, so the loop stopped at its limit. Nothing was signed off, and the card stays here until you extend the loop or advance it yourself.";
     case "stopped":
-      return "You asked the loop to hold after this round. Nothing was signed off, and the card stays here until you resume it or advance it yourself.";
+      return "You asked the loop to advance after this round, so it ended without a clean pass. Nothing was signed off.";
     case "unreadable": {
       const phase = unreadablePhaseOf(loop);
       return `The ${phase === null ? "phase" : UNREADABLE_PHASE_NAMES[phase]} recorded a payload nothing can read, so the loop halted here.`;
@@ -665,14 +665,13 @@ function NoConvergenceBlock({
           !
         </span>
         <div className="text-board-12-5 font-semibold text-foreground">
-          {stopped ? "Loop stopped without convergence" : "Round limit reached without convergence"}
+          {stopped ? "Loop ended without convergence" : "Round limit reached without convergence"}
         </div>
       </div>
       <div className="text-pretty text-board-11-5 leading-board-1-55 text-muted-foreground">
         {stopped
-          ? `You asked the loop to hold after round ${loop.currentRound}.`
-          : `All ${loop.maxRounds} rounds ran and round ${loop.currentRound} still closed with ${unsettled} unsettled ${unsettled === 1 ? "issue" : "issues"}.`}{" "}
-        The loop stops here and will not hand the card on by itself.
+          ? `You asked the loop to advance after round ${loop.currentRound}, so it handed the card on without a clean pass.`
+          : `All ${loop.maxRounds} rounds ran and round ${loop.currentRound} still closed with ${unsettled} unsettled ${unsettled === 1 ? "issue" : "issues"}. The loop stops here and will not hand the card on by itself.`}
       </div>
       <div className="text-board-11 text-muted-foreground">
         {unsettled} unsettled this round · {loop.totals.disputed} disputed across the loop

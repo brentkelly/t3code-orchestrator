@@ -896,7 +896,7 @@ export const BoardCardReviewOverrides = Schema.Struct({
   /** This card's round budget. Null means the review stage's `rounds` governs,
       so raising the board-wide setting still moves an untouched card. */
   rounds: Schema.NullOr(PositiveInt).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
-  /** Hold the loop once THIS round's phases close, even when budget remains.
+  /** End the loop and advance the card once THIS round's phases close, even when budget remains.
       A round number rather than a flag so it is self-superseding: raising
       the budget past it is a contradiction the decider resolves by clearing it,
       and a bare boolean gives it nothing to compare. */
@@ -12128,7 +12128,8 @@ export const BoardStageExecutionReview = Schema.Struct({
   humanInLoopWithPlan: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   humanInLoopWithoutPlan: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /** Advances the card only when the loop converges. A loop ending any other way (round
-      cap, a user's stop, an unreadable payload) never advances, whatever this says. */
+      cap, an unreadable payload) never advances, whatever this says; a user's "Advance after
+      this round" always does. */
   autoAdvance: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   timeoutMs: PositiveInt.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_STEP_TIMEOUT_MS)),

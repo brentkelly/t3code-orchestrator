@@ -491,7 +491,7 @@ it.effect("T3O-64: the reactor records round 4's settling mode when it selects i
   }),
 );
 
-it.effect("t3o-22: a stopped loop holds even with budget remaining", () =>
+it.effect("t3o-22: advance-after-round moves the card on even with budget remaining", () =>
   Effect.gen(function* () {
     const types = yield* reconcileCommands({
       board: {
@@ -514,8 +514,7 @@ it.effect("t3o-22: a stopped loop holds even with budget remaining", () =>
         nextCardNumberByProject: {},
       },
     });
-    assert.notInclude(types, "board.card.move");
-    assert.notInclude(types, "board.card.pipeline-move");
+    assert.include(types, "board.card.pipeline-move");
     assert.notInclude(types, "board.card.select-step");
   }),
 );

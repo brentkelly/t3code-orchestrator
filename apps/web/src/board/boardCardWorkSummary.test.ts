@@ -236,6 +236,8 @@ describe("reviewLoopChip", () => {
       "muted",
     ],
     ["advanced", { role: "merge", loopStatus: "advanced" }, "Review advanced", "muted"],
+    ["stop advanced it", { role: "merge", loopStatus: "stopped" }, "Review advanced", "muted"],
+    ["stop held in review", { role: "review", loopStatus: "stopped" }, "Stopped", "warning"],
     ["converged", { role: "merge", loopStatus: "converged" }, "Review settled", "success"],
     ["no loop", { role: "build", loopStatus: null }, null, null],
   ] as const)("%s", (_name, input, label, tone) => {

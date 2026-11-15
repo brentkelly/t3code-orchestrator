@@ -317,10 +317,16 @@ function reviewLoopDecision(input: {
     recordBaseTip: false,
   });
 
-  // Every arm that ends a round without another review goes through here, so each honours
-  // the same holds in order: a sync that ran owes its gate round unconditionally, a stale
-  // base plans a sync unless the user's stop holds, then a human-requested round outranks
-  // the exit.
+  // "Advance after this round": the human's stop ends the stage and moves the card on, even
+  // with rounds left and `autoAdvance` off.
+  const advanceAfterStop: BoardStagePlan = {
+    kind: "complete",
+    outcome: "succeeded",
+    advanceRegardless: true,
+  };
+  // Every arm that ends a round without another review goes through here, in order: a sync
+  // that ran owes its gate round, a stale base plans a sync unless the user's stop advances,
+  // then a human-requested round outranks the exit.
   const convergeExit = (round: number, passed: boolean): BoardStagePlan | "continue" => {
     const syncStep = done.get(reviewStepId("sync", round));
     if (syncStep !== undefined) {
@@ -330,10 +336,14 @@ function reviewLoopDecision(input: {
       return "continue";
     }
     if (input.baseStale) {
-      if (overrides?.stopAfterRound === round) return { kind: "complete", outcome: "blocked" };
+      // A waived stuck round was already moved by a human; it never advances itself.
+      if (overrides?.stopAfterRound === round) {
+        return passed ? advanceAfterStop : { kind: "complete", outcome: "blocked" };
+      }
       return runSync(round);
     }
     if (round < (overrides?.runThroughRound ?? 0)) return "continue";
+    if (passed && overrides?.stopAfterRound === round) return advanceAfterStop;
     // Only a round that actually passed completes `succeeded` and may
     // auto-advance. A waived stuck round ends `advanced`, which never does:
     // the human already moved the card, and dragging it back must not start a
@@ -360,10 +370,10 @@ function reviewLoopDecision(input: {
       case "unreadable":
         return { kind: "complete", outcome: "blocked" };
       case "continue":
-        // The user asked the loop to hold after this round,
-        // checked before the budget because a stop outranks rounds that merely
-        // remain. Otherwise the next round re-reads the branch.
-        if (overrides?.stopAfterRound === round) return { kind: "complete", outcome: "blocked" };
+        // The user asked to advance after this round, checked before the budget
+        // because it outranks rounds that merely remain. Otherwise the next round
+        // re-reads the branch.
+        if (overrides?.stopAfterRound === round) return advanceAfterStop;
         continue;
       case "stuck": {
         // A dispute survived the second pass: stop for a human,

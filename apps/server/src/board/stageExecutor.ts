@@ -157,6 +157,8 @@ export type BoardStagePlan =
        * the target is non-adjacent by construction.
        */
       readonly advanceToRole?: BoardStageRole;
+      /** A human asked the stage to end and move on: the next stage, even with `autoAdvance` off. */
+      readonly advanceRegardless?: true;
     }
   | { readonly kind: "escalate"; readonly question: string }
   /** Run the stage's CI steps from the top: the board runs them

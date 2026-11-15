@@ -578,12 +578,12 @@ describe("ReviewLoopExecutor.planNext (D1/D3)", () => {
     expect(inFlight.stepId).toBe("review@2");
   });
 
-  it("t3o-22 D5: stop-after-round holds the loop even with budget remaining", () => {
+  it("t3o-22 D5: advance-after-round moves the card on even with budget remaining", () => {
     const fiveRounds = reviewExec({ rounds: 5 });
     const held = plan(cappedRound(1), fiveRounds, overrides({ stopAfterRound: 1 }));
-    // Four rounds of budget are left; the user's stop outranks them, and it
-    // terminates like the cap so nothing auto-advances.
-    expect(held).toEqual({ kind: "complete", outcome: "blocked" });
+    // Four rounds of budget are left; the user's request outranks them and
+    // advances whatever the stage's autoAdvance says.
+    expect(held).toEqual({ kind: "complete", outcome: "succeeded", advanceRegardless: true });
 
     // Without the stop, the same completions run round 2.
     const running = plan(cappedRound(1), fiveRounds);
@@ -1124,8 +1124,9 @@ describe("ReviewLoopExecutor.planNext (D1/D3)", () => {
 
       // converged ⇔ succeeded; every held/halted ending ⇔ blocked; and while
       // the loop runs, both must name the SAME next phase and round.
+      // A stop advances the card: the human asked for the move.
       const walkAsPlan =
-        contractsWalk.status === "converged"
+        contractsWalk.status === "converged" || contractsWalk.status === "stopped"
           ? "succeeded"
           : contractsWalk.status === "running"
             ? "run"
@@ -1559,20 +1560,20 @@ describe("sync-base and the gate round (t3o-24, D2/D3)", () => {
     expect(result.kind === "run" && result.prompt).toContain("`main`");
   });
 
-  it("D5: the user's stop holds the sync step — no unattended rebase past an explicit hold", () => {
-    // Converged at the stopped round over a stale base: the loop holds
-    // (blocked) instead of planning the rebase-and-force-push. The crossing
-    // and Merge-click interceptions keep the merge safe while it waits.
+  it("D5: the user's advance skips the sync step — no unattended rebase past an explicit request", () => {
+    // Converged at the requested round over a stale base: the card moves on
+    // instead of planning the rebase-and-force-push. The crossing and
+    // Merge-click interceptions keep the merge safe.
     const held = plan(cleanRound(1), undefined, overrides({ stopAfterRound: 1 }), null, true);
-    expect(held).toEqual({ kind: "complete", outcome: "blocked" });
+    expect(held).toEqual({ kind: "complete", outcome: "succeeded", advanceRegardless: true });
     // A stop for a different round leaves the sync step free to run.
     const unheld = plan(cleanRound(1), undefined, overrides({ stopAfterRound: 3 }), null, true);
     expect(unheld.kind === "run" && unheld.stepId).toBe("sync@1");
-    // A fresh base at the stopped round still converges — the stop never held
-    // a passing loop (unchanged).
+    // A fresh base at the requested round converges and advances regardless.
     expect(plan(cleanRound(1), undefined, overrides({ stopAfterRound: 1 }))).toEqual({
       kind: "complete",
       outcome: "succeeded",
+      advanceRegardless: true,
     });
   });
 
