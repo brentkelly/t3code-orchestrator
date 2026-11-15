@@ -680,7 +680,24 @@ function makeBoardRpcHandlers(
             readBoardCiLog(
               {
                 readDetail,
-                subscribeChanges: boardEngine.subscribeBoardEvents,
+                readSettleState: (cardId) =>
+                  Effect.all([readCard(cardId), boardQueries.boardCardCiPasses(cardId)]).pipe(
+                    Effect.map(([card, ciPasses]) => (card === null ? null : { card, ciPasses })),
+                    Effect.mapError(
+                      (cause) =>
+                        new BoardSubscribeCardError({
+                          message: `Failed to load board card ${cardId}.`,
+                          cause,
+                        }),
+                    ),
+                  ),
+                subscribeChanges: boardEngine.subscribeBoardEvents.pipe(
+                  Effect.map(
+                    Stream.map((event) =>
+                      event.aggregateKind === "card" ? (event.aggregateId as BoardCardId) : null,
+                    ),
+                  ),
+                ),
                 worker: services.ciLogWorker,
               },
               input,

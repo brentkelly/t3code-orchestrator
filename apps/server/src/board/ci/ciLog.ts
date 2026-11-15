@@ -223,8 +223,14 @@ const followBoardCiLogUntil = (input: {
 
 /** Whether a step's log has stopped growing (the end rule): the step
     settled, its pass finished, or the card moved to another pass. */
+/** What decides whether a followed step has settled: the card's live CI and its passes. */
+export type BoardCiLogSettleState = {
+  readonly card: Pick<BoardCardDetail["card"], "ci">;
+  readonly ciPasses: BoardCardDetail["ciPasses"];
+};
+
 export function isBoardCiLogSettled(
-  detail: BoardCardDetail | null,
+  detail: BoardCiLogSettleState | null,
   runId: string,
   index: number,
 ): boolean {
@@ -237,11 +243,20 @@ export function isBoardCiLogSettled(
 }
 
 export interface BoardCiLogDeps<E> {
+  /** The card's detail, read once when the log opens. */
   readonly readDetail: (
     cardId: BoardReadCiLogInput["cardId"],
   ) => Effect.Effect<BoardCardDetail | null, E>;
-  /** Subscribes, in the scope, to ticks whenever the board may have changed. */
-  readonly subscribeChanges: Effect.Effect<Stream.Stream<unknown>, never, Scope.Scope>;
+  /** The settle rule's inputs alone, re-read on each change to the card; null once it is gone. */
+  readonly readSettleState: (
+    cardId: BoardReadCiLogInput["cardId"],
+  ) => Effect.Effect<BoardCiLogSettleState | null, E>;
+  /** Subscribes, in the scope, to the id of each changed card (null: not a card change). */
+  readonly subscribeChanges: Effect.Effect<
+    Stream.Stream<BoardReadCiLogInput["cardId"] | null>,
+    never,
+    Scope.Scope
+  >;
   /** The local reader's wait between growth checks; tests step it by hand. */
   readonly poll?: Effect.Effect<void>;
   /** A worker's log reader, or null when the worker can't be reached. */
@@ -271,7 +286,12 @@ export const readBoardCiLog = <E>(
       const wake = yield* Queue.sliding<void>(1);
       if (input.follow === true) {
         const changes = yield* deps.subscribeChanges;
-        yield* Effect.forkScoped(Stream.runForEach(changes, () => Queue.offer(wake, undefined)));
+        yield* Effect.forkScoped(
+          changes.pipe(
+            Stream.filter((cardId) => cardId === input.cardId),
+            Stream.runForEach(() => Queue.offer(wake, undefined)),
+          ),
+        );
       }
       const detail = yield* deps.readDetail(input.cardId);
       if (detail === null) return Stream.make(missing("The card no longer exists."));
@@ -318,12 +338,12 @@ export const readBoardCiLog = <E>(
       }
 
       const settledNow = isBoardCiLogSettled(detail, input.runId, input.index);
-      // A burst of board changes landing during a re-read is one more wake.
+      // A burst of changes to the card landing during a re-read is one more wake.
       const settled = Stream.fromQueue(wake).pipe(
         // A failed re-read says nothing about the step: the follow goes on
         // until a later change reads cleanly.
         Stream.mapEffect(() =>
-          deps.readDetail(input.cardId).pipe(
+          deps.readSettleState(input.cardId).pipe(
             Effect.map((latest) => isBoardCiLogSettled(latest, input.runId, input.index)),
             Effect.orElseSucceed(() => false),
           ),

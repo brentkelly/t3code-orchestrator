@@ -19,17 +19,27 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
+import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 import {
   BOARD_CI_LOG_TAIL_BYTES,
   isBoardCiLogSettled,
   isSafeBoardCiLogTarget,
-  readBoardCiLog,
+  readBoardCiLog as readBoardCiLogWith,
   readBoardCiLogFile,
   utf8CompleteLength,
   type BoardCiLogDeps,
 } from "./ciLog.ts";
+
+type CiLogTestDeps<E> = Omit<BoardCiLogDeps<E>, "readSettleState" | "subscribeChanges"> &
+  Partial<Pick<BoardCiLogDeps<E>, "readSettleState">> & {
+    readonly subscribeChanges: Effect.Effect<Stream.Stream<string | null>, never, Scope.Scope>;
+  };
+
+/** The settle re-read defaults to the detail reader, so a test drives both with one fixture. */
+const readBoardCiLog = <E>(deps: CiLogTestDeps<E>, input: never) =>
+  readBoardCiLogWith({ readSettleState: deps.readDetail, ...deps } as BoardCiLogDeps<E>, input);
 
 const tempLog = (contents: string | Uint8Array = "") => {
   const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3o-ci-log-"));
@@ -264,7 +274,7 @@ it.effect("follows a running step, then reads the flushed rest and ends once it 
       const path = NodePath.join(logDir, "0.log");
       NodeFS.writeFileSync(path, "first\n");
       let detail = cardDetail({ logDir, status: "running" });
-      const changes = yield* Queue.unbounded<void>();
+      const changes = yield* Queue.unbounded<string | null>();
       const log = yield* following((poll) =>
         readBoardCiLog(
           {
@@ -286,7 +296,7 @@ it.effect("follows a running step, then reads the flushed rest and ends once it 
       // The step settles with its last output flushed, before any poll sees it.
       NodeFS.appendFileSync(path, "last\n");
       detail = cardDetail({ logDir, status: "passed" });
-      yield* Queue.offer(changes, undefined);
+      yield* Queue.offer(changes, "card-1");
       assert.deepStrictEqual(yield* log.next, {
         _tag: "chunk",
         offset: 6,
@@ -298,6 +308,53 @@ it.effect("follows a running step, then reads the flushed rest and ends once it 
   ),
 );
 
+it.effect("only a change to the log's own card re-checks the settle, never the full detail", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { logDir } = passLogDir();
+      const path = NodePath.join(logDir, "0.log");
+      NodeFS.writeFileSync(path, "first\n");
+      let detailReads = 0;
+      let settleReads = 0;
+      let state = cardDetail({ logDir, status: "running" });
+      const changes = yield* Queue.unbounded<string | null>();
+      const log = yield* following((poll) =>
+        readBoardCiLog(
+          {
+            readDetail: () => {
+              detailReads++;
+              return Effect.succeed(cardDetail({ logDir, status: "running" }));
+            },
+            readSettleState: () => {
+              settleReads++;
+              return Effect.succeed(state);
+            },
+            subscribeChanges: Effect.succeed(Stream.fromQueue(changes)),
+            poll,
+            worker: () => Effect.succeed(null),
+          },
+          readInput as never,
+        ),
+      );
+      assert.strictEqual((yield* log.next)._tag, "chunk");
+      // Changes elsewhere on the board: the step's settled state is never consulted.
+      state = cardDetail({ logDir, status: "passed" });
+      yield* Queue.offer(changes, "card-2");
+      yield* Queue.offer(changes, null);
+      NodeFS.appendFileSync(path, "more\n");
+      yield* log.tick;
+      const more = yield* log.next;
+      assert.strictEqual(more._tag === "chunk" ? more.text : more._tag, "more\n");
+      assert.strictEqual(settleReads, 0);
+
+      yield* Queue.offer(changes, "card-1");
+      assert.deepStrictEqual(yield* log.next, { _tag: "end", size: 11 });
+      assert.strictEqual(settleReads, 1);
+      assert.strictEqual(detailReads, 1);
+    }),
+  ),
+);
+
 it.effect("a log with an invalid byte still ends cleanly when its step settles", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -305,7 +362,7 @@ it.effect("a log with an invalid byte still ends cleanly when its step settles",
       const path = NodePath.join(logDir, "0.log");
       NodeFS.writeFileSync(path, Buffer.from([0x61, 0xff, 0x0a]));
       let detail = cardDetail({ logDir, status: "running" });
-      const changes = yield* Queue.unbounded<void>();
+      const changes = yield* Queue.unbounded<string | null>();
       const log = yield* following((poll) =>
         readBoardCiLog(
           {
@@ -324,7 +381,7 @@ it.effect("a log with an invalid byte still ends cleanly when its step settles",
         text: "a�\n",
       });
       detail = cardDetail({ logDir, status: "failed" });
-      yield* Queue.offer(changes, undefined);
+      yield* Queue.offer(changes, "card-1");
       assert.deepStrictEqual(yield* log.next, { _tag: "end", size: 3 });
     }),
   ),
@@ -338,7 +395,7 @@ it.effect("a failed detail re-read keeps following rather than ending the log", 
       NodeFS.writeFileSync(path, "first\n");
       let reads = 0;
       const failed = yield* Deferred.make<void>();
-      const changes = yield* Queue.unbounded<void>();
+      const changes = yield* Queue.unbounded<string | null>();
       const log = yield* following((poll) =>
         readBoardCiLog(
           {
@@ -361,7 +418,7 @@ it.effect("a failed detail re-read keeps following rather than ending the log", 
         ).pipe(Stream.orDie),
       );
       assert.strictEqual((yield* log.next)._tag, "chunk");
-      yield* Queue.offer(changes, undefined);
+      yield* Queue.offer(changes, "card-1");
       yield* Deferred.await(failed);
       for (const text of ["more\n", "again\n"]) {
         NodeFS.appendFileSync(path, text);
@@ -369,7 +426,7 @@ it.effect("a failed detail re-read keeps following rather than ending the log", 
         const item = yield* log.next;
         assert.strictEqual(item._tag === "chunk" ? item.text : item._tag, text);
       }
-      yield* Queue.offer(changes, undefined);
+      yield* Queue.offer(changes, "card-1");
       assert.deepStrictEqual(yield* log.next, { _tag: "end", size: 17 });
     }),
   ),
@@ -380,7 +437,7 @@ it.effect("a settle committed while the first detail read runs still ends the fo
     Effect.gen(function* () {
       const { logDir } = passLogDir();
       NodeFS.writeFileSync(NodePath.join(logDir, "0.log"), "only\n");
-      const board = yield* PubSub.unbounded<void>();
+      const board = yield* PubSub.unbounded<string | null>();
       let reads = 0;
       const log = yield* following((poll) =>
         readBoardCiLog(
@@ -391,7 +448,7 @@ it.effect("a settle committed while the first detail read runs still ends the fo
               Effect.gen(function* () {
                 reads++;
                 if (reads <= 2) {
-                  yield* PubSub.publish(board, undefined);
+                  yield* PubSub.publish(board, "card-1");
                   return cardDetail({ logDir, status: "running" });
                 }
                 return cardDetail({ logDir, status: "passed" });
@@ -415,7 +472,7 @@ it.effect("reads a placed card's log from its worker, and an old worker's is mis
     const asked: unknown[] = [];
     const deps = (
       remote: (input: unknown) => Stream.Stream<BoardCiLogItem, unknown>,
-    ): BoardCiLogDeps<never> => ({
+    ): CiLogTestDeps<never> => ({
       readDetail: () =>
         Effect.succeed(cardDetail({ logDir, status: "passed", placedWorkerId: "worker-1" })),
       subscribeChanges: Effect.succeed(Stream.empty),
