@@ -6,6 +6,7 @@ import * as NodeStream from "node:stream";
 import {
   BOARD_WORKER_TUNNEL_PATH,
   BOARD_WORKER_TUNNEL_STREAM_PATH,
+  BOARD_WORKER_PROTOCOL_FLOOR,
   EnvironmentId,
   T3O_TUNNEL_PROTOCOL_VERSION,
   type WorkerTunnelHello,
@@ -141,6 +142,7 @@ function startWorker(input: {
   readonly onReady?: () => void;
   readonly onAddressAdopted?: (url: string) => void;
   readonly tunnelProtocol?: number;
+  readonly gatewayProtocol?: number;
   readonly now?: () => number;
 }) {
   const worker = new TunnelWorker({
@@ -149,7 +151,7 @@ function startWorker(input: {
     environmentId: WORKER_ID,
     label: "build-03",
     t3oRelease: "0.0.70",
-    gatewayProtocol: 3,
+    gatewayProtocol: input.gatewayProtocol ?? 3,
     local: { host: "127.0.0.1", port: input.localPort },
     mintBoardSession: input.mint ?? (async () => "board-session-token"),
     onStatus: input.onStatus,
@@ -234,7 +236,49 @@ describe("worker tunnel", () => {
     expect(board.hellos[0]?.tunnelProtocol).toBe(T3O_TUNNEL_PROTOCOL_VERSION);
     expect(probed).toEqual(["worker-loopback"]);
     expect(board.board.phase(WORKER_ID)).toBe("ready");
-    expect((await log.when((status) => status.state === "connected")).lastError).toBeNull();
+    const connected = await log.when((status) => status.state === "connected");
+    expect(connected.lastError).toBeNull();
+    // This worker speaks gateway protocol 3, below the board's floor: connected, but flagged.
+    expect(connected.updateRequired).toMatch(
+      new RegExp(`protocol ${BOARD_WORKER_PROTOCOL_FLOOR} \\(T3o .+\\); this worker speaks 3`),
+    );
+  });
+
+  it("does not flag a worker at the board's gateway floor", async () => {
+    const local = await startLocalServer("worker-loopback");
+    const board = await startBoard({});
+    const log = statusLog();
+    startWorker({
+      boardUrl: board.url,
+      localPort: local.port,
+      gatewayProtocol: BOARD_WORKER_PROTOCOL_FLOOR,
+      onStatus: log.onStatus,
+    });
+    expect((await log.when((status) => status.state === "connected")).updateRequired).toBeNull();
+  });
+
+  it("clears a worker's update flag once its board revokes it", async () => {
+    const local = await startLocalServer("worker-loopback");
+    const board = await startBoard({
+      decide: async () =>
+        board.hellos.length === 1
+          ? { status: "ok", liveBoardSessionIds: ["s1"] }
+          : { status: "refused", message: "Removed from the board." },
+    });
+    const log = statusLog();
+    const revoked = deferred<void>();
+    startWorker({
+      boardUrl: board.url,
+      localPort: local.port,
+      onStatus: log.onStatus,
+      onRevoked: () => revoked.resolve(),
+    });
+    expect(
+      (await log.when((status) => status.state === "connected")).updateRequired,
+    ).not.toBeNull();
+    board.board.disconnect(WORKER_ID);
+    await revoked.promise;
+    expect((await log.when((status) => status.state === "revoked")).updateRequired).toBeNull();
   });
 
   it("carries concurrent streams, each to the worker's own port", async () => {
@@ -359,6 +403,21 @@ describe("worker tunnel", () => {
       () => log.states.filter((status) => status.state === "needs-update").length >= 2,
     );
     expect(log.states.every((status) => status.state !== "revoked")).toBe(true);
+    expect(log.states.at(-1)?.updateRequired).toMatch(/tunnel protocol/);
+  });
+
+  it("a worker newer than its board is refused but not flagged for an update", async () => {
+    const local = await startLocalServer("worker-loopback");
+    const board = await startBoard({});
+    const log = statusLog();
+    startWorker({
+      boardUrl: board.url,
+      localPort: local.port,
+      tunnelProtocol: T3O_TUNNEL_PROTOCOL_VERSION + 1,
+      onStatus: log.onStatus,
+    });
+    const parked = await log.when((status) => status.state === "needs-update");
+    expect(parked.updateRequired).toBeNull();
   });
 
   it("refuses a hello naming another worker than the credential's", async () => {

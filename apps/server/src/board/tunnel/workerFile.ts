@@ -201,6 +201,8 @@ export const WorkerBoardStatus = Schema.Struct({
   state: Schema.Literals(["connecting", "connected", "offline", "revoked", "needs-update"]),
   lastConnectedAt: Schema.NullOr(Schema.String),
   lastError: Schema.NullOr(Schema.String),
+  /** Set while the board says this T3o is too old for it: what `t3o-worker auto-update` reads. */
+  updateRequired: Schema.optionalKey(Schema.NullOr(Schema.String)),
 });
 export type WorkerBoardStatus = typeof WorkerBoardStatus.Type;
 

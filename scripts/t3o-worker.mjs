@@ -2,6 +2,7 @@
 /* oxlint-disable t3code/no-global-process-runtime -- a plain-Node script, run outside the server. */
 /**
  * T3o: `pnpm t3o-worker <join|leave|boards|status|config>` runs the T3o server's `worker` CLI
+ * (`auto-update` runs scripts/t3o-auto-update.mjs)
  * against the service's home (`npx t3` would install upstream). `join` on Linux installs the
  * service first; elsewhere a T3o server must already run. See docs/user/board-workers.md.
  */
@@ -68,6 +69,15 @@ function fail(message) {
 
 if (command === undefined || command === "--help" || command === "-h") {
   forwarded.splice(0, forwarded.length, "--help");
+}
+
+if (command === "auto-update") {
+  const result = NodeChildProcess.spawnSync(
+    process.execPath,
+    [NodePath.join(repoRoot, "scripts/t3o-auto-update.mjs"), ...forwarded.slice(1)],
+    { stdio: "inherit" },
+  );
+  process.exit(result.status ?? 1);
 }
 
 if (command === "join") {

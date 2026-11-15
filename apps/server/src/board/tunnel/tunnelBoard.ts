@@ -10,6 +10,8 @@ import * as NodeNet from "node:net";
 import * as Schema from "effect/Schema";
 
 import {
+  BOARD_WORKER_PROTOCOL_FLOOR,
+  BOARD_WORKER_PROTOCOL_FLOOR_T3O_VERSION,
   BOARD_WORKER_STREAM_UPGRADE,
   T3O_TUNNEL_PROTOCOL_VERSION,
   WorkerTunnelClientMessage,
@@ -267,6 +269,8 @@ export class TunnelBoard {
           ack({
             status: "ok",
             liveBoardSessionIds: [...decision.liveBoardSessionIds],
+            gatewayFloor: BOARD_WORKER_PROTOCOL_FLOOR,
+            gatewayFloorRelease: BOARD_WORKER_PROTOCOL_FLOOR_T3O_VERSION,
             ...(decision.boardAddress === undefined ? {} : { boardAddress: decision.boardAddress }),
           });
           this.deps.onReady?.(workerId, hello, credential);

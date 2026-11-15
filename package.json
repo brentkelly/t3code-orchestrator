@@ -18,6 +18,7 @@
     "t3o-service-status": "node scripts/t3o-service.mjs status",
     "t3o-update": "node scripts/t3o-update.mjs",
     "t3o-worker": "node scripts/t3o-worker.mjs",
+    "t3o-auto-update": "node scripts/t3o-auto-update.mjs",
     "t3o-release": "node scripts/t3o-release.mjs",
     "t3o-ready": "sh scripts/t3o-ready.sh",
     "t3o-ready:full": "sh scripts/t3o-ready.sh --full",
