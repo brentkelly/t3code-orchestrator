@@ -46,8 +46,6 @@ import {
   BOARD_PLAN_REVIEW_LATE_START_LEAD,
   boardPlanReviewRoundsChangedLead,
   BOARD_PLAN_REVIEW_STOP_INSTRUCTION,
-  BOARD_DECISION_REASON_MAX_LENGTH,
-  BOARD_DECISION_TEXT_MAX_LENGTH,
   isBoardCardAutoPlanPending,
   boardCardAutoBuildDue,
   boardStageBeforeBuild,
@@ -606,10 +604,6 @@ export interface SupervisorReactorShape {
   ) => Effect.Effect<BoardCiActionResult>;
   readonly ciSendBack: (cardId: BoardCardId) => Effect.Effect<BoardCiActionResult>;
 }
-
-/** A string cut to `max` characters, ending in an ellipsis when cut. */
-const clip = (text: string, max: number): string =>
-  text.length <= max ? text : `${text.slice(0, max - 1).trimEnd()}…`;
 
 /** Epoch millis off the Effect clock, never `new Date()`, so a test's
     `TestClock` moves every due-time comparison the reactor makes. */

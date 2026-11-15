@@ -32,7 +32,8 @@ export function BoardSectionHeading({
 }
 
 /** A sidebar section that opens on its header: collapsed by default,
-    the header carrying a one-line summary of what is inside. */
+    the header carrying a one-line summary of what is inside. A summary too
+    wide for the label's line wraps whole onto its own line, never mid-text. */
 export function BoardCollapsibleSection({
   title,
   summary,
@@ -51,24 +52,27 @@ export function BoardCollapsibleSection({
     <div className={cn("flex flex-col gap-2", className)}>
       <button
         aria-expanded={open}
-        className="flex w-full min-w-0 items-center gap-1.5 text-left"
+        className="flex w-full min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-left"
         onClick={() => setOpen((value) => !value)}
         type="button"
       >
         <span className="shrink-0 text-board-11 font-semibold uppercase tracking-board-7 text-muted-foreground">
           {title}
         </span>
-        <span className="flex-1" />
-        {summary === undefined ? null : (
-          <span className="truncate text-board-11 font-medium text-foreground">{summary}</span>
-        )}
-        <ChevronDownIcon
-          aria-hidden
-          className={cn(
-            "size-3 shrink-0 text-muted-foreground transition-transform duration-120",
-            open && "rotate-180",
+        <span className="ms-auto flex max-w-full min-w-0 shrink-0 items-center gap-1.5">
+          {summary === undefined ? null : (
+            <span className="truncate whitespace-nowrap text-board-11 font-medium text-foreground">
+              {summary}
+            </span>
           )}
-        />
+          <ChevronDownIcon
+            aria-hidden
+            className={cn(
+              "size-3 shrink-0 text-muted-foreground transition-transform duration-120",
+              open && "rotate-180",
+            )}
+          />
+        </span>
       </button>
       {open ? children : null}
     </div>

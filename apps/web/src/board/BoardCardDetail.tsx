@@ -113,7 +113,10 @@ import {
 import { BoardPlanningExitConfirmDialog } from "./BoardPlanningExitConfirmDialog";
 import { BoardArchiveGroupDialog } from "./BoardGroupDialogs";
 import { BoardCardAutomation } from "./BoardCardAutomation";
-import { boardCardPlanningFinishedFromDetail } from "./boardCardAutomation";
+import {
+  boardCardPlanningFinishedFromDetail,
+  resolveBoardShellAutomation,
+} from "./boardCardAutomation";
 import {
   boardGroupNote,
   boardShellGroup,
@@ -1272,6 +1275,13 @@ export function BoardCardDetail({
               cardId: card.id,
               autoBuild: settings.autoBuild,
               mergeTarget: settings.mergeTarget,
+              // The card's Auto sign-off carries over to the group its children inherit from.
+              autoSignOff: resolveBoardShellAutomation({
+                shells: groupShells,
+                stages: stageState,
+                card,
+                boardWideAutoMerge,
+              }).autoSignOff.value,
             },
           }),
         )

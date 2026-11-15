@@ -470,39 +470,46 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
       }),
     );
 
-    it.effect("Make hands-off in Ready sends only the unlocked gates; a locked one refuses all", () =>
-      Effect.gen(function* () {
-        const ready = readModel([makeCard({ id: "card-auto", stage: "ready" })]);
-        const handsOff = updatedCard(
-          yield* decideEvents(setAutomation({ autoBuild: true, autoMerge: true }), ready),
-        );
-        expect(handsOff.payload.card).toMatchObject({
-          autoBuildSetting: true,
-          autoMergeSetting: true,
-          autoSignOffSetting: null,
-        });
-        expect(handsOff.payload.automationChanged).toEqual({ autoBuild: true, autoMerge: true });
-        // Naming a locked gate refuses the whole command.
-        expect(
-          (yield* decideFail(
-            setAutomation({ autoSignOff: true, autoBuild: true, autoMerge: true }),
-            ready,
-          )).message,
-        ).toContain("Planning is finished.");
-        // In Planning all four go on in one command.
-        const planning = updatedCard(
-          yield* decideEvents(
-            setAutomation({ autoPlan: true, autoSignOff: true, autoBuild: true, autoMerge: true }),
-            readModel([makeCard({ id: "card-auto", stage: "planning" })]),
-          ),
-        );
-        expect(planning.payload.automationChanged).toEqual({
-          autoPlan: true,
-          autoSignOff: true,
-          autoBuild: true,
-          autoMerge: true,
-        });
-      }),
+    it.effect(
+      "Make hands-off in Ready sends only the unlocked gates; a locked one refuses all",
+      () =>
+        Effect.gen(function* () {
+          const ready = readModel([makeCard({ id: "card-auto", stage: "ready" })]);
+          const handsOff = updatedCard(
+            yield* decideEvents(setAutomation({ autoBuild: true, autoMerge: true }), ready),
+          );
+          expect(handsOff.payload.card).toMatchObject({
+            autoBuildSetting: true,
+            autoMergeSetting: true,
+            autoSignOffSetting: null,
+          });
+          expect(handsOff.payload.automationChanged).toEqual({ autoBuild: true, autoMerge: true });
+          // Naming a locked gate refuses the whole command.
+          expect(
+            (yield* decideFail(
+              setAutomation({ autoSignOff: true, autoBuild: true, autoMerge: true }),
+              ready,
+            )).message,
+          ).toContain("Planning is finished.");
+          // In Planning all four go on in one command.
+          const planning = updatedCard(
+            yield* decideEvents(
+              setAutomation({
+                autoPlan: true,
+                autoSignOff: true,
+                autoBuild: true,
+                autoMerge: true,
+              }),
+              readModel([makeCard({ id: "card-auto", stage: "planning" })]),
+            ),
+          );
+          expect(planning.payload.automationChanged).toEqual({
+            autoPlan: true,
+            autoSignOff: true,
+            autoBuild: true,
+            autoMerge: true,
+          });
+        }),
     );
 
     it.effect("refuses an inherit that would turn a locked toggle on through its group", () =>

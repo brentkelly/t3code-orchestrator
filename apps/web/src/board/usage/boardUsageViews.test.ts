@@ -15,6 +15,7 @@ const GROUP = {
   autoBuild: false,
   autoMerge: false,
   autoPlan: false,
+  autoSignOff: false,
   started: true,
   placed: BoardStageId.make("backlog"),
   prevStage: BoardStageId.make("planning"),

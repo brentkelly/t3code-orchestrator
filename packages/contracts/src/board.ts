@@ -3838,8 +3838,8 @@ function ownAutomationSetting(
       : toggle === "autoSignOff"
         ? node.autoSignOffSetting
         : toggle === "autoBuild"
-        ? node.autoBuildSetting
-        : node.autoMergeSetting;
+          ? node.autoBuildSetting
+          : node.autoMergeSetting;
   return value ?? null;
 }
 
@@ -7953,9 +7953,7 @@ export function makeBoardCardShell(input: {
     // The Automation toggles: omitted while inheriting; an explicit
     // `false` is carried because it overrides the group.
     ...(input.autoPlanSetting == null ? {} : { autoPlanSetting: input.autoPlanSetting }),
-    ...(input.autoSignOffSetting == null
-      ? {}
-      : { autoSignOffSetting: input.autoSignOffSetting }),
+    ...(input.autoSignOffSetting == null ? {} : { autoSignOffSetting: input.autoSignOffSetting }),
     ...(input.autoBuildSetting == null ? {} : { autoBuildSetting: input.autoBuildSetting }),
     ...(input.autoMergeSetting == null ? {} : { autoMergeSetting: input.autoMergeSetting }),
     ...(input.autoPlanPending === true ? { autoPlanPending: true } : {}),

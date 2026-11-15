@@ -1668,7 +1668,9 @@ export const setAutomation = (
             updated = {
               ...card,
               ...(settings.autoPlan === undefined ? {} : { autoPlanSetting: settings.autoPlan }),
-        ...(settings.autoSignOff === undefined ? {} : { autoSignOffSetting: settings.autoSignOff }),
+              ...(settings.autoSignOff === undefined
+                ? {}
+                : { autoSignOffSetting: settings.autoSignOff }),
               ...(settings.autoBuild === undefined ? {} : { autoBuildSetting: settings.autoBuild }),
               ...(settings.autoMerge === undefined ? {} : { autoMergeSetting: settings.autoMerge }),
             };

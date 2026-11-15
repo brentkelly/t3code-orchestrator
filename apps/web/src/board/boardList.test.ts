@@ -40,6 +40,7 @@ function group(overrides: Partial<BoardCardGroup> = {}): BoardCardGroup {
     autoBuild: false,
     autoMerge: false,
     autoPlan: false,
+    autoSignOff: false,
     started: false,
     placed: BoardStageId.make("backlog"),
     prevStage: BoardStageId.make("planning"),
