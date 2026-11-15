@@ -1051,7 +1051,13 @@ const make = Effect.gen(function* () {
   const releaseFinishedThreads = Effect.gen(function* () {
     const board = yield* readBoard;
     const released: Array<ThreadId> = [];
-    for (const threadId of boardReleasedThreadIds(board, abandonedThreads)) {
+    const releasedNow = boardReleasedThreadIds(board, abandonedThreads);
+    // A thread the board no longer releases is never asked about, so forget it.
+    const stillReleased = new Set(releasedNow.map(String));
+    for (const threadId of knownDeletedThreads) {
+      if (!stillReleased.has(threadId)) knownDeletedThreads.delete(threadId);
+    }
+    for (const threadId of releasedNow) {
       if (!knownDeletedThreads.has(String(threadId))) {
         released.push(threadId);
         continue;
@@ -3248,7 +3254,10 @@ const make = Effect.gen(function* () {
     if (card.baseBranch !== null) return card.baseBranch;
     const workspace = yield* workspaceFor(card);
     if (workspace.checkoutPath === null) return null;
-    const { defaultBranch } = yield* resolveDefaultBranch(workspace);
+    const { defaultBranch } = yield* passDefaultBranch(
+      checkoutKey(workspace.workerId, card.projectId),
+      workspace,
+    );
     return resolveBoardCardEffectiveBase({
       card,
       cards: (yield* readBoard).cards,

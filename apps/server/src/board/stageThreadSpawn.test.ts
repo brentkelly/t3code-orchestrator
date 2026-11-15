@@ -684,3 +684,53 @@ it.effect("a build step held on the agent cap runs no git before the cap refuses
     );
   }),
 );
+
+it.effect(
+  "one scheduling pass reads a checkout's default branch once for every card it plans",
+  () =>
+    Effect.flatMap(makeFakeCapacity(roomForCards(4)), (capacity) => {
+      capacity.agentCap = "This worker runs at most 1 agents at once.";
+      const planningCard = (id: string, sequence: number) =>
+        cardMoved(
+          makeBoardCard({ id, stage: "planning", orderKey: id }),
+          "sprint",
+          "planning",
+          sequence,
+        );
+      return withGovernor(
+        {
+          board: {
+            cards: [
+              makeBoardCard({ id: "card-a", stage: "sprint", orderKey: "card-a" }),
+              makeBoardCard({ id: "card-b", stage: "sprint", orderKey: "card-b" }),
+            ],
+            nextCardNumberByProject: {},
+          },
+          settings: settingsWith({
+            building: [codexStep],
+            planning: codexStep,
+            globalMaxConcurrent: 3,
+          }),
+          capacity,
+        },
+        ({ pumpDomain, board, reactor, gitInvocations }) =>
+          Effect.gen(function* () {
+            // Both held on the cap, so the pass that frees it plans both on one checkout.
+            yield* pumpDomain(planningCard("card-a", 1));
+            yield* pumpDomain(planningCard("card-b", 2));
+            const gitBefore = (yield* gitInvocations).length;
+            capacity.agentCap = null;
+            yield* reactor.sweep;
+            for (const id of ["card-a", "card-b"]) {
+              assert.strictEqual(stepStatus(yield* board, BoardCardId.make(id)), "running");
+            }
+            const defaultBranchReads = (yield* gitInvocations)
+              .slice(gitBefore)
+              .filter(
+                (args) => args[0] === "symbolic-ref" && args.includes("refs/remotes/origin/HEAD"),
+              );
+            assert.strictEqual(defaultBranchReads.length, 1);
+          }),
+      );
+    }),
+);
