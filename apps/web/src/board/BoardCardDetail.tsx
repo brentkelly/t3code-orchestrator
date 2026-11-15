@@ -623,9 +623,8 @@ export function BoardCardDetail({
           // oxlint-disable-next-line react/purity -- the queue order samples the clock when the shells change; the compiler recomputes it only then.
           nowMs: Date.now(),
         });
-  // Strictly "the command is in flight": the governor may decline to start the
-  // card, so waiting for it to leave the queue could stick forever. The request
-  // is durable on the step row, so asking again is harmless.
+  // Strictly "the command is in flight". Once it lands, the shell's `forceStart` says the
+  // press took until the card leaves the queue.
   const [forceStartPending, setForceStartPending] = useState(false);
   // The Resume button's in-flight guard, so a second press cannot queue
   // the same step twice.
@@ -1313,6 +1312,7 @@ export function BoardCardDetail({
       onClose={onClose}
       queueInfo={queueInfo}
       queueForceStartPending={forceStartPending}
+      queueForceStartRequested={cardShell?.forceStart === true}
       onQueueForceStart={() => {
         setFeedback(null);
         setForceStartPending(true);

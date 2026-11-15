@@ -1173,6 +1173,8 @@ export function boardShellStreamEvent(event: BoardEvent): Option.Option<BoardShe
       });
 
     case "board.card-step-admitted":
+    // T3o: a Start now press shows on the queued card until it starts.
+    case "board.card-step-force-start-requested":
       // Admission flips the card's `queued` badge. A dedicated delta because
       // this event carries `state`, not the card, so the shell cannot be
       // rebuilt here.
@@ -1191,6 +1193,9 @@ export function boardShellStreamEvent(event: BoardEvent): Option.Option<BoardShe
         // T3o: what it waits on (T3O-86).
         ...(event.payload.state.status === "queued" && event.payload.state.queuedDetail !== null
           ? { queuedDetail: event.payload.state.queuedDetail }
+          : {}),
+        ...(event.payload.state.status === "queued" && event.payload.state.forceStart
+          ? { forceStart: true }
           : {}),
       });
 
@@ -1374,10 +1379,7 @@ export function boardShellStreamEvent(event: BoardEvent): Option.Option<BoardShe
 
     case "board.plan-written":
     case "board.card-stage-thread-requested":
-    // The remaining step-lifecycle events are card detail. A force-start
-    // changes nothing yet: the step stays queued until admission, whose own
-    // delta clears the badge.
-    case "board.card-step-force-start-requested":
+    // The remaining step-lifecycle events are card detail.
     case "board.card-step-retuned":
     // A human steering a running step changes no column-card field
     // either: the step is still running and still owned by the same thread.

@@ -164,7 +164,7 @@ import { boardCiSentBackBanner, isBoardCiLive } from "./boardCi";
 import { deriveBoardPlanRows } from "./boardPlanRows";
 import { boardCardHasSummaryPane, deriveBoardCardWorkSummary } from "./boardCardWorkSummary";
 import { boardStageLabel } from "./boardStages";
-import type { BoardQueueInfo } from "./boardQueueInfo";
+import { type BoardQueueInfo, forceStartHint, forceStartLabel } from "./boardQueueInfo";
 import {
   boardCiAwareNextStageId,
   boardStagePrimaryAction,
@@ -524,6 +524,8 @@ export interface BoardCardDetailViewProps {
   /** True between asking for a force start and the card actually leaving the
       queue. There is still a worktree to provision, so the button holds. */
   readonly queueForceStartPending?: boolean | undefined;
+  /** Start now was pressed and the card hasn't started yet. */
+  readonly queueForceStartRequested?: boolean | undefined;
   /** Start the queued step now, over the agent cap. */
   readonly onQueueForceStart?: (() => void) | undefined;
   /** Move the card to the front of the queue. ABSENT — not disabled — when the
@@ -1165,6 +1167,7 @@ function QueueSection({ props }: { readonly props: BoardCardDetailViewProps }) {
   const info = props.queueInfo;
   if (info == null) return null;
   const pending = props.queueForceStartPending === true;
+  const requested = !pending && props.queueForceStartRequested === true;
   return (
     <div className="mx-3.5 mb-3.5 rounded-lg border border-border bg-muted/50 p-2.5">
       <p className="flex items-center gap-1.5 text-board-12-5 font-semibold text-foreground">
@@ -1177,18 +1180,19 @@ function QueueSection({ props }: { readonly props: BoardCardDetailViewProps }) {
           {/* A card waiting for its worker's checkout has no limit to start
               past: nothing can run until the clone lands. */}
           {props.onQueueForceStart === undefined || info.waitingForCheckout === true ? null : (
-            <BoardHint label="Run this task now, past every agent limit: the board's, its worker's and its provider's.">
+            <BoardHint label={forceStartHint(requested)}>
               <button
                 className={cn(
                   "inline-flex h-[28px] items-center justify-center gap-1.5 rounded-lg border border-primary bg-primary px-2.5 text-board-12 font-medium text-primary-foreground shadow-xs hover:bg-primary/90",
                   pending && "cursor-wait opacity-60",
+                  requested && "opacity-60",
                 )}
-                disabled={pending}
+                disabled={pending || requested}
                 onClick={props.onQueueForceStart}
                 type="button"
               >
                 <PlayIcon className="size-3" />
-                {pending ? "Starting…" : "Start now"}
+                {forceStartLabel(pending, requested)}
               </button>
             </BoardHint>
           )}
@@ -3363,6 +3367,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 threadTodos={props.threadTodos}
                 queueInfo={props.queueInfo}
                 queueForceStartPending={props.queueForceStartPending}
+                queueForceStartRequested={props.queueForceStartRequested}
                 onQueueForceStart={props.onQueueForceStart}
                 footer={
                   props.canApproveSplit && props.splitGate !== null ? (

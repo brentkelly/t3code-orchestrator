@@ -4096,6 +4096,7 @@ function boardShellCards(
       const queuedByCard = new Set<BoardCardId>();
       const queueReasonByCard = new Map<BoardCardId, BoardStepQueuedBy>();
       const queueDetailByCard = new Map<BoardCardId, BoardStepQueuedDetail>();
+      const forceStartByCard = new Set<BoardCardId>();
       const stalledByCard = new Set<BoardCardId>();
       const runningByCard = new Set<BoardCardId>();
       const heldByCard = new Set<BoardCardId>();
@@ -4118,6 +4119,7 @@ function boardShellCards(
         if (row.status === "queued" && row.queuedDetail !== null) {
           queueDetailByCard.set(row.cardId, row.queuedDetail);
         }
+        if (row.status === "queued" && row.forceStart !== 0) forceStartByCard.add(row.cardId);
         // The second step-state field on the bounded shell: a card
         // is `stalled` when recovery gave up on its live step.
         if (row.status === "stalled") stalledByCard.add(row.cardId);
@@ -4197,6 +4199,7 @@ function boardShellCards(
           group: boardCardGroupFromRow(row),
           queuedBy: queueReasonByCard.get(row.cardId) ?? null,
           queuedDetail: queueDetailByCard.get(row.cardId) ?? null,
+          forceStart: forceStartByCard.has(row.cardId),
           // Carried UNRESOLVED. The renderer settles the outcome
           // against `stepRunning`, which every shell already holds — resolving
           // it here as well would give the snapshot and the `card-review`

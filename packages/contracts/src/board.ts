@@ -7497,6 +7497,8 @@ export const BoardCardShell = Schema.Struct({
   queuedBy: Schema.optionalKey(BoardStepQueuedBy),
   /** T3o: what a queued card waits on (T3O-86), beside `queuedBy`. */
   queuedDetail: Schema.optionalKey(BoardStepQueuedDetail),
+  /** T3o: a human pressed Start now on the queued card; present only beside `queued`. */
+  forceStart: Schema.optionalKey(Schema.Boolean),
   // Review summary — counts, never bodies; absent until the post-MVP
   // review pipeline lands, then populated only in the review stage.
   roundCurrent: Schema.optionalKey(NonNegativeInt),
@@ -7850,6 +7852,7 @@ export function makeBoardCardShell(input: {
       on card deltas (the client keeps the last known value). */
   readonly queuedBy?: BoardStepQueuedBy | null | undefined;
   readonly queuedDetail?: BoardStepQueuedDetail | null | undefined;
+  readonly forceStart?: boolean | undefined;
   /** The card's review-loop summary, or null when it has no
       review history. Absent-means-preserve, like the body/plan slices: a
       producer that cannot see the step-completion ledger omits the key rather
@@ -7965,6 +7968,7 @@ export function makeBoardCardShell(input: {
     ...(input.queued === true && input.queuedDetail != null
       ? { queuedDetail: input.queuedDetail }
       : {}),
+    ...(input.queued === true && input.forceStart === true ? { forceStart: true } : {}),
     // The review slice. Spread whole or not at all: the counts and
     // the outcome describe one loop, so a producer must never publish half of
     // them and let the client blend them with a previous card's other half.
@@ -8111,6 +8115,8 @@ export const BoardCardQueuedShellEvent = Schema.Struct({
   /** Which limit holds the card, present only when `queued`. */
   queuedBy: Schema.optionalKey(BoardStepQueuedBy),
   queuedDetail: Schema.optionalKey(BoardStepQueuedDetail),
+  /** T3o: Start now was pressed and the card hasn't started yet. Absent clears. */
+  forceStart: Schema.optionalKey(Schema.Boolean),
 });
 export type BoardCardQueuedShellEvent = typeof BoardCardQueuedShellEvent.Type;
 

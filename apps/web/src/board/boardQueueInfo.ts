@@ -239,3 +239,12 @@ function withQueueReason(
       };
   }
 }
+
+/** The Start now button's text: in flight, then pressed until the card leaves the queue. */
+export const forceStartLabel = (pending: boolean, requested: boolean) =>
+  pending ? "Starting…" : requested ? "Start requested" : "Start now";
+
+export const forceStartHint = (requested: boolean) =>
+  requested
+    ? "Start now was pressed. It starts as soon as a worker can run it at all; the line above says what it still waits on."
+    : "Run this task now, past every agent limit: the board's, its worker's and its provider's.";

@@ -838,6 +838,20 @@ describe("board projector", () => {
         queued: true,
         stepRunning: false,
       });
+      // A Start now press shows on the still-queued card.
+      const forced: BoardEvent = {
+        ...eventBase,
+        type: "board.card-step-force-start-requested",
+        payload: { cardId, state: { ...queuedState, forceStart: true } },
+      };
+      assert.deepStrictEqual(Option.getOrThrow(boardShellStreamEvent(forced)), {
+        kind: "card-queued",
+        sequence: forced.sequence,
+        cardId,
+        queued: true,
+        stepRunning: false,
+        forceStart: true,
+      });
     }),
   );
 

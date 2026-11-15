@@ -46,7 +46,7 @@ import { BoardCardThreadTodosStrip } from "./BoardCardThreadTodosStrip";
 import type { BoardPickerOption } from "./BoardSearchAddPicker";
 import type { BoardDetailThreadLink } from "./BoardCardDetailView";
 import { BoardHint } from "./BoardHint";
-import type { BoardQueueInfo } from "./boardQueueInfo";
+import { type BoardQueueInfo, forceStartHint, forceStartLabel } from "./boardQueueInfo";
 import { BoardThreadWorkerGate } from "./workers/BoardThreadWorkerGate";
 import { threadWorkerChip, threadWorkerOpensOn } from "./workers/threadWorker";
 
@@ -180,6 +180,7 @@ export function BoardCardThreadPane({
   threadTodos,
   queueInfo,
   queueForceStartPending,
+  queueForceStartRequested,
   onQueueForceStart,
   footer = null,
 }: {
@@ -209,6 +210,8 @@ export function BoardCardThreadPane({
       queued. */
   readonly queueInfo?: BoardQueueInfo | null | undefined;
   readonly queueForceStartPending?: boolean | undefined;
+  /** Start now was pressed and the card hasn't started yet. */
+  readonly queueForceStartRequested?: boolean | undefined;
   readonly onQueueForceStart?: (() => void) | undefined;
   /** Docked at the end of the thread, e.g. the split gate. */
   readonly footer?: ReactNode;
@@ -423,18 +426,26 @@ export function BoardCardThreadPane({
             has picked this up yet.
           </p>
           {onQueueForceStart === undefined || queueInfo.waitingForCheckout === true ? null : (
-            <BoardHint label="Run this task now, past every agent limit: the board's, its worker's and its provider's.">
+            <BoardHint
+              label={forceStartHint(
+                queueForceStartPending !== true && queueForceStartRequested === true,
+              )}
+            >
               <button
                 className={cn(
                   "inline-flex h-[24px] shrink-0 items-center gap-1.25 rounded-board-7 border border-input bg-popover px-2 text-board-11-5 font-medium text-foreground shadow-xs hover:bg-accent",
                   queueForceStartPending === true && "cursor-wait opacity-60",
+                  queueForceStartRequested === true && "opacity-60",
                 )}
-                disabled={queueForceStartPending === true}
+                disabled={queueForceStartPending === true || queueForceStartRequested === true}
                 onClick={onQueueForceStart}
                 type="button"
               >
                 <PlayIcon className="size-2.5" />
-                {queueForceStartPending === true ? "Starting…" : "Start now"}
+                {forceStartLabel(
+                  queueForceStartPending === true,
+                  queueForceStartPending !== true && queueForceStartRequested === true,
+                )}
               </button>
             </BoardHint>
           )}

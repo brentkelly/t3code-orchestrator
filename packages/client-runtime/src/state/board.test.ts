@@ -248,8 +248,10 @@ describe("board shell reducer", () => {
       queued: true,
       stepRunning: false,
       queuedBy: "worker",
+      forceStart: true,
     });
     expect(queued.cards?.[0]?.queuedBy).toBe("worker");
+    expect(queued.cards?.[0]?.forceStart).toBe(true);
     // A drag re-upserts the card without step state: the reason stays.
     const dragged = applyBoardShellStreamEvent(queued, {
       kind: "card-upserted",
@@ -258,6 +260,7 @@ describe("board shell reducer", () => {
     });
     expect(dragged.cards?.[0]?.queued).toBe(true);
     expect(dragged.cards?.[0]?.queuedBy).toBe("worker");
+    expect(dragged.cards?.[0]?.forceStart).toBe(true);
     // A different limit takes over.
     const board = applyBoardShellStreamEvent(dragged, {
       kind: "card-queued",
@@ -277,6 +280,7 @@ describe("board shell reducer", () => {
       stepRunning: true,
     });
     expect(admitted.cards?.[0]?.queuedBy).toBeUndefined();
+    expect(admitted.cards?.[0]?.forceStart).toBeUndefined();
   });
 
   it("card-queued admitted-to-running lights stepRunning; holding for a slot clears it", () => {
