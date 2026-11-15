@@ -174,6 +174,7 @@ import {
 } from "@t3tools/contracts";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
@@ -1876,6 +1877,8 @@ const make = Effect.gen(function* () {
         readonly kind: "placement" | "grow";
         readonly input: BoardCapacityHoldInput;
         readonly until: string | null;
+        /** When the worker last granted it (epoch ms), or null for a hold adopted unasked. */
+        readonly askedAt: number | null;
       }
     >
   >();
@@ -1910,6 +1913,7 @@ const make = Effect.gen(function* () {
       readonly kind: "placement" | "grow";
       readonly input: BoardCapacityHoldInput;
       readonly until: string | null;
+      readonly askedAt: number | null;
     },
   ) => {
     let byWorker = boardHolds.get(cardId);
@@ -1935,6 +1939,30 @@ const make = Effect.gen(function* () {
     }
     if (keep !== null) forgetHold(cardId, keep);
   });
+
+  /** A hold the card already has, granted for this same ask within one refresh interval: its
+      lapse is at least `HOLD_LAPSE_MS - HOLD_REFRESH_MS` ahead and the refresh fiber renews it,
+      so a scheduling pass need not ask again. */
+  const holdFresh = (
+    cardId: string,
+    workerId: BoardWorkerId,
+    input: BoardCapacityHoldInput,
+    now: number,
+  ) => {
+    const entry = boardHolds.get(cardId)?.get(workerId);
+    return (
+      entry !== undefined &&
+      entry.kind === input.kind &&
+      entry.askedAt !== null &&
+      now - entry.askedAt < HOLD_REFRESH_MS &&
+      (entry.until === null || Date.parse(entry.until) - now > HOLD_REFRESH_MS) &&
+      entry.input.providerInstanceId === input.providerInstanceId &&
+      entry.input.repositoryKey === input.repositoryKey &&
+      entry.input.profile.cpuCores === input.profile.cpuCores &&
+      entry.input.profile.ramGiB === input.profile.ramGiB &&
+      entry.input.profile.diskGB === input.profile.diskGB
+    );
+  };
 
   /** The card holding `workerId` for placement, other than `card`. */
   const placementHolderOn = (card: BoardCard, workerId: BoardWorkerId): string | null => {
@@ -1983,7 +2011,12 @@ const make = Effect.gen(function* () {
       forgetHold(String(card.id), workerId);
       return false;
     }
-    noteHold(String(card.id), workerId, { kind: "grow", input, until: answer.until });
+    noteHold(String(card.id), workerId, {
+      kind: "grow",
+      input,
+      until: answer.until,
+      askedAt: yield* Clock.currentTimeMillis,
+    });
     return true;
   });
 
@@ -2109,7 +2142,9 @@ const make = Effect.gen(function* () {
       profile: context.profile,
       kind: "placement",
     };
+    const now = yield* Clock.currentTimeMillis;
     for (const workerId of [...ask, ...signal]) {
+      if (holdFresh(card.id, workerId, input, now)) continue;
       // A later card's hold passes to this one only if this request succeeds.
       const later = ask.includes(workerId) ? laterHolderOn(card, workerId, pass) : null;
       const answer = yield* client.hold(
@@ -2131,7 +2166,7 @@ const make = Effect.gen(function* () {
         continue;
       }
       if (later !== null) forgetHold(later, workerId);
-      noteHold(card.id, workerId, { kind: "placement", input, until: answer.until });
+      noteHold(card.id, workerId, { kind: "placement", input, until: answer.until, askedAt: now });
     }
     // Holds that fell out of the card's top two go.
     for (const workerId of holding) {
@@ -2140,8 +2175,8 @@ const make = Effect.gen(function* () {
         forgetHold(card.id, workerId);
       }
     }
-    const now = placementHoldsOf(card.id);
-    const first = ranked.find((workerId) => now.has(workerId)) ?? [...now][0];
+    const held = placementHoldsOf(card.id);
+    const first = ranked.find((workerId) => held.has(workerId)) ?? [...held][0];
     return first === undefined
       ? null
       : ({
@@ -12188,7 +12223,13 @@ const make = Effect.gen(function* () {
         }
         if (answer === null) continue;
         if (answer.outcome === "refused") forgetHold(cardId, workerId);
-        else noteHold(cardId, workerId, { ...entry, until: answer.until });
+        else {
+          noteHold(cardId, workerId, {
+            ...entry,
+            until: answer.until,
+            askedAt: yield* Clock.currentTimeMillis,
+          });
+        }
       }
     }
     const board = yield* readBoard;
@@ -12228,6 +12269,7 @@ const make = Effect.gen(function* () {
           kind: "placement",
         },
         until: null,
+        askedAt: null,
       });
     }
     // Only a waiting card can be adopted again, so its guard goes with its wait.

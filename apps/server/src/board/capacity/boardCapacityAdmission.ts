@@ -360,6 +360,25 @@ export const makeBoardCapacityAdmission = (deps: BoardCapacityAdmissionDeps) => 
     return { kind: "granted", claimId, profile } as PlacementDecision;
   });
 
+  /** Per card, the worker snapshot its last grow claim was denied against: until a newer one
+      (or the settle time) shows room may have moved, a pass sends no claim to hear it again. */
+  const growDeniedAgainst = new Map<
+    BoardCardId,
+    {
+      readonly workerId: BoardWorkerId;
+      readonly snapshot: BoardWorkerCapacitySnapshot | null;
+      readonly hold: boolean;
+      readonly providerInstanceId: string | null;
+      readonly profile: BoardResourceProfile;
+      readonly at: number;
+      readonly answer: CapacityHold;
+    }
+  >();
+  const sameProfile = (left: BoardResourceProfile, right: BoardResourceProfile) =>
+    left.cpuCores === right.cpuCores &&
+    left.ramGiB === right.ramGiB &&
+    left.diskGB === right.diskGB;
+
   /**
    * Before a step on a placed card: a heavy grant needs nothing; a light one takes a grow
    * claim at the profile it was granted. Null when the step may go ahead, else its hold.
@@ -385,8 +404,26 @@ export const makeBoardCapacityAdmission = (deps: BoardCapacityAdmissionDeps) => 
       } as CapacityHold;
     }
     const profile = grant?.profile ?? requestedProfileOf(board, card);
+    // Denied against this very snapshot, with the same ask: the worker would say the same.
+    const now = yield* nowMs;
+    const snapshot = yield* deps.client.latest(workerId);
+    const denied = growDeniedAgainst.get(card.id);
+    if (
+      !force &&
+      denied !== undefined &&
+      denied.workerId === workerId &&
+      denied.snapshot !== null &&
+      denied.snapshot === snapshot &&
+      denied.hold === hold &&
+      denied.providerInstanceId === providerInstanceId &&
+      sameProfile(denied.profile, profile) &&
+      now - denied.at < SNAPSHOT_SETTLE_MS + SNAPSHOT_INTERVAL_MS
+    ) {
+      return denied.answer;
+    }
+    growDeniedAgainst.delete(card.id);
     const answer = yield* claimOn(workerId, {
-      claimId: `${card.id}:grow:${yield* nowMs}`,
+      claimId: `${card.id}:grow:${now}`,
       cardId: card.id,
       repositoryKey: yield* deps.repositoryKey(card.projectId),
       kind: "grow",
@@ -402,7 +439,19 @@ export const makeBoardCapacityAdmission = (deps: BoardCapacityAdmissionDeps) => 
         blocksWorker: false,
       } as CapacityHold;
     }
-    if (answer.outcome === "denied") return holdForDenial(answer, workerId, "grow");
+    if (answer.outcome === "denied") {
+      const denial = holdForDenial(answer, workerId, "grow");
+      growDeniedAgainst.set(card.id, {
+        workerId,
+        snapshot,
+        hold,
+        providerInstanceId,
+        profile,
+        at: now,
+        answer: denial,
+      });
+      return denial;
+    }
     yield* deps.dispatch({
       type: "board.card.record-grant",
       commandId: yield* deps.commandId("grow"),

@@ -655,8 +655,22 @@ it.effect(
         ...heavy,
         resources: { sizing: null, setup: null, grant: grant({ heavy: false }) },
       };
+      h.fake.frozen.set(BOARD_LOCAL_WORKER_ID, (yield* h.fake.client.latest(BOARD_LOCAL_WORKER_ID))!);
       const hold = yield* h.admission.ensureHeavy(light, "codex", false);
       assert.deepInclude(hold, { queuedBy: "capacity", blocksWorker: false });
+      assert.lengthOf(h.fake.claims, 2);
+      // The next pass against the same snapshot asks nothing, and holds the same.
+      assert.deepStrictEqual(yield* h.admission.ensureHeavy(light, "codex", false), hold);
+      assert.lengthOf(h.fake.claims, 2);
+      // A grow hold, a Start now or a new snapshot is a new question.
+      yield* h.admission.ensureHeavy(light, "codex", false, true);
+      assert.lengthOf(h.fake.claims, 3);
+      yield* h.admission.ensureHeavy(light, "codex", true);
+      assert.lengthOf(h.fake.claims, 4);
+      h.fake.external.delete(BOARD_LOCAL_WORKER_ID);
+      h.fake.frozen.delete(BOARD_LOCAL_WORKER_ID);
+      assert.isNull(yield* h.admission.ensureHeavy(light, "codex", false));
+      assert.lengthOf(h.fake.claims, 5);
     }),
 );
 

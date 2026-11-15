@@ -593,6 +593,38 @@ describe("holds at build start (T3O-87)", () => {
       }),
   );
 
+  // A hold is renewed by the refresh fiber, so a pass inside one refresh interval re-asks nothing.
+  it.effect("a scheduling pass does not re-ask a hold the card was just granted", () =>
+    Effect.gen(function* () {
+      const capacity = yield* capacityOf(workers.map((id) => [id, FULL] as const));
+      for (const id of workers) capacity.external.set(id, CPU_RAM_TAKEN);
+      const card = unplaced("card-1", "a");
+      yield* withGovernor(
+        {
+          board: { ...world([card]), workers: workers.map((id) => registeredWorker(id)) },
+          settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 9 }),
+          placement: fourWorkers,
+          capacity,
+          workspaces: loggingWorkspaces(newWorkerGit()),
+        },
+        (h) =>
+          Effect.gen(function* () {
+            yield* h.pumpDomain(movedToBuilding(card, 1));
+            const asked = capacity.holds.length;
+            assert.strictEqual(new Set(capacity.holds.map((hold) => hold.workerId)).size, 2);
+            yield* h.reactor.sweep;
+            yield* h.reactor.sweep;
+            assert.strictEqual(capacity.holds.length, asked);
+            assert.strictEqual(
+              boardCardStepState(yield* h.board, BoardCardId.make("card-1"))?.queuedBy,
+              "holding",
+              "the card still waits on the workers it holds",
+            );
+          }),
+      );
+    }),
+  );
+
   // Its wait names only the worker it holds, but an unplaced card can take any worker.
   it.effect("room freed on a worker the waiting card doesn't name starts it at once", () =>
     Effect.gen(function* () {
