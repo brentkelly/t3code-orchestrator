@@ -125,6 +125,8 @@ export interface BoardAutomationRow {
   readonly lockReason: string | null;
   /** Sits under the row before it: Auto sign-off belongs to automated planning. */
   readonly indent?: boolean;
+  /** Inherited on, held until the group starts: the gate is automatic, the switch reads off. */
+  readonly waitingForGroupStart?: boolean;
 }
 
 function lockState(toggle: BoardResolvedAutomationToggle) {
@@ -148,6 +150,7 @@ function row(
     note: toggle.locked && toggle.lockReason !== null ? toggle.lockReason : note,
     tag: boardAutomationSourceTag(toggle),
     ...lockState(toggle),
+    ...(toggle.waitingForGroupStart ? { waitingForGroupStart: true } : {}),
   };
 }
 
@@ -200,7 +203,9 @@ export function boardCardAutomationRows(input: {
 export function boardMakeHandsOffPatch(
   resolved: BoardResolvedAutomation,
 ): Partial<Record<BoardAutomationToggle, true>> | null {
-  const turnOn = (toggle: BoardResolvedAutomationToggle) => !toggle.value && !toggle.locked;
+  // An inherited on waiting for its group is already automatic; an own on would build early.
+  const turnOn = (toggle: BoardResolvedAutomationToggle) =>
+    !toggle.value && !toggle.locked && !toggle.waitingForGroupStart;
   const planAutomated = resolved.autoPlan.value || turnOn(resolved.autoPlan);
   const patch: Partial<Record<BoardAutomationToggle, true>> = {
     ...(turnOn(resolved.autoPlan) ? { autoPlan: true } : {}),
@@ -292,7 +297,8 @@ export function boardAutomationStrip(input: {
   readonly rows: ReadonlyArray<BoardAutomationRow>;
   readonly pastPlanning: boolean;
 }): BoardAutomationStrip {
-  const on = (id: BoardAutomationRow["id"]) => input.rows.some((r) => r.id === id && r.on);
+  const on = (id: BoardAutomationRow["id"]) =>
+    input.rows.some((r) => r.id === id && (r.on || r.waitingForGroupStart === true));
   const has = (id: BoardAutomationRow["id"]) => input.rows.some((r) => r.id === id);
   const tags: BoardAutomationGateTag[] = [
     ...(input.pastPlanning

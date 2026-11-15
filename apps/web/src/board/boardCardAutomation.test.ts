@@ -193,6 +193,18 @@ describe("Make hands-off", () => {
       boardMakeHandsOffPatch(resolve([shell("c-1", "building")], shell("c-1", "building"), true)),
     ).toBeNull();
   });
+
+  it("leaves an Auto-build waiting for its group to start with the group", () => {
+    const g = shell("g-1", "ready", { group: group({ autoBuild: true, autoMerge: true }) });
+    const ready = child("c-1", "ready");
+    expect(resolve([g, ready], ready).autoBuild.waitingForGroupStart).toBe(true);
+    expect(patch(ready, [g, ready])).toBeNull();
+    const value = boardAutomationStrip({
+      rows: boardCardAutomationRows({ resolved: resolve([g, ready], ready), inPlanning: false }),
+      pastPlanning: boardAutomationPastPlanning(STAGES, ready.stage),
+    });
+    expect(value.handsOff).toBe(true);
+  });
 });
 
 describe("the source tag", () => {

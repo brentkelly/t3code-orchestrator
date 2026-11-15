@@ -43,8 +43,8 @@ export default Effect.gen(function* () {
   `;
   const byId = new Map(rows.map((row) => [row.cardId, row]));
   for (const row of rows) {
-    // A card inheriting both picks up its group's backfilled sign-off instead.
     if (row.groupTarget !== null) continue;
+    // A card inheriting both picks up its group's backfilled sign-off instead.
     if (row.autoPlanSetting === null && row.autoBuildSetting === null) continue;
     const parent = row.parentCardId === null ? undefined : byId.get(row.parentCardId);
     const group = parent !== undefined && parent.groupTarget !== null ? parent : null;
