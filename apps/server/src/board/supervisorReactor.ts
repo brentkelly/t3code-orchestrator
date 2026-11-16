@@ -517,6 +517,8 @@ export interface SupervisorReactorShape {
   >;
   /** Reconcile every non-terminal step against the live world (boot / test). */
   readonly reconcile: Effect.Effect<void>;
+  /** T3o: one pass of the production 30s tick, every sweep on it in order (T3O-115). */
+  readonly tick: Effect.Effect<void>;
   /** One timeout-sweep pass over running unattended steps. In
       production the worker runs it on a timer; exposed so tests can drive the
       liveness clock deterministically. */
@@ -12584,6 +12586,33 @@ const make = Effect.gen(function* () {
     ),
   );
 
+  // T3o: the 30s tick, one effect for production and tests (T3O-115).
+  const tick = Effect.suspend(() =>
+    // These sweeps ride the 30s tick: each is a board read plus an in-memory pass serialised
+    // against the handlers, and the tick is the only retry for work nothing else will ask about
+    // again (dropped turn ends, a restart, a worker whose reconcile did not finish).
+    syncWorkerReach.pipe(
+      Effect.andThen(sweepTimeouts),
+      Effect.andThen(releaseFinishedThreads),
+      Effect.andThen(sweepSchedules),
+      Effect.andThen(sweepGates),
+      Effect.andThen(sweepRetries),
+      Effect.andThen(sweepAutoMergeHolds),
+      // Forge-check CI steps poll on the same cadence.
+      Effect.andThen(sweepCiForgeSteps),
+      // A pass with nothing behind it is held on the second tick.
+      Effect.andThen(sweepOrphanedCiPasses),
+      Effect.andThen(sweepAutoArchives),
+      // T3o: worker capacity's phase rule, settling and sync, then the upgrade (T3O-86).
+      Effect.andThen(sweepCapacity),
+      // T3o: a pending or queued row whose spawn was lost is `schedule()`'s, not a gate's;
+      // without capacity admission nothing else on the tick reaches it (T3O-115).
+      Effect.andThen(Effect.suspend(() => schedule())),
+      // T3o: the timeout and capacity sweeps share one thread read per thread (T3O-108).
+      withTickThreadStates,
+    ),
+  );
+
   const processInput = (input: SupervisorInput) => {
     switch (input.source) {
       case "domain":
@@ -12608,29 +12637,7 @@ const make = Effect.gen(function* () {
         );
       case "timeout-sweep":
         timeoutSweepQueued = false;
-        // These sweeps ride the 30s tick: each is a board read plus an in-memory pass serialised
-        // against the handlers, and the tick is the only retry for work nothing else will ask about
-        // again (dropped turn ends, a restart, a worker whose reconcile did not finish).
-        return syncWorkerReach.pipe(
-          Effect.andThen(sweepTimeouts),
-          Effect.andThen(releaseFinishedThreads),
-          Effect.andThen(sweepSchedules),
-          Effect.andThen(sweepGates),
-          Effect.andThen(sweepRetries),
-          Effect.andThen(sweepAutoMergeHolds),
-          // Forge-check CI steps poll on the same cadence.
-          Effect.andThen(sweepCiForgeSteps),
-          // A pass with nothing behind it is held on the second tick.
-          Effect.andThen(sweepOrphanedCiPasses),
-          Effect.andThen(sweepAutoArchives),
-          // T3o: worker capacity's phase rule, settling and sync, then the upgrade (T3O-86).
-          Effect.andThen(sweepCapacity),
-          // T3o: a pending or queued row whose spawn was lost is `schedule()`'s, not a gate's;
-          // without capacity admission nothing else on the tick reaches it (T3O-115).
-          Effect.andThen(Effect.suspend(() => schedule())),
-          // T3o: the timeout and capacity sweeps share one thread read per thread (T3O-108).
-          withTickThreadStates,
-        );
+        return tick;
     }
   };
 
@@ -12875,6 +12882,11 @@ const make = Effect.gen(function* () {
     fireSchedules: sweepSchedules,
     fireAutoArchives: sweepAutoArchives,
     startArmed: sweepGates,
+    tick: tick.pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("board supervisor: tick failed", { cause: Cause.pretty(cause) }),
+      ),
+    ),
     fireRetries: sweepRetries,
     fireAutoMerges: sweepAutoMergeHolds,
     releaseThreads: releaseFinishedThreads,
