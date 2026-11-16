@@ -165,6 +165,25 @@ a{color:#1d4ed8;text-decoration:none} a:hover{text-decoration:underline}
 table.tiers{width:100%;border-collapse:collapse;font:400 12.5px/1.5 var(--font-sans)}
 table.tiers th{text-align:left;font:600 11px var(--font-sans);letter-spacing:.06em;text-transform:uppercase;color:var(--doc-muted);padding:8px 10px;border-bottom:1px solid var(--doc-border)}
 table.tiers td{padding:9px 10px;border-bottom:1px solid var(--doc-border);vertical-align:top;text-wrap:pretty}
+/* ── re-sync ── */
+.k-wal{background:color-mix(in srgb,#4aa8b8 18%,transparent);color:#2b7f8c}
+.th-dark .k-wal{color:#7fd0dc}
+.rs-ln{white-space:normal !important;line-height:1.4}
+.toast{display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border:1px solid var(--border);border-radius:11px;background:var(--popover);box-shadow:var(--shadow-pop)}
+.toast b{display:block;font:600 12px var(--font-sans);color:var(--fg)}
+.toast span.t{display:block;margin-top:2px;font:400 11px/1.5 var(--font-sans);color:var(--muted-fg);text-wrap:pretty}
+.slot{display:flex;align-items:flex-start;gap:6px;margin-top:7px;padding:8px 9px;border:1.5px dashed color-mix(in srgb,var(--info) 45%,var(--border));border-radius:10px;font:500 10.5px/1.4 var(--font-sans);color:var(--info-fg);text-wrap:pretty}
+.ring{box-shadow:0 0 0 2px color-mix(in srgb,var(--info) 50%,transparent)}
+.drop-no{outline:1.5px dashed color-mix(in srgb,var(--info) 55%,transparent);outline-offset:-1.5px}
+.phone{width:340px;max-width:100%;margin:0 auto;border:1px solid var(--border);border-radius:22px;overflow:hidden;background:var(--bg);display:flex;flex-direction:column}
+.sheet{display:flex;flex-direction:column;border-top:1px solid var(--border);border-radius:16px 16px 0 0;background:var(--popover);box-shadow:var(--shadow-pop)}
+.sh-r{display:flex;align-items:center;gap:9px;padding:11px 16px;border-top:1px solid var(--border);font:500 13px var(--font-sans);color:var(--fg)}
+.sh-r em{margin-left:auto;font:400 11px var(--font-sans);font-style:normal;color:var(--muted-fg)}
+.pc{display:flex;flex-direction:column;gap:9px;background:var(--card);border:1px solid var(--border);border-radius:12px;padding:11px 12px}
+.bar6{display:flex;gap:4px}.bar6 i{flex:1;height:6px;border-radius:3px;display:block}
+.mq{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.mq-i{display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 7px;border:1px solid var(--border);border-radius:6px;background:var(--card);font:500 10.5px var(--font-sans);color:var(--fg)}
+.mq-a{font:400 11px var(--font-sans);color:var(--muted-fg)}
 </style>
 </helmet>
 
@@ -177,7 +196,7 @@ table.tiers td{padding:9px 10px;border-bottom:1px solid var(--doc-border);vertic
       <span style="font:500 12.5px var(--font-sans);color:var(--doc-muted)">UX spec · board, card and settings</span>
     </div>
     <h1 style="margin:0;font:600 30px/1.15 var(--font-sans);letter-spacing:-0.025em">CI and project-based stages, v2</h1>
-    <p style="margin:0;max-width:80ch;font:400 14.5px/1.6 var(--font-sans);color:var(--doc-muted);text-wrap:pretty">One global list of stages with per-project switches and overrides, edited on the board rather than in <span class="mono" style="font-size:13px;color:var(--doc-fg)">t3o.json</span>. CI becomes a list of typed steps per project with parallel groups and a built-in Sync with base. Each screen below is shown in light and dark, with numbered notes and the interaction flows. Interactive versions: <a href="t3o.dc.html">the board</a> (Tweaks → CI demo states for the rarer CI states) and <a href="T3 Settings.dc.html">Settings</a>. <b style="color:var(--doc-fg);font-weight:600">Updated for T3O-57</b>: CI now fixes in place and stops for a human instead of sending cards back to Code review, and projects get a Stop on failure setting. <a href="#t3o-57">Jump to the T3O-57 screens</a>.</p>
+    <p style="margin:0;max-width:80ch;font:400 14.5px/1.6 var(--font-sans);color:var(--doc-muted);text-wrap:pretty">One global list of stages with per-project switches and overrides, edited on the board rather than in <span class="mono" style="font-size:13px;color:var(--doc-fg)">t3o.json</span>. CI becomes a list of typed steps per project with parallel groups and a built-in Sync with base. Each screen below is shown in light and dark, with numbered notes and the interaction flows. Interactive versions: <a href="t3o.dc.html">the board</a> (Tweaks → CI demo states for the rarer CI states) and <a href="T3 Settings.dc.html">Settings</a>. <b style="color:var(--doc-fg);font-weight:600">Updated for T3O-57</b>: CI now fixes in place and stops for a human instead of sending cards back to Code review, and projects get a Stop on failure setting. <a href="#t3o-57">Jump to the T3O-57 screens</a>. <b style="color:var(--doc-fg);font-weight:600">Updated for re-sync</b>: a card the board sends back from Ready for merge because a sibling merged first now says why, what it's doing and how far it is from merging again. <a href="#resync">Jump to the re-sync screens</a>.</p>
     <div style="display:flex;flex-direction:column;gap:8px;padding:14px 16px;border:1px solid var(--doc-border);border-radius:12px;background:var(--doc-card)">
       <span style="font:600 12px var(--font-sans)">Status colours (docs/t3o/status-colours.md) and motion</span>
       <div class="legend">
@@ -500,6 +519,310 @@ Every failed step from the pass is attached, each with its failures and output.<
         <li>Fix attempts run out with steps still failing, or the agent reports with board_report_ci that it can't fix a step.</li>
         <li>The card stays in CI with a violet "Needs you" and the reason. Nothing moves it on its own.</li>
         <li>Retry CI (fresh visit, attempts reset), Send back to review anyway (recorded under your name, failures attached as a finding), or Skip CI.</li>
+      </ol></div>
+    </div>
+  </section>
+
+  <!-- ═══ Re-sync · sent back from Ready for merge ═══ -->
+  <section class="sec" id="resync">
+    <div class="sec-h"><span class="sec-n" style="width:auto;padding:0 7px;background:#4aa8b8">Re-sync</span><h2 class="sec-t">Sent back from Ready for merge to re-sync</h2></div>
+    <p class="sec-d">When a card reaches Ready for merge, the board checks whether its base branch has moved since the card's last review started. If a sibling merged first, the reviewed code is no longer the code that would merge, so the board sends the card back on a short <b>re-sync path</b>: Syncing with base → Re-review (one round) → CI → Ready for merge. This is correct and routine, so it is blue (running) everywhere and nothing animates. Only a paused sync turns violet. This is not CI's old send-back (removed in T3O-57): the board makes this move on purpose, and the card always says why.</p>
+    <div class="legend" style="padding:12px 14px;border:1px solid var(--doc-border);border-radius:12px;background:var(--doc-card)">
+      <span><i class="sw-c" style="background:#3b82f6"></i>Blue · re-sync running (sync, re-review, CI)</span>
+      <span><i class="sw-c" style="background:#8b5cf6"></i>Violet · sync paused, needs you (conflicts it couldn't resolve, or stopped by someone)</span>
+      <span><i class="sw-c" style="background:#f59e0b"></i>Amber · sync can't run at all (base branch can't be fetched)</span>
+      <span><i class="sw-c" style="background:#10b981"></i>Green · a finished step, as everywhere</span>
+    </div>
+
+    <!-- RS.1 The moment it happens -->
+    <h3 style="margin:8px 0 0;font:600 14px var(--font-sans)">1 · The moment it's sent back · board and notice</h3>
+    <div class="pair">
+      <sc-for list="{{ themes }}" as="th" hint-placeholder-count="2">
+        <div class="frame">
+          <span class="frame-l">{{ th.label }} · WAL-45 just merged; WAL-46 goes back, WAL-47 stays</span>
+          <div class="{{ th.mock }}" style="display:flex;flex-direction:column;gap:14px">
+            <div class="row" style="gap:8px;align-items:flex-start">
+              <div class="col" style="width:auto;flex:1;min-width:0">
+                <div class="col-h">Code review<span class="col-n">2</span></div>
+                <div class="card ring"><span class="row"><span class="key k-wal">WAL-46</span><span style="flex:1"></span><span class="mk-i">1</span></span><span class="ttl">Pad tool keys survive a re-mesh</span>
+                  <div class="ci"><div class="ci-h">↻ Re-sync<span class="chip c-info">Syncing</span></div>
+                    <div class="segs"><span class="sg" style="flex:1"><i class="s-run"></i></span><span class="sg" style="flex:1"><i class="s-pend"></i></span><span class="sg" style="flex:1"><i class="s-pend"></i></span><span class="sg" style="flex:1"><i class="s-pend"></i></span></div>
+                    <div class="ci-l"><b>1/4</b><span>WAL-45 merged first</span></div></div></div>
+                <div class="ph"></div>
+              </div>
+              <div class="col" style="width:auto;flex:1;min-width:0">
+                <div class="col-h">CI<span class="col-n">1</span></div>
+                <div class="ph"></div>
+              </div>
+              <div class="col" style="width:auto;flex:1;min-width:0">
+                <div class="col-h">Ready for merge<span class="mk-i" style="margin-left:6px">3</span><span class="col-n">1</span></div>
+                <div class="card"><span class="row"><span class="key k-wal">WAL-47</span></span><span class="ttl">Ground-mesh tiling at chunk seams</span><div class="row small" style="margin-top:6px;gap:5px"><span class="dot" style="background:var(--success)"></span>Up to date with base</div></div>
+              </div>
+            </div>
+            <div class="toast"><span class="mk-i">2</span><span style="color:var(--info-fg);font-size:14px;line-height:1">↻</span><span style="flex:1;min-width:0"><b>WAL-46 sent back to sync</b><span class="t">WAL-45 merged into board/wal-44 after this card was reviewed. It will sync with the new base, get one review round and run CI again, then go on to Ready for merge by itself. Nothing for you to do.</span></span><span class="btn sm">View</span></div>
+          </div>
+        </div>
+      </sc-for>
+    </div>
+    <div class="notes">
+      <div class="note"><span class="mk-i">1</span><span><b>The card lands with a static blue ring</b> that stays until someone opens or hovers it, so the move reads as deliberate, not as a jump. No slide, no pulse. The re-sync strip replaces the CI strip on the face for the whole path.</span></div>
+      <div class="note"><span class="mk-i">2</span><span><b>One notice per send-back</b>, for people viewing the board and anyone subscribed to the card. Copy pattern: "&lt;card&gt; sent back to sync" / "&lt;sibling&gt; merged into &lt;base&gt; after this card was reviewed…" ending with "Nothing for you to do." View opens the card on its re-sync pane. Stays 8 s on desktop, as a bottom snackbar on mobile, and is also written to the card's activity log.</span></div>
+      <div class="note"><span class="mk-i">3</span><span><b>Ready for merge only ever holds cards.</b> Nothing is left behind when a card goes back: no placeholder, no slot, no promised return time. Everything about the re-sync lives on the card itself, in the notice, and in the card's activity log.</span></div>
+    </div>
+
+    <!-- RS.2 Card face -->
+    <h3 style="margin:8px 0 0;font:600 14px var(--font-sans)">2 · Card face · re-sync running, and a repeat</h3>
+    <div class="pair">
+      <sc-for list="{{ themes }}" as="th" hint-placeholder-count="2">
+        <div class="frame">
+          <span class="frame-l">{{ th.label }} · four steps: Syncing with base · Re-review · CI · Ready for merge</span>
+          <div class="{{ th.mock }}">
+            <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px">
+              <div style="display:flex;flex-direction:column;gap:7px">
+                <span class="lbl"><span class="mk-i" style="vertical-align:-5px;margin-right:4px">4</span>Step 1 · in Code review</span>
+                <div class="card"><span class="row"><span class="key k-wal">WAL-46</span></span><span class="ttl">Pad tool keys survive a re-mesh</span>
+                  <div class="ci"><div class="ci-h">↻ Re-sync<span class="chip c-info">Syncing</span></div>
+                    <div class="segs"><span class="sg" style="flex:1"><i class="s-run"></i></span><span class="sg" style="flex:1"><i class="s-pend"></i></span><span class="sg" style="flex:1"><i class="s-pend"></i></span><span class="sg" style="flex:1"><i class="s-pend"></i></span></div>
+                    <div class="ci-l"><b>1/4</b><span>WAL-45 merged first</span></div></div></div>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:7px">
+                <span class="lbl"><span class="mk-i" style="vertical-align:-5px;margin-right:4px">5</span>Step 2 · in Code review</span>
+                <div class="card"><span class="row"><span class="key k-wal">WAL-46</span></span><span class="ttl">Pad tool keys survive a re-mesh</span>
+                  <div class="ci"><div class="ci-h">↻ Re-sync<span class="chip c-info">Re-review</span></div>
+                    <div class="segs"><span class="sg" style="flex:1"><i class="s-ok"></i></span><span class="sg" style="flex:1"><i class="s-run"></i></span><span class="sg" style="flex:1"><i class="s-pend"></i></span><span class="sg" style="flex:1"><i class="s-pend"></i></span></div>
+                    <div class="ci-l"><b>2/4</b><span>1 round, not a full review</span></div></div></div>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:7px">
+                <span class="lbl">Step 3 · in CI</span>
+                <div class="card"><span class="row"><span class="key k-wal">WAL-46</span></span><span class="ttl">Pad tool keys survive a re-mesh</span>
+                  <div class="ci"><div class="ci-h">↻ Re-sync<span class="chip c-info">CI</span></div>
+                    <div class="segs"><span class="sg" style="flex:1"><i class="s-ok"></i></span><span class="sg" style="flex:1"><i class="s-ok"></i></span><span class="sg" style="flex:1"><i class="s-run"></i></span><span class="sg" style="flex:1"><i class="s-pend"></i></span></div>
+                    <div class="ci-l"><b>3/4</b><span>CI 4 of 6 · Rust tests</span></div></div></div>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:7px">
+                <span class="lbl"><span class="mk-i" style="vertical-align:-5px;margin-right:4px">6</span>Repeat · second re-sync</span>
+                <div class="card"><span class="row"><span class="key k-wal">WAL-46</span></span><span class="ttl">Pad tool keys survive a re-mesh</span>
+                  <div class="ci"><div class="ci-h">↻ Re-sync · 2nd<span class="chip c-info">Syncing</span></div>
+                    <div class="segs"><span class="sg" style="flex:1"><i class="s-run"></i></span><span class="sg" style="flex:1"><i class="s-pend"></i></span><span class="sg" style="flex:1"><i class="s-pend"></i></span><span class="sg" style="flex:1"><i class="s-pend"></i></span></div>
+                    <div class="ci-l"><b>1/4</b><span>Second re-sync: WAL-47 merged</span></div></div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </sc-for>
+    </div>
+    <div class="notes">
+      <div class="note"><span class="mk-i">4</span><span><b>Same strip as CI</b>, so it reads as the board's own work: a "↻ Re-sync" label, a blue chip naming the current step, four equal segments, and one line. The line names the sibling that caused it. There's no time estimate: how long a review round or CI takes isn't known in advance, so the step count (1/4 … 4/4) is the answer to "how far from merging".</span></div>
+      <div class="note"><span class="mk-i">5</span><span><b>Re-review says it's short</b>: "1 round, not a full review". The card sits in Code review and CI as usual, but the strip keeps showing the re-sync path, so a card on it never looks like a fresh one. In CI the line borrows CI's own progress ("CI 4 of 6 · Rust tests").</span></div>
+      <div class="note"><span class="mk-i">6</span><span><b>Repeats are counted and named</b>: "Re-sync · 2nd" in the header, "Second re-sync: WAL-47 merged" on the line. A new sibling each time, so it never looks like the same thing failing again. The count resets when the card merges.</span></div>
+    </div>
+
+    <!-- RS.3 Card detail -->
+    <h3 style="margin:8px 0 0;font:600 14px var(--font-sans)">3 · Card detail → Re-sync pane · second re-sync, on Re-review</h3>
+    <div class="pair">
+      <sc-for list="{{ themes }}" as="th" hint-placeholder-count="2">
+        <div class="frame">
+          <span class="frame-l">{{ th.label }} · opens here while the card is on the re-sync path</span>
+          <div class="{{ th.mock }}" style="background:color-mix(in srgb,var(--muted) 55%,var(--card));padding:0">
+            <div class="row" style="min-height:40px;padding:6px 13px;border-bottom:1px solid var(--border);flex-wrap:wrap"><b style="font:600 12px var(--font-sans)">Re-sync to merge</b><span class="small">2nd re-sync · WAL-47 merged</span><span class="chip c-info" style="text-transform:none;letter-spacing:0">Step 2 of 4 · Re-review</span></div>
+            <div style="display:flex;flex-direction:column;gap:10px;padding:12px">
+              <div class="infobox" style="flex-direction:column;gap:4px;padding:10px 12px">
+                <div class="row" style="align-items:flex-start"><span class="mk-i">7</span><b style="font:600 12px/1.45 var(--font-sans);text-wrap:pretty">Sent back to sync: WAL-47 merged into board/wal-44 after this card was reviewed.</b></div>
+                <span class="small" style="font-size:11px;line-height:1.5;text-wrap:pretty">WAL-47 merged at 14:38; this card's review started at 14:21. The code that was reviewed is no longer the code that would merge, so the board is checking it again on the new base. Nothing for you to do. Moving the card by hand stops the sync.</span>
+              </div>
+              <div class="panel" style="border-radius:11px">
+                <div class="row" style="padding:9px 11px;border-bottom:1px solid var(--border)"><span class="mk-i">8</span><b style="font:600 12px var(--font-sans)">Path back to Ready for merge</b><span class="small" style="margin-left:auto">started 3m ago</span></div>
+                <div class="st"><span class="bdg">1<i class="ok">✓</i></span><span class="mut" style="font-size:11px">⇄</span><span class="st-n"><b>Syncing with base</b><span>Rebased 4 commits onto 9e1c2a7 · 1 conflict resolved in pad/keys.ts</span></span><small class="mono small">1m 12s</small><span class="small" style="color:var(--success-fg);font-weight:500">Done</span></div>
+                <div class="st" style="background:color-mix(in srgb,var(--info) 5%,transparent)"><span class="bdg run">2</span><span class="mut" style="font-size:11px">◎</span><span class="st-n"><b>Re-review</b><span>One round on what the rebase changed, not a full review · 3 files</span></span><small class="mono" style="font-size:10.5px">1:48</small><span class="small" style="color:var(--info-fg);font-weight:500">Running</span></div>
+                <div class="st"><span class="bdg pend">3</span><span class="mut" style="font-size:11px">›_</span><span class="st-n"><b>CI</b><span>The project's 6 steps, from Sync with base</span></span><span class="small">Next</span></div>
+                <div class="st"><span class="bdg pend">4</span><span class="mut" style="font-size:11px">⑂</span><span class="st-n"><b>Ready for merge</b><span>Auto-merge on · merges when it gets there</span></span><span class="small">—</span></div>
+              </div>
+              <div class="panel" style="border-radius:11px">
+                <div class="row" style="padding:9px 11px;border-bottom:1px solid var(--border)"><span class="mk-i">9</span><b style="font:600 12px var(--font-sans)">Re-syncs on this card</b></div>
+                <div class="row" style="gap:8px;padding:7px 11px"><span class="dot" style="background:var(--info)"></span><span class="small" style="color:var(--fg);flex:1">2nd · WAL-47 merged at 14:38</span><span class="small" style="color:var(--info-fg);font-weight:500">Now</span></div>
+                <div class="row" style="gap:8px;padding:7px 11px;border-top:1px solid var(--border)"><span class="dot" style="background:var(--success)"></span><span class="small" style="color:var(--fg);flex:1">1st · WAL-45 merged at 14:02 · back in Ready for merge after 11 min</span><span class="small">Done</span></div>
+                <div class="row" style="align-items:flex-start;gap:8px;padding:8px 11px;border-top:1px solid var(--border)"><span class="mk-i">10</span><span class="small" style="text-wrap:pretty">Still to merge into board/wal-44: <b style="font-weight:500;color:var(--fg)">WAL-48</b> (in CI). If it merges before this card, this card re-syncs once more.</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </sc-for>
+    </div>
+    <div class="notes">
+      <div class="note"><span class="mk-i">7</span><span><b>Why, in one sentence</b>, then the times that prove it (sibling merged at, this review started at) and the two things people ask: do I need to do anything (no) and can I push it on (moving it stops the sync). Blue info box, not a warning.</span></div>
+      <div class="note"><span class="mk-i">8</span><span><b>The four steps</b> as rows, in the CI pane's style: each with its badge, what happened, timer and outcome. Sync shows what the rebase did, including conflicts it resolved itself. Re-review and CI rows open their usual review round and CI pass.</span></div>
+      <div class="note"><span class="mk-i">9</span><span><b>History of re-syncs</b>, newest first, each with the sibling that caused it and how long it took. This is how a second bounce reads as a new cause, not a loop.</span></div>
+      <div class="note"><span class="mk-i">10</span><span><b>Prediction</b>: siblings still heading into the same base, so the next bounce isn't a surprise. Hidden when none are left.</span></div>
+    </div>
+
+    <!-- RS.4 Paused -->
+    <h3 style="margin:8px 0 0;font:600 14px var(--font-sans)">4 · Sync paused · Needs you</h3>
+    <div class="pair">
+      <sc-for list="{{ themes }}" as="th" hint-placeholder-count="2">
+        <div class="frame">
+          <span class="frame-l">{{ th.label }} · conflicts it couldn't resolve, and stopped by someone</span>
+          <div class="{{ th.mock }}" style="display:flex;flex-direction:column;gap:14px">
+            <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px">
+              <div class="card"><span class="row"><span class="key k-wal">WAL-46</span><span style="flex:1"></span><span class="mk-i">11</span></span><span class="ttl">Pad tool keys survive a re-mesh</span>
+                <div class="ci"><div class="ci-h">↻ Re-sync<span class="chip c-attn">Needs you</span></div>
+                  <div class="segs"><span class="sg" style="flex:1"><i style="background:var(--attention)"></i></span><span class="sg" style="flex:1"><i class="s-pend"></i></span><span class="sg" style="flex:1"><i class="s-pend"></i></span><span class="sg" style="flex:1"><i class="s-pend"></i></span></div>
+                  <div class="ci-l" style="align-items:flex-start"><b>1/4</b><span class="rs-ln" style="color:var(--attention-fg)">Sync paused: 2 conflicts it couldn't resolve in pad/keys.ts.</span></div>
+                  <div class="row" style="gap:5px;margin-top:3px"><span class="btn sm" style="border-color:transparent;background:var(--attention);color:#fff">Look at conflicts</span></div></div></div>
+              <div class="card"><span class="row"><span class="key k-wal">WAL-46</span></span><span class="ttl">Pad tool keys survive a re-mesh</span>
+                <div class="ci"><div class="ci-h">↻ Re-sync<span class="chip c-attn">Paused</span></div>
+                  <div class="segs"><span class="sg" style="flex:1"><i class="s-ok"></i></span><span class="sg" style="flex:1"><i style="background:var(--attention)"></i></span><span class="sg" style="flex:1"><i class="s-pend"></i></span><span class="sg" style="flex:1"><i class="s-pend"></i></span></div>
+                  <div class="ci-l" style="align-items:flex-start"><b>2/4</b><span class="rs-ln" style="color:var(--attention-fg)">Re-sync stopped by Dana at Re-review.</span></div>
+                  <div class="row" style="gap:5px;margin-top:3px"><span class="btn sm" style="border-color:transparent;background:var(--attention);color:#fff">Resume re-sync</span></div></div></div>
+            </div>
+            <div class="vbox" style="gap:8px;padding:12px 14px">
+              <div class="row" style="align-items:flex-start"><span class="chip c-attn" style="margin-left:0;text-transform:none;letter-spacing:0;flex:none">Needs you</span><b style="font:600 12.5px var(--font-sans);text-wrap:pretty">Sync paused: 2 conflicts it couldn't resolve.</b><span class="mk-i" style="margin-left:auto">12</span></div>
+              <span class="small" style="font-size:11.5px;line-height:1.5;text-wrap:pretty">WAL-45 and this card both changed <span class="mono">padKeyFor()</span>. Resolve them in the card's worktree and resume; the re-review and CI run after that.</span>
+              <div style="display:flex;flex-direction:column;border:1px solid var(--border);border-radius:8px;background:var(--card)">
+                <div class="row" style="padding:6px 10px"><span class="mono" style="font-size:10.5px;flex:1">pad/keys.ts:41</span><span class="small">both changed the key format</span></div>
+                <div class="row" style="padding:6px 10px;border-top:1px solid var(--border)"><span class="mono" style="font-size:10.5px;flex:1">pad/keys.ts:88</span><span class="small">both added a case for mesh v2</span></div>
+              </div>
+              <div class="row" style="flex-wrap:wrap;gap:7px"><span class="btn" style="border-color:transparent;background:var(--attention);color:#fff">Look at conflicts</span><span class="btn">Resume re-sync</span><span class="btn ghost">Open sync thread ↗</span></div>
+            </div>
+          </div>
+        </div>
+      </sc-for>
+    </div>
+    <div class="notes">
+      <div class="note"><span class="mk-i">11</span><span><b>The card asks for a person</b>: violet "Needs you" (conflicts) or "Paused" (someone stopped it), the stuck step's segment violet, the reason in violet, and one button on the face. Conflicts → Look at conflicts. Stopped → Resume re-sync.</span></div>
+      <div class="note"><span class="mk-i">12</span><span><b>Top of the Re-sync pane</b>: the reason, which sibling collided and on what, the conflicting lines, then actions. Look at conflicts opens the diff in the worktree. Resume re-sync re-checks the base and carries on from Syncing with base. Amber is kept for the rare case where the sync can't run at all (base branch can't be fetched), with Retry.</span></div>
+    </div>
+
+    <!-- RS.5 Manual moves -->
+    <h3 style="margin:8px 0 0;font:600 14px var(--font-sans)">5 · Moving it forward by hand · desktop drag</h3>
+    <div class="pair">
+      <sc-for list="{{ themes }}" as="th" hint-placeholder-count="2">
+        <div class="frame">
+          <span class="frame-l">{{ th.label }} · dropped on Ready for merge during Re-review</span>
+          <div class="{{ th.mock }}" style="display:flex;flex-direction:column;gap:14px">
+            <div class="row" style="gap:8px;align-items:flex-start">
+              <div class="col" style="width:auto;flex:1;min-width:0">
+                <div class="col-h">Code review<span class="col-n">2</span></div>
+                <div class="card"><span class="row"><span class="key k-wal">WAL-46</span></span><span class="ttl">Pad tool keys survive a re-mesh</span>
+                  <div class="ci"><div class="ci-h">↻ Re-sync<span class="chip c-info">Re-review</span></div>
+                    <div class="segs"><span class="sg" style="flex:1"><i class="s-ok"></i></span><span class="sg" style="flex:1"><i class="s-run"></i></span><span class="sg" style="flex:1"><i class="s-pend"></i></span><span class="sg" style="flex:1"><i class="s-pend"></i></span></div>
+                    <div class="ci-l"><b>2/4</b><span>WAL-45 merged first</span></div></div></div>
+              </div>
+              <div class="col" style="width:auto;flex:1;min-width:0">
+                <div class="col-h">CI<span class="col-n">1</span></div>
+                <div class="ph"></div>
+              </div>
+              <div class="col" style="width:auto;flex:1;min-width:0">
+                <div class="col-h">Ready for merge<span class="col-n">1</span></div>
+                <div class="ph"></div>
+              </div>
+            </div>
+            <div style="display:flex;flex-wrap:wrap;gap:14px;align-items:flex-start">
+              <div style="display:flex;flex-direction:column;gap:6px">
+                <span class="lbl">While dragging · on the drag ghost</span>
+                <div class="row" style="gap:6px"><span class="tip" style="position:relative">Re-syncing · moves on by itself</span><span class="mk-i">13</span></div>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:6px;flex:1;min-width:220px">
+                <span class="lbl">After the drop · anchored to the card</span>
+                <div class="pop" style="position:relative;width:auto;max-width:300px">
+                  <div style="display:flex;flex-direction:column;gap:6px;padding:11px 12px">
+                    <div class="row"><b style="font:600 12px var(--font-sans)">WAL-46 is re-syncing</b><span class="mk-i" style="margin-left:auto">14</span></div>
+                    <span class="small" style="font-size:11px;line-height:1.5;text-wrap:pretty">It's on Re-review, step 2 of 4. Moving it now stops the sync, and the board would send it back again as soon as it got to Ready for merge. It moves on to CI and Ready for merge by itself.</span>
+                    <div class="row" style="gap:6px;margin-top:2px"><span class="btn sm pri">Let it run</span><span class="btn sm ghost">Open card</span></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="pop" style="position:relative;width:auto;max-width:320px">
+              <div style="display:flex;flex-direction:column;gap:6px;padding:11px 12px">
+                <div class="row"><span class="lbl">If the sync is paused</span><span class="mk-i" style="margin-left:auto">15</span></div>
+                <b style="font:600 12px var(--font-sans)">WAL-46's re-sync is paused</b>
+                <span class="small" style="font-size:11px;line-height:1.5;text-wrap:pretty">Moving it won't skip the sync: it would come straight back. Resolve the 2 conflicts and resume, and it carries on by itself.</span>
+                <div class="row" style="gap:6px;margin-top:2px"><span class="btn sm" style="border-color:transparent;background:var(--attention);color:#fff">Look at conflicts</span><span class="btn sm ghost">Cancel</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </sc-for>
+    </div>
+    <h3 style="margin:8px 0 0;font:600 14px var(--font-sans)">5b · Moving it forward by hand · mobile Move to sheet</h3>
+    <div class="pair">
+      <sc-for list="{{ themes }}" as="th" hint-placeholder-count="2">
+        <div class="frame">
+          <span class="frame-l">{{ th.label }} · 340 wide · card face, then its Move to sheet</span>
+          <div class="{{ th.mock }}" style="background:color-mix(in srgb,var(--fg) 4%,var(--bg))">
+            <div class="phone">
+              <div style="padding:12px 12px 14px;display:flex;flex-direction:column;gap:8px;background:var(--column-bg)">
+                <span class="lbl">Code review · 2</span>
+                <div class="card"><span class="row"><span class="key k-wal">WAL-46</span></span><span class="ttl" style="font-size:13.5px">Pad tool keys survive a re-mesh</span>
+                  <div class="ci"><div class="ci-h" style="font-size:11.5px">↻ Re-sync<span class="chip c-info">Re-review</span></div>
+                    <div class="segs" style="height:6px"><span class="sg" style="flex:1"><i class="s-ok"></i></span><span class="sg" style="flex:1"><i class="s-run"></i></span><span class="sg" style="flex:1"><i class="s-pend"></i></span><span class="sg" style="flex:1"><i class="s-pend"></i></span></div>
+                    <div class="ci-l" style="font-size:11.5px"><b style="font-size:11.5px">2/4</b><span>WAL-45 merged first</span></div></div></div>
+              </div>
+              <div class="sheet">
+                <div style="display:flex;justify-content:center;padding:8px 0 2px"><span style="width:36px;height:4px;border-radius:2px;background:var(--input)"></span></div>
+                <div style="padding:8px 16px 10px;display:flex;flex-direction:column;gap:2px"><b style="font:600 14px var(--font-sans)">Move WAL-46 to…</b></div>
+                <div class="infobox" style="margin:0 12px 8px;font-size:12px"><span class="mk-i">16</span><span style="text-wrap:pretty">Re-syncing after WAL-45 merged. It's on Re-review, step 2 of 4, and goes on to CI and Ready for merge by itself.</span></div>
+                <div class="sh-r">Planning</div>
+                <div class="sh-r">Building</div>
+                <div class="sh-r" style="color:var(--muted-fg)">CI<em>Next on its own</em></div>
+                <div class="sh-r" style="color:var(--muted-fg)">Ready for merge<em>After the re-sync</em></div>
+                <div style="padding:10px 16px 16px;border-top:1px solid var(--border)"><span class="btn pri" style="width:100%;justify-content:center;height:38px;font-size:13px">Let it run</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </sc-for>
+    </div>
+    <div class="notes">
+      <div class="note"><span class="mk-i">13</span><span><b>While dragging</b>, the columns look exactly as they always do; nothing is drawn inside them. The hint rides on the drag ghost instead: "Re-syncing · moves on by itself". Dropping on CI or Ready for merge is still accepted so the explanation can appear.</span></div>
+      <div class="note"><span class="mk-i">14</span><span><b>On drop, the card snaps back</b> to Code review and a popover anchors to the card, not the column: which step it's on, why moving won't help (it stops the sync and gets sent back), and that it moves on by itself. Let it run (primary) closes it; Open card goes to the Re-sync pane. No "Move anyway": that move always ends in another send-back.</span></div>
+      <div class="note"><span class="mk-i">15</span><span><b>Paused variant</b> offers the action that unblocks it instead: Look at conflicts (or Resume re-sync when someone stopped it). Moving backwards (to Building or earlier) is allowed as normal and ends the re-sync.</span></div>
+      <div class="note"><span class="mk-i">16</span><span><b>Mobile has no drag</b>, so the same rule sits in the card's Move to sheet: an info line at the top, CI and Ready for merge greyed with "Next on its own" / "After the re-sync", and Let it run as the full-width button. The card face strip wraps to the phone width unchanged.</span></div>
+    </div>
+
+    <!-- RS.6 Group view -->
+    <h3 style="margin:8px 0 0;font:600 14px var(--font-sans)">6 · Group view · siblings merging into the same base</h3>
+    <div class="pair">
+      <sc-for list="{{ themes }}" as="th" hint-placeholder-count="2">
+        <div class="frame">
+          <span class="frame-l">{{ th.label }} · parent card, and the sub-board's merge line</span>
+          <div class="{{ th.mock }}" style="display:flex;flex-direction:column;gap:14px">
+            <div class="pc" style="max-width:260px">
+              <div class="row"><span class="key k-wal" style="height:20px;font-size:11px">WAL-44</span><span class="dot" style="background:var(--info)"></span></div>
+              <span style="font:500 13px/1.4 var(--font-sans);text-wrap:pretty">Pad tooling: live sync, tool keys, ground-mesh tiling</span>
+              <div class="bar6"><i style="background:var(--success)" title="WAL-45 · merged"></i><i style="background:var(--info)" title="WAL-46 · re-syncing"></i><i style="background:var(--info)" title="WAL-47 · ready for merge"></i><i style="background:var(--info)" title="WAL-48 · CI"></i></div>
+              <div class="row small" style="gap:6px;align-items:flex-start"><span class="mk-i">17</span><span style="text-wrap:pretty">1/4 merged · 3 more merging into board/wal-44. Each merge re-syncs the others.</span></div>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:8px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:var(--card)">
+              <div class="row"><b style="font:600 12px var(--font-sans)">Merging into board/wal-44</b><span class="mk-i">18</span><span class="small" style="margin-left:auto">in merge order</span></div>
+              <div class="mq">
+                <span class="mq-i"><span class="dot" style="background:var(--success)"></span>WAL-45 merged</span><span class="mq-a">→</span>
+                <span class="mq-i"><span class="dot" style="background:var(--info)"></span>WAL-47 ready</span><span class="mq-a">→</span>
+                <span class="mq-i"><span class="dot" style="background:var(--info)"></span>WAL-48 CI</span><span class="mq-a">→</span>
+                <span class="mq-i"><span class="dot" style="background:var(--info)"></span>WAL-46 ↻ re-sync</span>
+              </div>
+              <span class="small" style="text-wrap:pretty">When WAL-47 merges, WAL-48 and WAL-46 each re-sync once. Nothing to do.</span>
+            </div>
+          </div>
+        </div>
+      </sc-for>
+    </div>
+    <div class="notes">
+      <div class="note"><span class="mk-i">17</span><span><b>On the parent card</b>, one muted line when two or more children target the same base: "3 more merging into board/wal-44. Each merge re-syncs the others." Chips keep the existing vocabulary; a re-syncing child is plain blue, as it's running.</span></div>
+      <div class="note"><span class="mk-i">18</span><span><b>On the sub-board</b>, a merge line above the columns: siblings in the order they'll reach the base, and one sentence saying who re-syncs next. Wraps to several lines on mobile. Optional for v1; the card-level states above stand on their own.</span></div>
+    </div>
+
+    <div class="pair">
+      <div class="flow"><span class="flow-h">What the board does</span><ol>
+        <li>A card reaches Ready for merge. The board compares the base's head with the head when the card's last review started.</li>
+        <li>Moved: the card goes back to Code review on the re-sync path, with the sibling that merged recorded as the cause. Nothing is left behind in Ready for merge.</li>
+        <li>Syncing with base rebases and resolves conflicts it can. One review round on the rebased code, then CI, then Ready for merge, where the check runs again.</li>
+        <li>If another sibling merged meanwhile, it repeats as the 2nd re-sync, naming the new sibling.</li>
+      </ol></div>
+      <div class="flow"><span class="flow-h">When it needs a person</span><ol>
+        <li>The sync hits conflicts it can't resolve, or someone stops it. The card turns violet with one action.</li>
+        <li>Look at conflicts, then Resume re-sync: it carries on from Syncing with base.</li>
+        <li>A hand move forward is caught and explained, with Let it run, Resume or Look at conflicts offered instead. Moving back to Building or earlier ends the re-sync as normal.</li>
       </ol></div>
     </div>
   </section>
