@@ -52,23 +52,26 @@ export function BoardCollapsibleSection({
     <div className={cn("flex flex-col gap-2", className)}>
       <button
         aria-expanded={open}
-        className="flex w-full min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-left"
+        className="flex w-full min-w-0 items-start gap-1.5 text-left"
         onClick={() => setOpen((value) => !value)}
         type="button"
       >
-        <span className="shrink-0 text-board-11 font-semibold uppercase tracking-board-7 text-muted-foreground">
-          {title}
-        </span>
-        <span className="ms-auto flex max-w-full min-w-0 shrink-0 items-center gap-1.5">
+        {/* justify-between: a summary that wraps under the title starts at the left edge. */}
+        <span className="flex min-w-0 flex-1 flex-wrap items-center justify-between gap-x-1.5 gap-y-1">
+          <span className="shrink-0 text-board-11 font-semibold uppercase tracking-board-7 text-muted-foreground">
+            {title}
+          </span>
           {summary === undefined ? null : (
-            <span className="truncate whitespace-nowrap text-board-11 font-medium text-foreground">
+            <span className="max-w-full min-w-0 text-board-11 font-medium text-foreground">
               {summary}
             </span>
           )}
+        </span>
+        <span className="flex h-4.5 shrink-0 items-center">
           <ChevronDownIcon
             aria-hidden
             className={cn(
-              "size-3 shrink-0 text-muted-foreground transition-transform duration-120",
+              "size-3 text-muted-foreground transition-transform duration-120",
               open && "rotate-180",
             )}
           />
