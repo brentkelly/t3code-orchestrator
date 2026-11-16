@@ -55,7 +55,7 @@ export interface BoardGateSweepDeps<E> {
 }
 
 /** Whether two block records are the same for writing purposes: gate and reason only. */
-export function sameGateBlock(
+function sameGateBlock(
   left: Pick<BoardCardGateBlock, "gate" | "reason"> | null | undefined,
   right: Pick<BoardCardGateBlock, "gate" | "reason"> | null | undefined,
 ): boolean {

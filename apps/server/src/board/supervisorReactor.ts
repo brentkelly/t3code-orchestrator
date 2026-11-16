@@ -10970,6 +10970,8 @@ const make = Effect.gen(function* () {
       yield* cascadeUnblockedChildren(card.parentCardId);
       yield* syncAncestorGroups(card.parentCardId);
     }
+    // T3o: a card that waited on this one may have its build gate due now (T3O-115).
+    yield* startArmedDependents(card.id);
   });
 
   // Create and push the split's integration branch (branch only), then record it. A failed push
