@@ -17,8 +17,15 @@ export default Effect.gen(function* () {
   if (!cardHas("gate_block")) {
     yield* sql`ALTER TABLE board_cards ADD COLUMN gate_block TEXT`;
   }
-  if (!stepColumns.some((column) => column.name === "stage_entered_at")) {
+  const stepHas = (name: string) => stepColumns.some((column) => column.name === name);
+  if (!stepHas("stage_entered_at")) {
     yield* sql`ALTER TABLE board_card_step_state ADD COLUMN stage_entered_at TEXT`;
+  }
+  if (!stepHas("auto_answers")) {
+    yield* sql`ALTER TABLE board_card_step_state ADD COLUMN auto_answers INTEGER`;
+  }
+  if (!stepHas("auto_answered_at")) {
+    yield* sql`ALTER TABLE board_card_step_state ADD COLUMN auto_answered_at TEXT`;
   }
   if (cardHas("stage_entered_at")) return;
   yield* sql`ALTER TABLE board_cards ADD COLUMN stage_entered_at TEXT`;

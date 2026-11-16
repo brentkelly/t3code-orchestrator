@@ -2739,6 +2739,10 @@ export const BoardCardStepState = Schema.Struct({
   /** T3o: the selecting card's `stageEnteredAt` (T3O-115): this row belongs to the card's
       current stay only while the two match. Absent on older rows and events. */
   stageEnteredAt: Schema.optionalKey(IsoDateTime),
+  /** T3o: questions the board answered for an unattended planning run on this step, and when it
+      last did (T3O-115). The answer gate stops at `BOARD_AUTO_ANSWER_LIMIT`. Absent when none. */
+  autoAnswers: Schema.optionalKey(PositiveInt),
+  autoAnsweredAt: Schema.optionalKey(IsoDateTime),
   /** When the step began running; null while pending/queued. */
   startedAt: Schema.NullOr(IsoDateTime),
   updatedAt: IsoDateTime,
@@ -6646,6 +6650,8 @@ export const BoardCardCheckInStepCommand = Schema.Struct({
   progressed: Schema.Boolean,
   /** This check-in delivered a reopened step's Auto-plan prompt. */
   reopenedPrompt: Schema.optionalKey(Schema.Literal(true)),
+  /** T3o: this check-in delivered an auto-answer to a parked planning question (T3O-115). */
+  autoAnswered: Schema.optionalKey(Schema.Literal(true)),
   createdAt: IsoDateTime,
 });
 export type BoardCardCheckInStepCommand = typeof BoardCardCheckInStepCommand.Type;

@@ -387,11 +387,12 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("split gate (T3O-
         "urgent",
       ]);
       expect(approvedEvent(events).payload.card.priority).toBe("normal");
-      // Children and the approval record only: no move, no step.
+      // Children, the approval record and the parent placed in Ready (T3O-115); no step.
       expect(events.map((event) => event.type)).toEqual([
         "board.card-created",
         "board.card-created",
         "board.plans-approved",
+        "board.card-moved",
       ]);
       const approved = approvedEvent(events);
       expect(approved.payload.card.stage).toBe(BOARD_SEED_STAGE_IDS.planning);
@@ -399,7 +400,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("split gate (T3O-
         target: "inherit",
         autoBuild: false,
         started: false,
-        placed: BOARD_SEED_STAGE_IDS.planning,
+        placed: BOARD_SEED_STAGE_IDS.ready,
       });
     }),
   );

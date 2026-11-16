@@ -568,57 +568,26 @@ it.effect(
   },
 );
 
-it.effect("an unstarted group's sign-off approves a child's plan; its start then builds it", () => {
+it.effect("an unstarted group's sign-off approves a child's plan and builds it (T3O-115)", () => {
   const group = planningCard("group", {
     group: { ...autoPlanGroup, autoSignOff: true, autoBuild: true },
   });
   const child = planningCard("child", { parentCardId: BoardCardId.make("group") });
-  const sibling = makeBoardCard({
-    id: "sibling",
-    stage: "ready",
-    orderKey: "z",
-    parentCardId: "group",
-  });
   return withGovernor(
     {
       board: {
-        cards: [group, child, sibling],
+        cards: [group, child],
         plans: [plan("child", "one", 0)],
         nextCardNumberByProject: {},
       },
       settings,
     },
-    ({ pumpDomain, board, model, commands }) =>
+    ({ pumpDomain, board }) =>
       Effect.gen(function* () {
         const id = BoardCardId.make("child");
         yield* pumpDomain(cardMoved(child, "sprint", "planning", 1));
         yield* pumpDomain(stepCompleted(id, "succeeded", 2, PLANNING));
-        // Signed off into Ready; the inherited Auto-build waits for the group to begin.
-        assert.strictEqual(cardStage(yield* board, id), BOARD_SEED_STAGE_IDS.ready);
-        assert.ok(
-          autoPlanNotes(yield* commands).includes(
-            "Auto sign-off approved the plan. It waits in Ready and builds once GROUP starts.",
-          ),
-        );
-
-        // A human starts a sibling, which begins the group.
-        let moved: BoardCard | undefined;
-        yield* Ref.update(model, (current) => ({
-          ...current,
-          board: {
-            ...current.board!,
-            cards: current.board!.cards.map((card) => {
-              if (card.id === BoardCardId.make("group")) {
-                return { ...card, group: { ...card.group!, started: true } };
-              }
-              if (card.id !== BoardCardId.make("sibling")) return card;
-              moved = { ...card, stage: BOARD_SEED_STAGE_IDS.building };
-              return moved;
-            }),
-          },
-        }));
-        yield* pumpDomain(cardMoved(moved!, "ready", "building", 3));
-
+        // Signed off, then built by the inherited Auto-build: the group never had to start.
         assert.strictEqual(cardStage(yield* board, id), BOARD_SEED_STAGE_IDS.building);
       }),
   );
@@ -686,38 +655,36 @@ const stepEvent = (
   sequence: number,
 ) => ({ type, sequence, payload: { cardId: state.cardId, state } }) as never;
 
-it.effect(
-  "an auto-plan run parked on a human ends the run record, so planning is gated again",
-  () => {
-    const card = planningCard("parked", autoPlanBuild);
-    return withGovernor(
-      {
-        board: { cards: [card], plans: [plan("parked", "one", 0)], nextCardNumberByProject: {} },
-        settings,
-      },
-      (h) =>
-        Effect.gen(function* () {
-          const { pumpDomain, board } = h;
-          const id = BoardCardId.make("parked");
-          yield* pumpDomain(cardMoved(card, "sprint", "planning", 1));
-          yield* pumpDomain(stepCompleted(id, "blocked", 2, PLANNING));
-          const parked = boardCardStepState(yield* board, id);
-          assert.strictEqual(parked?.status, "awaiting-input");
-          yield* pumpDomain(stepEvent("board.card-step-awaiting-input", parked!, 3));
+it.effect("an auto-plan run parked on a human keeps Auto-plan and its run record (T3O-115)", () => {
+  const card = planningCard("parked", autoPlanBuild);
+  return withGovernor(
+    {
+      board: { cards: [card], plans: [plan("parked", "one", 0)], nextCardNumberByProject: {} },
+      settings,
+    },
+    (h) =>
+      Effect.gen(function* () {
+        const { pumpDomain, board } = h;
+        const id = BoardCardId.make("parked");
+        yield* pumpDomain(cardMoved(card, "sprint", "planning", 1));
+        yield* pumpDomain(stepCompleted(id, "blocked", 2, PLANNING));
+        const parked = boardCardStepState(yield* board, id);
+        assert.strictEqual(parked?.status, "awaiting-input");
+        yield* pumpDomain(stepEvent("board.card-step-awaiting-input", parked!, 3));
 
-          const after = yield* board;
-          assert.isString(cardOf(after.cards, "parked")?.autoPlan?.endedAt);
-          // A machine stop leaves the toggle on; re-asserting it steers the same thread.
-          assert.isTrue(cardOf(after.cards, "parked")?.autoPlanSetting);
-          yield* setAutomation(h, id, { autoPlan: true }, 4);
-          const again = yield* board;
-          assert.strictEqual(cardOf(again.cards, "parked")?.autoPlan?.endedAt, null);
-          assert.strictEqual(boardCardStepState(again, id)?.threadId, parked?.threadId);
-          assert.strictEqual(boardCardStepState(again, id)?.status, "running");
-        }),
-    );
-  },
-);
+        // A park, pause or failure no longer disarms anything: the toggle is the automation.
+        const after = yield* board;
+        assert.strictEqual(cardOf(after.cards, "parked")?.autoPlan?.endedAt, null);
+        assert.isTrue(cardOf(after.cards, "parked")?.autoPlanSetting);
+        // Re-asserting it steers the same thread.
+        yield* setAutomation(h, id, { autoPlan: true }, 4);
+        const again = yield* board;
+        assert.strictEqual(cardOf(again.cards, "parked")?.autoPlan?.endedAt, null);
+        assert.strictEqual(boardCardStepState(again, id)?.threadId, parked?.threadId);
+        assert.strictEqual(boardCardStepState(again, id)?.status, "running");
+      }),
+  );
+});
 
 /** Park the live planning step as `status`, the way a question, a Stop or an
     escalation leaves it. */
@@ -1814,15 +1781,24 @@ it.effect("a refused approval after an unattended review leaves a note on the ca
         const id = BoardCardId.make("refused-review");
         yield* reviewedUnattended(h, id, card);
         assert.strictEqual(cardStage(yield* h.board, id), BOARD_SEED_STAGE_IDS.planning);
-        assert.include(
-          autoPlanNotes(yield* h.commands),
-          "Plan review finished, but Auto sign-off could not approve the plan: Ready is full.",
+        // T3o: the refusal is recorded once as the card's gate block, and the tick retries it
+        // without writing it again (T3O-115).
+        assert.deepStrictEqual(cardOf((yield* h.board).cards, "refused-review")?.gateBlock, {
+          gate: "sign-off",
+          reason: "move-refused",
+          detail: "Ready is full.",
+        });
+        yield* h.reactor.startArmed;
+        yield* h.reactor.startArmed;
+        const blocks = (yield* h.commands).filter(
+          (command) => command.type === "board.card.update" && command.gateBlock != null,
         );
+        assert.lengthOf(blocks, 1);
       }),
   );
 });
 
-it.effect("an unattended review never approves a split, even with Auto sign-off on", () => {
+it.effect("an unattended review's split is approved by Auto sign-off once it finishes", () => {
   const card = planningCard("split-review", {
     planReview: unattendedReview,
     autoSignOffSetting: true,
@@ -1840,12 +1816,13 @@ it.effect("an unattended review never approves a split, even with Auto sign-off 
       Effect.gen(function* () {
         const id = BoardCardId.make("split-review");
         yield* reviewedUnattended(h, id, card);
-        assert.strictEqual(cardStage(yield* h.board, id), BOARD_SEED_STAGE_IDS.planning);
+        assert.ok((yield* h.commands).some((command) => command.type === "board.plans.approve"));
+        assert.strictEqual(cardStage(yield* h.board, id), BOARD_SEED_STAGE_IDS.ready);
       }),
   );
 });
 
-it.effect("an attended review is never approved by Auto sign-off", () => {
+it.effect("an attended review is approved by Auto sign-off once it finishes (T3O-115)", () => {
   const card = planningCard("attended-review", {
     planReview: { enabled: true, rounds: 2 },
     autoSignOffSetting: true,
@@ -1863,7 +1840,7 @@ it.effect("an attended review is never approved by Auto sign-off", () => {
       Effect.gen(function* () {
         const id = BoardCardId.make("attended-review");
         yield* reviewedUnattended(h, id, card);
-        assert.strictEqual(cardStage(yield* h.board, id), BOARD_SEED_STAGE_IDS.planning);
+        assert.strictEqual(cardStage(yield* h.board, id), BOARD_SEED_STAGE_IDS.ready);
       }),
   );
 });

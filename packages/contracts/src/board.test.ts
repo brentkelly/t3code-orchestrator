@@ -123,6 +123,8 @@ const encodeShell = Schema.encodeUnknownSync(BoardCardShell);
 const decodeShell = Schema.decodeUnknownSync(BoardCardShell);
 const encodeSnapshot = Schema.encodeUnknownSync(BoardShellSnapshot);
 const decodeStepState = Schema.decodeUnknownSync(BoardCardStepState);
+const decodeSettings = Schema.decodeSync(BoardSettings);
+const decodeWorkerId = Schema.decodeSync(BoardWorkerId);
 const decodeCard = Schema.decodeUnknownSync(BoardCard);
 const encodeCard = Schema.encodeSync(BoardCard);
 
@@ -2813,10 +2815,6 @@ describe("automation (T3O-38)", () => {
     ...overrides,
   });
   const boardWith = (cards: ReadonlyArray<BoardCard>) => ({ ...EMPTY_BOARD_STATE, cards });
-  const on = (card: BoardCard, ...blockers: ReadonlyArray<BoardCard>) => ({
-    board: boardWith([card, ...blockers]),
-    card,
-  });
   const groupCard = (
     id: string,
     overrides: Partial<NonNullable<BoardCard["group"]>>,
@@ -3057,7 +3055,6 @@ describe("automation (T3O-38)", () => {
       readonly step?: BoardCardStepState;
       readonly plans?: number;
       readonly settings?: typeof DEFAULT_BOARD_SETTINGS;
-      readonly nowMs?: number;
       readonly unreachable?: ReadonlyArray<string>;
     }) =>
       boardGateDue({
@@ -3068,7 +3065,6 @@ describe("automation (T3O-38)", () => {
         },
         card: input.card,
         settings: input.settings ?? DEFAULT_BOARD_SETTINGS,
-        nowMs: input.nowMs ?? Date.parse(NOW),
         ...(input.unreachable === undefined
           ? {}
           : { workerUnreachable: (id: string) => input.unreachable!.includes(id) }),
@@ -3084,11 +3080,8 @@ describe("automation (T3O-38)", () => {
       expect(due({ card: planning({ autoPlanSetting: false }) })).toBe(null);
       // A step left from an earlier stay does not count: re-plan.
       expect(due({ card, step: step(card, { stageEnteredAt: NOW }) })).toBe("plan");
-      // A pending split waits at its own gate; a scheduled card waits for its time.
+      // A pending split waits at its own gate.
       expect(due({ card, plans: 2 })).toBe(null);
-      expect(due({ card: planning({ autoPlanSetting: true, scheduledStartAt: ENTERED }) })).toBe(
-        null,
-      );
     });
 
     it("sign-off: one plan, planning finished this stay, regardless of who planned", () => {
@@ -3118,7 +3111,7 @@ describe("automation (T3O-38)", () => {
     });
 
     it("review-start: a review enabled only by the Settings default is due", () => {
-      const settings = Schema.decodeSync(BoardSettings)({
+      const settings = decodeSettings({
         pipeline: {
           [BOARD_SEED_STAGE_IDS.planning]: {
             kind: "simple",
@@ -3183,7 +3176,7 @@ describe("automation (T3O-38)", () => {
         stage: BOARD_SEED_STAGE_IDS.ready,
       };
       expect(due({ card: group })).toBe(null);
-      const pinned = armed({ pinnedWorkerId: Schema.decodeSync(BoardWorkerId)("worker-away") });
+      const pinned = armed({ pinnedWorkerId: decodeWorkerId("worker-away") });
       expect(due({ card: pinned, unreachable: ["worker-away"] })).toBe(null);
       expect(due({ card: pinned, unreachable: [] })).toBe("build");
     });

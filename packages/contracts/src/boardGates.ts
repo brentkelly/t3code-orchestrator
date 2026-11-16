@@ -13,7 +13,6 @@ import {
   boardStageById,
   boardStages,
   effectiveBoardStageRole,
-  isBoardCardScheduleDue,
   resolveBoardCardAutomation,
   resolveBoardCardPlanReview,
   resolveBoardStageExecution,
@@ -26,10 +25,12 @@ import {
   type BoardSettings,
   type BoardState,
 } from "./board.ts";
+import { boardCardGroupOf } from "./boardGroups.ts";
 
 /** Pipeline order: `boardGateDue` returns the first one due. */
 export const BOARD_GATES = [
   "plan",
+  "answer",
   "review-start",
   "sign-off",
   "split-sign-off",
@@ -38,6 +39,9 @@ export const BOARD_GATES = [
 ] as const;
 export type BoardGate = (typeof BOARD_GATES)[number];
 export type BoardGateDue = { readonly gate: BoardGate } | null;
+
+/** How many questions the board answers on one planning step before the next waits for a person. */
+export const BOARD_AUTO_ANSWER_LIMIT = 3;
 
 /** The lookups one sweep pass builds once, so evaluating every card stays linear. */
 export interface BoardGateIndex {
@@ -74,7 +78,6 @@ export interface BoardGateInput {
   readonly board: BoardState;
   readonly card: BoardCard;
   readonly settings: BoardSettings;
-  readonly nowMs: number;
   /** Whether the board cannot reach a worker now; a card bound to one has no gate due. */
   readonly workerUnreachable?: ((workerId: string) => boolean) | undefined;
   /** Prebuilt lookups for a whole-board pass; built on demand otherwise. */
@@ -96,7 +99,12 @@ export function boardGateFacts(input: BoardGateInput): BoardGateFacts {
   const index = input.index ?? boardGateIndex(board);
   const automation = resolveBoardCardAutomation({
     stages: boardStages(board),
-    lookup: (id) => index.cardsById.get(id),
+    lookup: (id) => {
+      const node = index.cardsById.get(id);
+      // A split parent from before groups reads as the group the migrations backfilled.
+      if (node === undefined || node.group !== null || !index.liveChildCount.has(id)) return node;
+      return { ...node, group: boardCardGroupOf(board, node) };
+    },
     card,
     boardWideAutoMerge: false,
   });
@@ -125,8 +133,7 @@ export function boardGateDue(input: BoardGateInput): BoardGateDue {
   const { board, card } = input;
   if (card.archivedAt !== null || card.group !== null) return null;
   const index = input.index ?? boardGateIndex(board);
-  // A split parent's plans are frozen and it builds through its children.
-  if ((index.liveChildCount.get(String(card.id)) ?? 0) > 0) return null;
+  const hasChildren = (index.liveChildCount.get(String(card.id)) ?? 0) > 0;
   const bound = card.placedWorkerId ?? card.pinnedWorkerId;
   if (bound !== null && input.workerUnreachable?.(String(bound)) === true) return null;
   const stage = boardStageById(board, card.stage);
@@ -138,11 +145,25 @@ export function boardGateDue(input: BoardGateInput): BoardGateDue {
   const { automation, planReview, stay, plans } = facts;
 
   if (role === "plan") {
-    const scheduleDue = isBoardCardScheduleDue(card.scheduledStartAt, input.nowMs);
-    const pendingSplit = plans.length >= 2;
+    // A split parent's plans are frozen: nothing left to plan or sign off.
+    if (hasChildren) return null;
     if (stay === null) {
       // Never run this stay. A pending split already planned; it waits at its own gate.
-      return automation.autoPlan.value && scheduleDue && !pendingSplit ? { gate: "plan" } : null;
+      return automation.autoPlan.value && plans.length < 2 ? { gate: "plan" } : null;
+    }
+    if (stay.status === "awaiting-input") {
+      // A question (or a blocked completion) on an unattended run: the board answers it, once per
+      // wait and at most `BOARD_AUTO_ANSWER_LIMIT` times a step. A Stop is a person's.
+      const unattended = automation.autoPlan.value || planReview.unattended === true;
+      const answeredThisWait =
+        stay.autoAnsweredAt !== undefined && stay.autoAnsweredAt >= stay.updatedAt;
+      return unattended &&
+        stay.awaitingReason === "question" &&
+        stay.threadId !== null &&
+        !answeredThisWait &&
+        (stay.autoAnswers ?? 0) < BOARD_AUTO_ANSWER_LIMIT
+        ? { gate: "answer" }
+        : null;
     }
     if (stay.status !== "succeeded") return null;
     const reviewStarted = stay.planReviewStartedAt !== undefined;
@@ -167,11 +188,10 @@ export function boardGateDue(input: BoardGateInput): BoardGateDue {
     return null;
   }
 
-  // The stage before build.
+  // The stage before build. A scheduled start holds the step there, not the gate.
   if (!automation.autoBuild.value) return null;
-  if (!isBoardCardScheduleDue(card.scheduledStartAt, input.nowMs)) return null;
   // A pending split waits for its approval, never builds as one card.
-  if (plans.length >= 2) return null;
+  if (plans.length >= 2 && !hasChildren) return null;
   const unmet = unmetBoardCardDependencies({
     board,
     dependsOn: boardCardInheritedDependsOn(board, card),

@@ -45,7 +45,6 @@ export type BoardGateActions<E> = {
 export interface BoardGateSweepDeps<E> {
   readonly readBoard: Effect.Effect<BoardState>;
   readonly readSettings: Effect.Effect<BoardSettings>;
-  readonly nowMs: Effect.Effect<number>;
   readonly workerUnreachable: Effect.Effect<(workerId: string) => boolean>;
   readonly actions: BoardGateActions<E>;
   /** Persist a block, called only when its gate + reason differ from the card's last one. */
@@ -113,7 +112,6 @@ export function makeBoardGateSweep<E>(deps: BoardGateSweepDeps<E>) {
   ) {
     const board = yield* deps.readBoard;
     const settings = yield* deps.readSettings;
-    const nowMs = yield* deps.nowMs;
     const workerUnreachable = yield* deps.workerUnreachable;
     const index = boardGateIndex(board);
     const wanted = cardIds === "all" ? null : new Set(cardIds.map(String));
@@ -125,7 +123,7 @@ export function makeBoardGateSweep<E>(deps: BoardGateSweepDeps<E>) {
     for (const card of board.cards) {
       if (wanted !== null && !wanted.has(String(card.id))) continue;
       if (!sweepable(board, card)) continue;
-      const due = boardGateDue({ board, card, settings, nowMs, workerUnreachable, index });
+      const due = boardGateDue({ board, card, settings, workerUnreachable, index });
       if (due === null) continue;
       const outcome = yield* act(due.gate, card);
       fired.push({ cardId: card.id, gate: due.gate, outcome });

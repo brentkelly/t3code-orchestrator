@@ -45,6 +45,10 @@ import {
   BOARD_PLAN_REVIEW_STOP_INSTRUCTION,
   isBoardCardAutoPlanPending,
   boardCardStepThisStay,
+  BOARD_AUTO_ANSWER_LIMIT,
+  BOARD_AUTO_ANSWER_TEXT,
+  boardGateDue,
+  boardGateFacts,
   boardSplitRecommendationOf,
   boardStageBeforeBuild,
   boardCardPlanningFinished,
@@ -3020,13 +3024,10 @@ const make = Effect.gen(function* () {
         stepLabel: state.stepLabel,
         prompt: state.prompt,
         humanInLoop: state.humanInLoop,
-        ...(role === "plan" && isBoardCardAutoPlanPending(card)
-          ? {
-              autoPlan: true,
-              ...(automationIn(yield* readBoard, card).autoSignOff.value
-                ? { autoSignOff: true }
-                : {}),
-            }
+        ...(role === "plan" && isBoardCardAutoPlanPending(card) ? { autoPlan: true } : {}),
+        // T3o: attended planning is told too, so a card jumping to Ready is expected (T3O-115).
+        ...(role === "plan" && automationIn(yield* readBoard, card).autoSignOff.value
+          ? { autoSignOff: true }
           : {}),
         ...(planReview === null ? {} : { planReview }),
       },
@@ -9315,32 +9316,6 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * End the auto-plan request when the board stopped driving the run: a step parked on a human or
-   * settled `failed`. Reads the live step, so one already back at work keeps its request.
-   */
-  const endAutoPlanIfUndriven = Effect.fn("board-supervisor-endAutoPlanIfUndriven")(function* (
-    cardId: BoardCardId,
-  ) {
-    const board = yield* readBoard;
-    const card = board.cards.find((candidate) => candidate.id === cardId);
-    if (card === undefined || !isBoardCardAutoPlanPending(card)) return;
-    const stage = boardStageById(board, card.stage);
-    if (stage === null || effectiveBoardStageRole(stage) !== "plan") return;
-    const state = boardCardStepState(board, card.id);
-    if (state === null || state.stepId !== card.stage) return;
-    const undriven =
-      state.status === "awaiting-input" ||
-      state.status === "paused" ||
-      state.status === "failed" ||
-      (state.status === "stalled" && state.retryAt === null);
-    if (!undriven) return;
-    yield* endAutoPlan(
-      card.id,
-      "Auto-plan stopped: the planning run stopped or is waiting on you, so nothing will be approved automatically. Finish planning by hand, or click Auto-plan again.",
-    );
-  });
-
-  /**
    * T3o: the split gate's action: a split approved during the plan review, applied now the
    * planning step has completed this stay (T3O-105, T3O-115). A refusal clears it with a note, so
    * the split gate asks again.
@@ -9401,14 +9376,16 @@ const make = Effect.gen(function* () {
     if (after === null || after.stage === live.stage) {
       return gateBlocked("fault", "The move to the next stage did not land.");
     }
-    // The build gate takes it from here; fired now rather than on the next tick.
-    const built = yield* fireDueGates([live.id]);
-    if (!built.some((entry) => entry.gate === "build")) {
-      const ready = yield* readBoard;
-      const card = ready.cards.find((candidate) => candidate.id === live.id) ?? after;
+    // The build gate takes it from here; acted on now rather than on the next tick.
+    const ready = yield* readBoard;
+    const signed = ready.cards.find((candidate) => candidate.id === live.id) ?? after;
+    const settings = yield* boardSettings;
+    if (boardGateDue({ board: ready, card: signed, settings })?.gate === "build") {
+      yield* startAutoBuildCard(signed);
+    } else {
       yield* autoPlanNote(
         live.id,
-        automationIn(ready, card).autoBuild.value
+        automationIn(ready, signed).autoBuild.value
           ? "Auto sign-off approved the plan; it waits in Ready and builds itself once its dependencies are done."
           : "Auto sign-off approved the plan. It waits in Ready for you to start it.",
       );
@@ -9473,6 +9450,43 @@ const make = Effect.gen(function* () {
     return started.kind === "landed" ? gateActed : gateBlockedBy(started);
   });
 
+  /**
+   * T3o: the answer gate's action (T3O-115): reply to a question an unattended planning run asked
+   * anyway, through its pending request or, when that did not survive, a new turn. Recorded on
+   * the step either way, so the gate is never due twice for one wait.
+   */
+  const answerPlanningQuestion = Effect.fn("board-supervisor-answerPlanningQuestion")(function* (
+    card: BoardCard,
+  ) {
+    const board = yield* readBoard;
+    const live = board.cards.find((candidate) => candidate.id === card.id);
+    if (live === undefined) return gateNotDue;
+    const state = boardCardStepThisStay(boardCardStepState(board, live.id), live);
+    if (state === null || state.status !== "awaiting-input" || state.threadId === null) {
+      return gateNotDue;
+    }
+    const failure = yield* steerPlanningThread(live.id, state, BOARD_AUTO_ANSWER_TEXT);
+    if (failure !== null) return gateBlocked("fault", failure);
+    const recorded = yield* dispatchOutcome({
+      type: "board.card.check-in-step",
+      commandId: yield* commandId("auto-answer"),
+      cardId: live.id,
+      stepId: state.stepId,
+      charged: false,
+      progressed: false,
+      autoAnswered: true,
+      createdAt: yield* nowIso,
+    });
+    if (recorded.kind !== "landed") return gateBlockedBy(recorded);
+    yield* autoPlanNote(
+      live.id,
+      (state.autoAnswers ?? 0) + 1 >= BOARD_AUTO_ANSWER_LIMIT
+        ? `The planning agent asked a question; the board told it to decide for itself. That is the auto-answer limit (${BOARD_AUTO_ANSWER_LIMIT}) for this step, so its next question waits for you.`
+        : "The planning agent asked a question; the board told it to decide for itself and log the call as unclear.",
+    );
+    return gateActed;
+  });
+
   /** T3o: the plan gate's action (T3O-115): mark the unattended run, then start the stage. */
   const startPlanningGate = Effect.fn("board-supervisor-startPlanningGate")(function* (
     card: BoardCard,
@@ -9501,7 +9515,12 @@ const make = Effect.gen(function* () {
     const before = boardStageBeforeBuild(board);
     if (live === undefined || buildStage === null || before === null) return gateNotDue;
     if (live.stage !== before.stageId || live.archivedAt !== null) return gateNotDue;
-    const resolved = automationIn(board, live);
+    // The predicate's reading, so a legacy split parent's children inherit as the gate said.
+    const resolved = boardGateFacts({
+      board,
+      card: live,
+      settings: yield* boardSettings,
+    }).automation;
     if (!resolved.autoBuild.value) return gateNotDue;
     const moved = yield* dispatchOutcome({
       type: "board.card.move",
@@ -9521,8 +9540,15 @@ const make = Effect.gen(function* () {
   const planningWaitsAtGate = Effect.fn("board-supervisor-planningWaitsAtGate")(function* (
     card: BoardCard,
   ) {
-    if (!isBoardCardAutoPlanPending(card)) return false;
     const board = yield* readBoard;
+    if (!isBoardCardAutoPlanPending(card)) {
+      // An unattended review finished the planning: its plan waits for a person.
+      const state = boardCardStepThisStay(boardCardStepState(board, card.id), card);
+      const review = resolveCardPlanReview({ board, card, settings: yield* boardSettings });
+      if (state?.planReviewStartedAt === undefined || review.unattended !== true) return false;
+      yield* autoPlanNote(card.id, "Plan review finished. The plan waits for your approval.");
+      return true;
+    }
     const plans = boardCardPlans(board, card.id).length;
     if (plans === 0) {
       yield* endAutoPlan(
@@ -9547,13 +9573,13 @@ const make = Effect.gen(function* () {
   const { fireDueGates } = makeBoardGateSweep({
     readBoard,
     readSettings: boardSettings,
-    nowMs: clockNowMs,
     workerUnreachable: Effect.map(
       workerPausedNow,
       (paused) => (workerId: string) => paused(workerId as BoardWorkerId),
     ),
     actions: {
       plan: startPlanningGate,
+      answer: answerPlanningQuestion,
       "review-start": startPlanReviewGate,
       "sign-off": approvePlannedCard,
       "split-sign-off": autoApproveSplit,
@@ -12063,10 +12089,14 @@ const make = Effect.gen(function* () {
       // T3o: a split approved after review, or undone, is review policy too (T3O-105).
       case "board.split-approval-changed":
         return steerPlanReviewPolicy(event.payload.cardId, { idleOnly: true }).pipe(Effect.asVoid);
+      // T3o: a parked, paused or failed planning run no longer ends Auto-plan: the toggle is the
+      // automation, and the gates act on it (T3O-115).
       case "board.card-step-awaiting-input":
+        // An unattended planning run parked on a question is the answer gate's.
+        return fireDueGates([event.payload.cardId]).pipe(Effect.asVoid);
       case "board.card-step-paused":
       case "board.card-step-settled":
-        return endAutoPlanIfUndriven(event.payload.cardId);
+        return Effect.void;
       case "board.card-step-force-start-requested":
         // A human took a slot over the cap. Scheduling here is what
         // makes the click start the card: without it the override would sit on
@@ -12082,7 +12112,6 @@ const make = Effect.gen(function* () {
             // and in-thread resumes also emit this event, hence the status test.
             event.payload.state.status === "queued" ? schedule() : Effect.void,
           ),
-          Effect.andThen(endAutoPlanIfUndriven(event.payload.cardId)),
         );
       case "board.project-stage-config-set":
         return handleProjectConfigSet(event.payload.projectId);

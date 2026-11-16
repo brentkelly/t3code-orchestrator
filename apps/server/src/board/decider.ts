@@ -4633,7 +4633,15 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
     case "board.plan-review.start": {
       const card = yield* requireActiveBoardCard({ board, command });
       const state = boardCardStepState(board, card.id);
-      if (state === null || state.planReviewAwaitingStart === undefined) {
+      // T3o: an armed review, or one enabled all along whose planning finished without it: the
+      // review-start gate starts either (T3O-115). A plan still being written is never cut into.
+      const startable =
+        state !== null &&
+        (state.planReviewAwaitingStart !== undefined ||
+          (state.status === "succeeded" &&
+            state.planReviewStartedAt === undefined &&
+            boardCardPlans(board, card.id).length > 0));
+      if (!startable) {
         return yield* invariant(
           command,
           `Card '${card.key}' has no plan review waiting to start. Turn plan review on after the plan is posted, then start it.`,
@@ -6464,7 +6472,9 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
     case "board.card.check-in-step": {
       yield* requireActiveBoardCard({ board, command });
       const current = yield* requireLiveStepState({ board, command, stepId: command.stepId });
-      if (current.status !== "running") {
+      // T3o: an auto-answer goes to a step parked on a question (T3O-115).
+      const answering = command.autoAnswered === true && current.status === "awaiting-input";
+      if (current.status !== "running" && !answering) {
         return yield* invariant(
           command,
           `Card '${command.cardId}' step '${command.stepId}' is '${current.status}', not running; nothing to check in on.`,
@@ -6481,6 +6491,9 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           : current.stageEntryRecoveries,
         lastNudgeAt: command.createdAt,
         ...(command.reopenedPrompt === true ? { reopenedPromptAt: command.createdAt } : {}),
+        ...(command.autoAnswered === true
+          ? { autoAnswers: (current.autoAnswers ?? 0) + 1, autoAnsweredAt: command.createdAt }
+          : {}),
         updatedAt: command.createdAt,
       };
       return {

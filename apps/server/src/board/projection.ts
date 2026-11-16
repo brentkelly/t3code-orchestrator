@@ -531,8 +531,11 @@ const BoardCardStepStateDbRow = Schema.Struct({
   // NULL before migration 067 and on every step Auto-plan never reopened.
   reopenedAt: Schema.NullOr(IsoDateTime),
   reopenedPromptAt: Schema.NullOr(IsoDateTime),
-  // T3o: NULL before migration 080 on rows it could not place in a stay (T3O-115).
+  // T3o: NULL before migration 080 on rows it could not place in a stay, and on a step the
+  // board never auto-answered (T3O-115).
   stageEnteredAt: Schema.NullOr(IsoDateTime),
+  autoAnswers: Schema.NullOr(Schema.Int),
+  autoAnsweredAt: Schema.NullOr(IsoDateTime),
   humanInLoop: Schema.Int,
   maxAttempts: BoardCardStepState.fields.maxAttempts,
   timeoutMs: BoardCardStepState.fields.timeoutMs,
@@ -2311,7 +2314,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         last_error, awaiting_reason, human_turn_at, stalled_reason, retry_at,
         plan_review_started_at, plan_review_rounds, plan_review_round, plan_review_done_at,
         plan_review_awaiting_start, plan_review_policy_sent, reopened_at, reopened_prompt_at,
-        stage_entered_at, human_in_loop, max_attempts, timeout_ms, thread_id, status, slot_held, force_start,
+        stage_entered_at, auto_answers, auto_answered_at, human_in_loop, max_attempts, timeout_ms, thread_id, status, slot_held, force_start,
         queued_by, queued_detail, started_at, updated_at
       )
       VALUES (
@@ -2323,6 +2326,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ${row.planReviewStartedAt}, ${row.planReviewRounds}, ${row.planReviewRound},
         ${row.planReviewDoneAt}, ${row.planReviewAwaitingStart}, ${row.planReviewPolicySent},
         ${row.reopenedAt}, ${row.reopenedPromptAt}, ${row.stageEnteredAt},
+        ${row.autoAnswers}, ${row.autoAnsweredAt},
         ${row.humanInLoop}, ${row.maxAttempts},
         ${row.timeoutMs}, ${row.threadId}, ${row.status}, ${row.slotHeld}, ${row.forceStart},
         ${row.queuedBy}, ${row.queuedDetail}, ${row.startedAt}, ${row.updatedAt}
@@ -2357,6 +2361,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         reopened_at = excluded.reopened_at,
         reopened_prompt_at = excluded.reopened_prompt_at,
         stage_entered_at = excluded.stage_entered_at,
+        auto_answers = excluded.auto_answers,
+        auto_answered_at = excluded.auto_answered_at,
         human_in_loop = excluded.human_in_loop,
         max_attempts = excluded.max_attempts,
         timeout_ms = excluded.timeout_ms,
@@ -2405,6 +2411,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         reopened_at AS "reopenedAt",
         reopened_prompt_at AS "reopenedPromptAt",
         stage_entered_at AS "stageEnteredAt",
+        auto_answers AS "autoAnswers",
+        auto_answered_at AS "autoAnsweredAt",
         human_in_loop AS "humanInLoop",
         max_attempts AS "maxAttempts",
         timeout_ms AS "timeoutMs",
@@ -3155,6 +3163,8 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
         reopenedAt: state.reopenedAt ?? null,
         reopenedPromptAt: state.reopenedPromptAt ?? null,
         stageEnteredAt: state.stageEnteredAt ?? null,
+        autoAnswers: state.autoAnswers ?? null,
+        autoAnsweredAt: state.autoAnsweredAt ?? null,
         humanInLoop: state.humanInLoop ? 1 : 0,
         maxAttempts: state.maxAttempts,
         timeoutMs: state.timeoutMs,
@@ -4149,6 +4159,8 @@ function loadBoardState(
             ...(row.reopenedAt === null ? {} : { reopenedAt: row.reopenedAt }),
             ...(row.reopenedPromptAt === null ? {} : { reopenedPromptAt: row.reopenedPromptAt }),
             ...(row.stageEnteredAt === null ? {} : { stageEnteredAt: row.stageEnteredAt }),
+            ...(row.autoAnswers === null ? {} : { autoAnswers: row.autoAnswers }),
+            ...(row.autoAnsweredAt === null ? {} : { autoAnsweredAt: row.autoAnsweredAt }),
             humanInLoop: row.humanInLoop !== 0,
             maxAttempts: row.maxAttempts,
             timeoutMs: row.timeoutMs,
