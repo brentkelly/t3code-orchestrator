@@ -1,0 +1,588 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Proposed split with plan review</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#fcfcfc; --fg:#27272a; --card:#ffffff; --muted:#fafafa; --muted-fg:#71717a; --accent:#f4f4f5;
+  --border:#e4e4e7; --input:#d4d4d8;
+  --info:#3b82f6; --info-fg:#1d4ed8; --primary:#2563eb;
+  --success:#10b981; --success-fg:#047857;
+  --awaiting:#8b5cf6; --awaiting-fg:#6d28d9; --awaiting-bg:#f5f3ff; --awaiting-border:#ddd6fe;
+  --warn-fg:#c2410c;
+  --font-sans:"DM Sans",-apple-system,BlinkMacSystemFont,system-ui,sans-serif;
+  --font-mono:"SF Mono","SFMono-Regular","JetBrains Mono",Consolas,Menlo,monospace;
+}
+*{box-sizing:border-box}
+body{margin:0;font-family:var(--font-sans);background:var(--bg);color:var(--fg);-webkit-font-smoothing:antialiased}
+
+.tag{font:600 11px var(--font-mono);border-radius:6px;padding:2px 7px;border:1px solid var(--border);color:var(--muted-fg)}
+.h2{margin:0;font:600 15px var(--font-sans)}
+.note{margin:0;font:400 12.5px/1.6 var(--font-sans);color:var(--muted-fg);text-wrap:pretty}
+.cap{font:500 12px var(--font-sans);color:var(--muted-fg)}
+.cap b{color:var(--fg);font-weight:600}
+.lead{margin:0;max-width:820px;font:400 13.5px/1.65 var(--font-sans);color:var(--muted-fg);text-wrap:pretty}
+
+/* card window */
+.win{width:720px;height:540px;background:var(--card);border:1px solid var(--border);border-radius:14px;box-shadow:0 10px 30px rgb(0 0 0 / 6%);display:flex;flex-direction:column;overflow:hidden}
+.win.short{height:auto}
+.whead{display:flex;align-items:center;gap:8px;padding:12px 16px;border-bottom:1px solid var(--border)}
+.wid{font:500 12px var(--font-sans);color:var(--muted-fg)}
+.lbl{font:600 10.5px var(--font-sans);letter-spacing:.04em;color:var(--info-fg);background:#eff6ff;border-radius:5px;padding:2px 6px}
+.stage{font:500 11px var(--font-sans);background:var(--accent);border-radius:5px;padding:2px 6px}
+.wtitle{font:600 14px var(--font-sans);margin-left:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tabs{margin-left:auto;display:flex;gap:2px;background:var(--accent);border-radius:8px;padding:2px}
+.tab{font:500 11px var(--font-sans);color:var(--muted-fg);padding:4px 8px;border-radius:6px;white-space:nowrap}
+.tab.on{background:var(--card);color:var(--fg);box-shadow:0 1px 2px rgb(0 0 0 / 8%)}
+.tab .dot{display:inline-block;width:6px;height:6px;border-radius:99px;background:var(--info);margin-right:4px;vertical-align:1px}
+.wbody{flex:1;display:flex;min-height:0}
+.main{flex:1;display:flex;flex-direction:column;min-width:0;border-right:1px solid var(--border)}
+.side{width:216px;flex:none;display:flex;flex-direction:column;background:var(--muted)}
+
+.thread{flex:1;padding:14px 18px;display:flex;flex-direction:column;gap:10px;overflow:hidden;min-height:0}
+.msg{font:400 12px/1.55 var(--font-sans);color:var(--fg);margin:0}
+.ev{display:flex;align-items:center;gap:8px;font:400 11.5px var(--font-sans);color:var(--muted-fg)}
+.ev .ic{width:14px;height:14px;border-radius:4px;border:1px solid var(--input);flex:none}
+.rv{border:1px solid var(--border);border-radius:10px;padding:9px 11px;display:flex;flex-direction:column;gap:5px;background:var(--card)}
+.rv h4{margin:0;font:600 11.5px var(--font-sans)}
+.rv p{margin:0;font:400 11.5px/1.5 var(--font-sans);color:var(--muted-fg)}
+.sev{font:600 10px var(--font-sans);border-radius:4px;padding:1px 5px;margin-right:5px}
+.sev.h{background:#fef2f2;color:#b91c1c}.sev.m{background:#fff7ed;color:var(--warn-fg)}.sev.l{background:var(--accent);color:var(--muted-fg)}
+.composer{margin:0 14px 12px;border:1px solid var(--border);border-radius:12px;padding:9px 12px;display:flex;align-items:center;gap:8px;font:400 11.5px var(--font-sans);color:#a1a1aa}
+.composer .model{margin-left:auto;color:var(--fg);font-weight:500}
+.stop{width:22px;height:22px;border-radius:99px;background:#ef4444;flex:none}
+
+/* split dock */
+.dock{margin:0 14px 10px;border:1px solid var(--awaiting-border);border-radius:12px;background:var(--card);display:flex;flex-direction:column;overflow:hidden;box-shadow:0 -6px 18px rgb(0 0 0 / 4%)}
+.dhead{display:flex;align-items:center;gap:8px;padding:8px 10px 8px 12px}
+.dhead .t{font:600 12px var(--font-sans)}
+.dhead .s{font:400 11px var(--font-sans);color:var(--muted-fg)}
+.need{margin-left:auto;font:500 11px var(--font-sans);color:var(--awaiting-fg);white-space:nowrap}
+.ibtn{width:24px;height:24px;border-radius:6px;border:1px solid var(--border);display:inline-flex;align-items:center;justify-content:center;font:600 11px var(--font-sans);color:var(--muted-fg);flex:none;background:var(--card)}
+.drows{border-top:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden}
+.drow{display:flex;align-items:center;gap:8px;padding:6px 12px;border-bottom:1px solid var(--border);font:500 11.5px var(--font-sans)}
+.drow .n{color:var(--muted-fg);font-weight:400;width:18px}
+.drow .a{color:var(--muted-fg);font-weight:400;font-size:10.5px}
+.drow .p{margin-left:auto;font:500 10.5px var(--font-sans);border:1px solid var(--border);border-radius:5px;padding:1px 6px;color:var(--muted-fg)}
+.drow .p.rev{border-color:#fed7aa;color:var(--warn-fg);background:#fff7ed}
+.dfoot{display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--muted);border-top:1px solid var(--border)}
+.dfoot .info{font:400 10.5px/1.45 var(--font-sans);color:var(--muted-fg);flex:1}
+.btn{font:500 11px var(--font-sans);border-radius:7px;padding:5px 10px;border:1px solid var(--border);background:var(--card);white-space:nowrap;color:var(--fg)}
+.btn.pri{background:var(--primary);border-color:var(--primary);color:#fff}
+.btn.vio{background:var(--awaiting-bg);border-color:var(--awaiting-border);color:var(--awaiting-fg)}
+.btn.ghost{border-color:transparent;background:transparent;color:var(--muted-fg)}
+.grip{align-self:center;width:36px;height:4px;border-radius:99px;background:var(--input);margin-top:6px}
+.prog{height:3px;background:var(--accent);border-radius:99px;overflow:hidden;width:64px}
+.prog i{display:block;height:100%;background:var(--info)}
+
+/* sidebar */
+.sec{padding:12px 14px;border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:8px}
+.sh{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:4px 10px;font:600 10px var(--font-sans);letter-spacing:.06em;color:var(--muted-fg);text-transform:uppercase}
+.sh span{white-space:nowrap}
+.sh span:last-child{text-transform:none;letter-spacing:0;font-weight:500;color:var(--fg);font-size:11px}
+.tgl{display:flex;align-items:flex-start;gap:8px}
+.sw{width:26px;height:15px;border-radius:99px;background:var(--input);position:relative;flex:none;margin-top:1px}
+.sw::after{content:"";position:absolute;top:2px;left:2px;width:11px;height:11px;border-radius:99px;background:#fff}
+.sw.on{background:var(--primary)}.sw.on::after{left:13px}
+.tgl b{font:500 11.5px var(--font-sans);display:block}
+.tgl small{font:400 10.5px/1.45 var(--font-sans);color:var(--muted-fg);display:block;margin-top:2px}
+.step{display:flex;align-items:center;justify-content:space-between;font:400 11.5px var(--font-sans)}
+.stepper{display:flex;border:1px solid var(--border);border-radius:7px;overflow:hidden;background:var(--card)}
+.stepper span{width:24px;height:22px;display:flex;align-items:center;justify-content:center;font:500 12px var(--font-sans)}
+.stepper span+span{border-left:1px solid var(--border)}
+.stepper .v{width:30px}
+.gates{display:flex;flex-wrap:wrap;gap:4px}
+.g{font:500 10.5px var(--font-sans);border-radius:5px;padding:2px 6px;border:1px solid var(--border);color:var(--muted-fg);background:var(--card);white-space:nowrap}
+.g.a{background:#eff6ff;border-color:#bfdbfe;color:var(--info-fg)}
+.g.ho{background:#fff7ed;border-color:#fed7aa;color:var(--warn-fg)}
+.sub{margin-left:34px;padding-left:10px;border-left:2px solid var(--border)}
+.hint{font:400 10.5px/1.45 var(--font-sans);color:var(--muted-fg)}
+.hint.blue{color:var(--info-fg)}
+.pill{display:inline-flex;align-items:center;gap:5px;font:500 10.5px var(--font-sans);border-radius:99px;padding:2px 8px;background:#eff6ff;color:var(--info-fg)}
+.rounds{display:flex;gap:3px}
+.rounds i{flex:1;height:5px;border-radius:3px;background:color-mix(in srgb,var(--fg) 10%,transparent)}
+.rounds i.d{background:var(--success)}.rounds i.r{background:var(--info)}
+.wide{width:100%;text-align:center;padding:7px 10px}
+.kv{display:flex;justify-content:space-between;font:400 11px var(--font-sans);color:var(--muted-fg)}
+.kv span:last-child{color:var(--fg);font-weight:500}
+
+/* annotations */
+.ann{display:flex;gap:8px;align-items:flex-start;max-width:720px}
+.ann .num{flex:none;width:18px;height:18px;border-radius:99px;background:var(--fg);color:#fff;font:600 10px var(--font-sans);display:flex;align-items:center;justify-content:center;margin-top:1px}
+.ann p{margin:0;font:400 12.5px/1.55 var(--font-sans);color:var(--muted-fg)}
+.ann p b{color:var(--fg);font-weight:600}
+.marker{display:inline-flex;width:16px;height:16px;border-radius:99px;background:var(--fg);color:#fff;font:600 9.5px var(--font-sans);align-items:center;justify-content:center;flex:none}
+
+.menu{width:300px;background:var(--card);border:1px solid var(--border);border-radius:12px;box-shadow:0 12px 32px rgb(0 0 0 / 10%);padding:6px;display:flex;flex-direction:column;gap:2px}
+.mi{display:flex;gap:10px;padding:8px 10px;border-radius:8px;align-items:flex-start}
+.mi.on{background:var(--accent)}
+.mi .rd{width:14px;height:14px;border-radius:99px;border:1.5px solid var(--input);flex:none;margin-top:2px}
+.mi.on .rd{border:4px solid var(--primary)}
+.mi b{font:500 12px var(--font-sans);display:block}
+.mi small{font:400 11px/1.45 var(--font-sans);color:var(--muted-fg);display:block;margin-top:2px}
+.msep{height:1px;background:var(--border);margin:4px 6px}
+.mtitle{font:600 10px var(--font-sans);letter-spacing:.06em;color:var(--muted-fg);padding:6px 10px 2px;text-transform:uppercase}
+
+.before{border:1px dashed var(--input);border-radius:12px;padding:14px 16px;display:flex;flex-direction:column;gap:8px;width:340px;background:var(--card)}
+.before .row{display:flex;gap:8px;align-items:center;font:400 12px var(--font-sans)}
+.sent{border:1px solid var(--border);border-radius:9px;padding:6px 10px;font:400 11.5px var(--font-sans);background:#eff6ff;color:var(--info-fg);align-self:flex-end}
+.strike{opacity:.55}
+</style>
+</helmet>
+
+<section style="padding:34px 40px 56px;display:flex;flex-direction:column;gap:44px">
+
+  <!-- Header -->
+  <div style="display:flex;flex-direction:column;gap:10px">
+    <div style="display:flex;align-items:baseline;gap:10px">
+      <span class="tag">Planning UX</span>
+      <h1 style="margin:0;font:600 20px var(--font-sans)">Proposed split and plan review, working together</h1>
+    </div>
+    <p class="lead">Big features usually get both a proposed split and an adversarial plan review, and right now they fight for the card. The split panel covers the thread while the review runs. Approving the split hides the planning UI even though planning hasn't finished. Turning on review alone takes three clicks. And each click on the rounds stepper sends the agent another prompt. These changes treat the split as one planning output that waits for review to finish. It doesn't replace the planning screen.</p>
+    <div style="display:flex;flex-wrap:wrap;gap:8px 18px;margin-top:4px">
+      <span class="cap"><b>1</b> Split becomes a dock you can collapse</span>
+      <span class="cap"><b>2</b> Approving during review waits for review</span>
+      <span class="cap"><b>3</b> Planning stays in view after approval</span>
+      <span class="cap"><b>4</b> Plan review is a single toggle, with Unattended inside it</span>
+      <span class="cap"><b>4b</b> Four automation gates: plan, sign-off, build, merge</span>
+      <span class="cap"><b>5</b> Rounds are a setting, not a message</span>
+      <span class="cap"><b>6</b> Auto-review every card by default</span>
+    </div>
+  </div>
+
+  <!-- 1. Collapsible dock -->
+  <div style="display:flex;flex-direction:column;gap:16px">
+    <div style="display:flex;align-items:center;gap:8px"><span class="tag">1</span><span class="h2">The proposed split becomes a collapsible dock</span></div>
+    <div style="display:flex;flex-wrap:wrap;gap:40px;align-items:flex-start">
+
+      <!-- 1A expanded -->
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <span class="cap"><b>Expanded:</b> capped at 45% of the thread, so the list scrolls inside the dock</span>
+        <div class="win">
+          <div class="whead"><span class="wid">WAL-31</span><span class="lbl">FEATURE</span><span class="stage">Planning</span><span class="wtitle">Import auckland geomaps data…</span>
+            <div class="tabs"><span class="tab on">Thread</span><span class="tab">Review</span><span class="tab">Plan</span><span class="tab">Brief</span></div></div>
+          <div class="wbody">
+            <div class="main">
+              <div class="thread">
+                <p class="msg">Round 2 of 6. Two fresh reviewers are reading the seven plans.</p>
+                <div class="rv"><h4>Reviewer A · round 1</h4><p><span class="sev h">High</span>Card 5 assumes DWG output is already in walls-server, but card 1 ships it behind a job queue. The dialog needs a pending state.</p><p><span class="sev m">Med</span>Card 7 doesn't say what happens when there is no survey and no terrain.</p></div>
+                <div class="ev"><span class="ic"></span>Updated plans for #5 and #7</div>
+                <div class="ev"><span class="ic"></span>2 subagents · 1 working</div>
+              </div>
+              <div class="dock">
+                <div class="grip"></div>
+                <div class="dhead"><span class="t">Proposed split</span><span class="s">7 cards</span><span class="need">● Needs your approval</span><span class="ibtn" title="Collapse">⌄</span></div>
+                <div class="drows" style="max-height:132px">
+                  <div class="drow"><span class="n">#1</span>DWG converter service + conversion jobs<span class="p">Planned</span></div>
+                  <div class="drow"><span class="n">#2</span>Grid placement &amp; Aerial document model<span class="p">Planned</span></div>
+                  <div class="drow"><span class="n">#3</span>packages/geo: site file intake<span class="p">Planned</span></div>
+                  <div class="drow"><span class="n">#4</span>Aerial layer in 2D <span class="a">after #2</span><span class="p">Planned</span></div>
+                  <div class="drow"><span class="n">#5</span>Import site files dialog <span class="a">after #1, #3, #4</span><span class="p rev">Revised r1</span></div>
+                </div>
+                <div class="dfoot"><span class="info">Auto-build on · merge target inherit → main</span><span class="btn">Ask for changes</span><span class="btn pri">Approve split…</span></div>
+              </div>
+              <div class="composer">Ask anything. @ files, $ skills<span class="model">Opus 5.5 Medium</span><span class="stop"></span></div>
+            </div>
+            <div class="side">
+              <div class="sec"><span class="btn vio wide">Proposed split · 7 ▾</span></div>
+              <div class="sec"><div class="sh"><span>Plan review</span><span>Round 2 of 6</span></div><div class="rounds"><i class="d"></i><i class="r"></i><i></i><i></i><i></i><i></i></div></div>
+              <div class="sec"><div class="sh"><span>Automation</span></div><div class="gates"><span class="g">Plan · you</span><span class="g a">Build · auto</span><span class="g a">Merge · auto</span></div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 1B collapsed -->
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <span class="cap"><b>Collapsed:</b> a single row above the composer, so the review thread gets the full height</span>
+        <div class="win">
+          <div class="whead"><span class="wid">WAL-31</span><span class="lbl">FEATURE</span><span class="stage">Planning</span><span class="wtitle">Import auckland geomaps data…</span>
+            <div class="tabs"><span class="tab on">Thread</span><span class="tab">Review</span><span class="tab">Plan</span><span class="tab">Brief</span></div></div>
+          <div class="wbody">
+            <div class="main">
+              <div class="thread">
+                <p class="msg">Round 2 of 6. Two fresh reviewers are reading the seven plans.</p>
+                <div class="rv"><h4>Reviewer A · round 1</h4><p><span class="sev h">High</span>Card 5 assumes DWG output is already in walls-server, but card 1 ships it behind a job queue. The dialog needs a pending state.</p><p><span class="sev m">Med</span>Card 7 doesn't say what happens when there is no survey and no terrain.</p></div>
+                <div class="rv"><h4>Reviewer B · round 1</h4><p><span class="sev m">Med</span>#4 and #6 both touch edit mode; say which one owns the Aerial panel.</p><p><span class="sev l">Low</span>#3's coordinate list leaves out NZGD2000 / NZTM.</p></div>
+                <div class="ev"><span class="ic"></span>Updated plans for #4, #5 and #7</div>
+                <div class="ev"><span class="ic"></span>2 subagents · 1 working</div>
+                <p class="msg">Reviewer B's finding on #4/#6 changes the split: moving the Aerial panel into #4.</p>
+              </div>
+              <div class="dock" style="flex-direction:row;align-items:center;padding:7px 8px 7px 12px;gap:8px">
+                <span class="t" style="font:600 12px var(--font-sans)">Proposed split</span><span class="s" style="font:400 11px var(--font-sans);color:var(--muted-fg)">7 cards · 2 revised</span>
+                <span class="need">● Needs approval</span>
+                <span class="btn">Open</span>
+                <span class="ibtn" title="Expand">⌃</span>
+              </div>
+              <div class="composer">Ask anything. @ files, $ skills<span class="model">Opus 5.5 Medium</span><span class="stop"></span></div>
+            </div>
+            <div class="side">
+              <div class="sec"><span class="btn vio wide">Proposed split · 7 ▸</span></div>
+              <div class="sec"><div class="sh"><span>Plan review</span><span>Round 2 of 6</span></div><div class="rounds"><i class="d"></i><i class="r"></i><i></i><i></i><i></i><i></i></div></div>
+              <div class="sec"><div class="sh"><span>Automation</span></div><div class="gates"><span class="g">Plan · you</span><span class="g a">Build · auto</span><span class="g a">Merge · auto</span></div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <div class="ann"><span class="num">a</span><p><b>Docked, not a popup.</b> The split sits at the bottom of the thread column above the composer and never goes past 45% of the column height. Its rows scroll inside it, and you can drag the grip to resize it.</p></div>
+      <div class="ann"><span class="num">b</span><p><b>Collapse is remembered per card.</b> It auto-collapses when a plan review is running, since the review is what you want to read. It opens again by itself only when review ends or the split changes, and then only if you haven't collapsed it yourself since.</p></div>
+      <div class="ann"><span class="num">c</span><p><b>Review changes show up on the rows.</b> A card whose plan changed in a round shows <i>Revised r1</i>, and the collapsed bar counts them (“2 revised”), so you can tell when there's something new to look at.</p></div>
+      <div class="ann"><span class="num">d</span><p>The sidebar's <b>Review split</b> button now toggles the dock open and closed.</p></div>
+    </div>
+  </div>
+
+  <!-- 2. Approve while review runs -->
+  <div style="display:flex;flex-direction:column;gap:16px">
+    <div style="display:flex;align-items:center;gap:8px"><span class="tag">2</span><span class="h2">Approving while review is running waits for the review</span></div>
+    <div style="display:flex;flex-wrap:wrap;gap:40px;align-items:flex-start">
+
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <span class="cap"><b>Approve split…</b> during review shows a choice in the dock footer</span>
+        <div class="win short" style="width:560px">
+          <div class="dock" style="margin:14px">
+            <div class="dhead"><span class="t">Proposed split</span><span class="s">7 cards · 2 revised</span><span class="need">● Needs your approval</span><span class="ibtn">⌄</span></div>
+            <div class="drows">
+              <div class="drow"><span class="n">#4</span>Aerial layer in 2D <span class="a">after #2</span><span class="p rev">Revised r2</span></div>
+              <div class="drow"><span class="n">#5</span>Import site files dialog <span class="a">after #1, #3, #4</span><span class="p rev">Revised r1</span></div>
+              <div class="drow" style="border-bottom:none"><span class="n">#6</span>Positioning tools <span class="a">after #4</span><span class="p">Planned</span></div>
+            </div>
+            <div style="border-top:1px solid var(--border);padding:12px;display:flex;flex-direction:column;gap:10px;background:#f8faff">
+              <div style="display:flex;align-items:center;gap:8px"><span class="pill">Plan review · round 2 of 6</span><span class="hint">Later rounds can still change the cards.</span></div>
+              <div style="display:flex;gap:8px">
+                <div style="flex:1;border:2px solid var(--primary);border-radius:10px;padding:9px 11px;background:var(--card)"><b style="font:600 12px var(--font-sans)">Approve after review</b><div class="hint" style="margin-top:3px">Approved now. The 7 cards get created from the final plans when round 6 ends.</div></div>
+                <div style="flex:1;border:1px solid var(--border);border-radius:10px;padding:9px 11px;background:var(--card)"><b style="font:600 12px var(--font-sans)">Create cards now</b><div class="hint" style="margin-top:3px">Review keeps going, and cards update in place until they start building.</div></div>
+              </div>
+              <div style="display:flex;justify-content:flex-end;gap:8px"><span class="btn ghost">Cancel</span><span class="btn pri">Approve after review</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <span class="cap"><b>After approving:</b> the dock collapses into a status bar</span>
+        <div class="win short" style="width:560px">
+          <div style="padding:14px;display:flex;flex-direction:column;gap:12px">
+            <div class="dock" style="margin:0;flex-direction:row;align-items:center;padding:8px 8px 8px 12px;gap:8px;border-color:#a7f3d0">
+              <span style="width:8px;height:8px;border-radius:99px;background:var(--success)"></span>
+              <span style="font:600 12px var(--font-sans)">Split approved</span>
+              <span class="hint">7 cards created after round 6 · round 3 now</span>
+              <span class="btn ghost" style="margin-left:auto">Undo</span>
+              <span class="ibtn">⌃</span>
+            </div>
+            <div class="composer" style="margin:0">Ask anything. @ files, $ skills<span class="model">Opus 5.5 Medium</span><span class="stop"></span></div>
+          </div>
+        </div>
+        <div class="ann" style="max-width:560px;margin-top:6px"><span class="num">a</span><p><b>Approve after review</b> is the default when a review is running. Your decisions (auto-build, merge target) are saved right away, so you can walk off and the board shows up already reviewed.</p></div>
+        <div class="ann" style="max-width:560px"><span class="num">b</span><p>If a later round <b>adds, removes or merges a card</b>, the approval is dropped and the dock comes back with “Split changed in round 4, approve again”. Edits to a plan's text don't drop it.</p></div>
+        <div class="ann" style="max-width:560px"><span class="num">c</span><p>With no review running, the footer looks the same as today: a single <b>Approve split</b> button.</p></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 3. Group card keeps planning -->
+  <div style="display:flex;flex-direction:column;gap:16px">
+    <div style="display:flex;align-items:center;gap:8px"><span class="tag">3</span><span class="h2">Once the group card exists, planning stays in view while it's still running</span></div>
+    <div style="display:flex;flex-wrap:wrap;gap:40px;align-items:flex-start">
+      <div class="win" style="height:470px">
+        <div class="whead"><span class="wid">WAL-31</span><span class="stage">Group · 7</span><span class="stage">Planning</span><span class="wtitle">Import auckland geomaps…</span>
+          <div class="tabs"><span class="tab on"><span class="dot"></span>Planning</span><span class="tab">Cards</span><span class="tab">Summary</span><span class="tab">Brief</span></div></div>
+        <div class="wbody">
+          <div class="main">
+            <div style="margin:12px 14px 0;border:1px solid #bfdbfe;background:#eff6ff;border-radius:10px;padding:8px 12px;display:flex;align-items:center;gap:8px">
+              <span class="hint blue" style="flex:1"><b>Cards created.</b> Plan review is still on round 4 of 6. Any child that changes updates in place, and nothing builds until review ends.</span><span class="btn">View cards</span>
+            </div>
+            <div class="thread">
+              <div class="rv"><h4>Reviewer A · round 3</h4><p><span class="sev m">Med</span>#7's flat ground plane should use the site's datum height, not 0.</p></div>
+              <div class="ev"><span class="ic"></span>Updated #7 plan · child card WAL-38 updated</div>
+              <div class="ev"><span class="ic"></span>2 subagents · 2 working</div>
+            </div>
+            <div class="composer">Ask anything. @ files, $ skills<span class="model">Opus 5.5 Medium</span><span class="stop"></span></div>
+          </div>
+          <div class="side">
+            <div class="sec">
+              <div class="sh"><span>Plan review</span><span>Round 4 of 6</span></div>
+              <div class="rounds"><i class="d"></i><i class="d"></i><i class="d"></i><i class="r"></i><i></i><i></i></div>
+              <div class="tgl"><span class="sw on"></span><div><b>Adversarial plan review</b></div></div>
+              <div class="step">Rounds<span class="stepper"><span>−</span><span class="v">6</span><span>+</span></span></div>
+            </div>
+            <div class="sec">
+              <span class="btn wide" style="color:var(--muted-fg)">Open board</span>
+              <span class="hint">Children are held in Ready until review ends.</span>
+            </div>
+            <div class="sec"><div class="sh"><span>Automation</span></div><div class="gates"><span class="g">Plan · you</span><span class="g a">Build · auto</span><span class="g a">Merge · auto</span></div></div>
+          </div>
+        </div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:10px;max-width:420px;padding-top:4px">
+        <div class="ann"><span class="num">a</span><p><b>The active tab follows the work.</b> While the planning agent is still running, the card opens on <b>Planning</b> (the thread, renamed so it's clear which conversation it is), with a live dot. When planning settles it switches to <b>Cards</b> as the default.</p></div>
+        <div class="ann"><span class="num">b</span><p><b>The Plan review section stays in the sidebar</b> above Open board for as long as review is running, with the same toggle and rounds, so nothing you set disappears. When review finishes it collapses to a summary row (“Reviewed · 6 rounds · 9 findings”).</p></div>
+        <div class="ann"><span class="num">c</span><p>If you chose <b>Create cards now</b>, children are created but held. Auto-build doesn't start them until the last round's revisions land, so no child builds from a plan that's out of date.</p></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 4. Plan review toggle -->
+  <div style="display:flex;flex-direction:column;gap:16px">
+    <div style="display:flex;align-items:center;gap:8px"><span class="tag">4</span><span class="h2">Plan review on its own: one toggle, available whenever you're planning</span></div>
+    <div style="display:flex;flex-wrap:wrap;gap:40px;align-items:flex-start">
+
+      <div class="before">
+        <span class="cap"><b>Today:</b> three steps, and it's bundled with auto-plan</span>
+        <div class="row"><span class="marker">1</span>Set Automation to Auto-plan</div>
+        <div class="row"><span class="marker">2</span>Open the Automation section</div>
+        <div class="row"><span class="marker">3</span>Turn on plan review inside it</div>
+        <div class="row" style="color:var(--muted-fg)">…and auto-plan now drives planning, which isn't what you wanted.</div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <span class="cap"><b>Proposed:</b> the Plan review section shows at the Planning stage under any automation</span>
+        <div class="win short" style="width:236px">
+          <div class="side" style="width:100%">
+            <div class="sec">
+              <div class="sh"><span>Plan review</span><span>Off</span></div>
+              <div class="tgl"><span class="sw"></span><div><b>Adversarial plan review</b><small>Fresh reviewers check the plan before it comes to you for sign-off.</small></div></div>
+            </div>
+            <div class="sec"><div class="sh"><span>Automation</span></div><div class="gates"><span class="g">Plan · you</span><span class="g">Build · you</span><span class="g">Merge · you</span></div></div>
+          </div>
+        </div>
+        <div class="win short" style="width:236px">
+          <div class="side" style="width:100%">
+            <div class="sec">
+              <div class="sh"><span>Plan review</span><span>Waiting for plan</span></div>
+              <div class="tgl"><span class="sw on"></span><div><b>Adversarial plan review</b><small>Starts when the agent posts a plan. You keep planning by hand until then.</small></div></div>
+              <div class="step">Rounds<span class="stepper"><span>−</span><span class="v">2</span><span>+</span></span></div>
+              <div class="tgl" style="padding-top:8px;border-top:1px dashed var(--border)"><span class="sw"></span><div><b>Unattended</b><small>Off: the agent can stop to ask you about findings between rounds.</small></div></div>
+            </div>
+            <div class="sec"><div class="sh"><span>Automation</span></div><div class="gates"><span class="g">Plan · you</span><span class="g">Build · you</span><span class="g">Merge · you</span></div></div>
+          </div>
+        </div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <span class="cap"><b>Unattended on, with auto sign-off:</b> the review runs like auto-plan and signs itself off</span>
+        <div class="win short" style="width:236px">
+          <div class="side" style="width:100%">
+            <div class="sec">
+              <div class="sh"><span>Plan review</span><span>Round 1 of 2</span></div>
+              <div class="rounds"><i class="r"></i><i></i></div>
+              <div class="tgl"><span class="sw on"></span><div><b>Adversarial plan review</b></div></div>
+              <div class="step">Rounds<span class="stepper"><span>−</span><span class="v">2</span><span>+</span></span></div>
+              <div class="tgl" style="padding-top:8px;border-top:1px dashed var(--border)"><span class="sw on"></span><div><b>Unattended</b><small>Plan switches to auto from round 1. Auto sign-off is on, so when round 2 ends the plan signs off and builds. A proposed split still needs you.</small></div></div>
+            </div>
+            <div class="sec"><div class="sh"><span>Automation</span></div><div class="gates"><span class="g a">Plan · auto</span><span class="g a">Sign-off · auto</span><span class="g a">Build · auto</span><span class="g a">Merge · auto</span><span class="g ho">Hands-off</span></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="ann"><span class="num">a</span><p><b>Review needs no automation setting.</b> Turning it on is enough: it runs on the next plan the agent posts, or right away if one is already posted (see 5). It doesn't depend on auto-plan.</p></div>
+    <div class="ann"><span class="num">b</span><p><b>Unattended lives inside Plan review</b> and only shows when review is on, because that's the only time it means anything. It switches the card to auto-plan once the review starts: the agent settles findings itself instead of stopping to ask you. On its own it never signs off. The finished plan still waits for you, unless auto sign-off is on.</p></div>
+    <div class="ann"><span class="num">c</span><p><b>Splits stay manual.</b> Even unattended, a proposed split waits for you, because it creates cards and sets the merge target. It's already set to Approve after review, so you approve it once.</p></div>
+  </div>
+
+  <!-- 4b. Four gates -->
+  <div style="display:flex;flex-direction:column;gap:16px">
+    <div style="display:flex;align-items:center;gap:8px"><span class="tag">4b</span><span class="h2">Four automation gates: plan, sign-off, build, merge</span></div>
+    <p class="lead">Every card passes four gates, and each toggle automates exactly one. <b style="color:var(--fg)">Plan</b>: the agent plans without asking you. <b style="color:var(--fg)">Sign-off</b>: the plan is approved without you. <b style="color:var(--fg)">Build</b>: an approved card starts once its dependencies are done. <b style="color:var(--fg)">Merge</b>: finished work merges once code review passes. Sign-off only exists when planning is automated, by auto-plan or an unattended review.</p>
+    <div style="display:flex;flex-wrap:wrap;gap:32px;align-items:flex-start">
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <span class="cap"><b>You plan:</b> no sign-off gate, because you sign off when you say the plan is done</span>
+        <div class="win short" style="width:260px">
+          <div class="side" style="width:100%">
+            <div class="sec" style="gap:12px">
+              <div class="sh"><span>Automation</span></div>
+              <div class="gates"><span class="g">Plan · you</span><span class="g a">Build · auto</span><span class="g a">Merge · auto</span></div>
+              <div style="height:1px;background:var(--border)"></div>
+              <div class="tgl"><span class="sw"></span><div><b>Auto-plan</b><small>The agent plans without asking you.</small></div></div>
+              <div class="tgl"><span class="sw on"></span><div><b>Auto-build</b><small>Start once the plan is signed off and dependencies are done.</small></div></div>
+              <div class="tgl"><span class="sw on"></span><div><b>Auto-merge</b><small>Merge to the target once code review passes.</small></div></div>
+              <span class="btn wide">Make hands-off</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <span class="cap"><b>Auto-plan on:</b> Auto sign-off appears under it</span>
+        <div class="win short" style="width:260px">
+          <div class="side" style="width:100%">
+            <div class="sec" style="gap:12px">
+              <div class="sh"><span>Automation</span></div>
+              <div class="gates"><span class="g a">Plan · auto</span><span class="g">Sign-off · you</span><span class="g a">Build · auto</span><span class="g a">Merge · auto</span></div>
+              <div style="height:1px;background:var(--border)"></div>
+              <div class="tgl"><span class="sw on"></span><div><b>Auto-plan</b><small>The agent plans without asking you.</small></div></div>
+              <div class="tgl sub"><span class="sw"></span><div><b>Auto sign-off</b><small>Off: the agent&#39;s plan waits for you.</small></div></div>
+              <div class="tgl"><span class="sw on"></span><div><b>Auto-build</b><small>Start once the plan is signed off and dependencies are done.</small></div></div>
+              <div class="tgl"><span class="sw on"></span><div><b>Auto-merge</b><small>Merge to the target once code review passes.</small></div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <span class="cap"><b>Hands-off:</b> all four on</span>
+        <div class="win short" style="width:260px">
+          <div class="side" style="width:100%">
+            <div class="sec" style="gap:12px">
+              <div class="sh"><span>Automation</span></div>
+              <div class="gates"><span class="g a">Plan · auto</span><span class="g a">Sign-off · auto</span><span class="g a">Build · auto</span><span class="g a">Merge · auto</span><span class="g ho">Hands-off</span></div>
+              <div style="height:1px;background:var(--border)"></div>
+              <div class="tgl"><span class="sw on"></span><div><b>Auto-plan</b><small>The agent plans without asking you.</small></div></div>
+              <div class="tgl sub"><span class="sw on"></span><div><b>Auto sign-off</b><small>Approve the agent&#39;s plan without you.</small></div></div>
+              <div class="tgl"><span class="sw on"></span><div><b>Auto-build</b><small>Start once the plan is signed off and dependencies are done.</small></div></div>
+              <div class="tgl"><span class="sw on"></span><div><b>Auto-merge</b><small>Merge to the target once code review passes.</small></div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <span class="cap"><b>Unattended review, auto-plan off:</b> sign-off shows because the review automates planning</span>
+        <div class="win short" style="width:260px">
+          <div class="side" style="width:100%">
+            <div class="sec" style="gap:12px">
+              <div class="sh"><span>Automation</span></div>
+              <div class="gates"><span class="g a">Plan · auto from review</span><span class="g a">Sign-off · auto</span><span class="g a">Build · auto</span><span class="g">Merge · you</span></div>
+              <div style="height:1px;background:var(--border)"></div>
+              <div class="tgl"><span class="sw"></span><div><b>Auto-plan</b><small>The agent plans without asking you.</small></div></div>
+              <div class="hint" style="margin-left:34px">Unattended review is on, so planning turns automatic once the review starts.</div>
+              <div class="tgl sub"><span class="sw on"></span><div><b>Auto sign-off</b><small>Approve the reviewed plan without you.</small></div></div>
+              <div class="tgl"><span class="sw on"></span><div><b>Auto-build</b><small>Start once the plan is signed off and dependencies are done.</small></div></div>
+              <div class="tgl"><span class="sw"></span><div><b>Auto-merge</b><small>Off: finished cards wait for you to merge.</small></div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <div class="ann"><span class="num">a</span><p><b>Auto sign-off only appears under automated planning.</b> It shows, indented, when auto-plan is on or an unattended review is on. If you plan yourself it's hidden, because you sign off when you say the plan is done.</p></div>
+      <div class="ann"><span class="num">b</span><p><b>The summary shows only the gates that exist.</b> When you plan, it reads Plan · you, Build, Merge, with no “Sign-off · you”. Automated gates are blue and manual ones are grey.</p></div>
+      <div class="ann"><span class="num">c</span><p><b>An unattended review turns Plan to “auto from review”</b> without changing the Auto-plan toggle, so the card is manual until the review starts.</p></div>
+      <div class="ann"><span class="num">d</span><p>With all four automatic, an orange <b>Hands-off</b> tag is added to the strip. <b>Make hands-off</b> turns them all on in one click. Auto-merge is split out of today&#39;s auto-build, which currently builds, reviews and merges.</p></div>
+    </div>
+  </div>
+
+  <!-- 5. Rounds -->
+  <div style="display:flex;flex-direction:column;gap:16px">
+    <div style="display:flex;align-items:center;gap:8px"><span class="tag">5</span><span class="h2">Rounds are a setting the agent reads, not a message per click</span></div>
+    <div style="display:flex;flex-wrap:wrap;gap:40px;align-items:flex-start">
+
+      <div class="before">
+        <span class="cap"><b>Today:</b> changing 2 → 5 after planning sends four prompts</span>
+        <div class="sent">Run adversarial plan review · 2 rounds</div>
+        <div class="sent">Run adversarial plan review · 3 rounds</div>
+        <div class="sent">Run adversarial plan review · 4 rounds</div>
+        <div class="sent">Run adversarial plan review · 5 rounds</div>
+        <span class="hint">Each one interrupts or queues behind the last, and the agent has to work out which is current.</span>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <span class="cap"><b>Plan already posted:</b> the toggle arms the review, and you start it</span>
+        <div class="win short" style="width:236px">
+          <div class="side" style="width:100%">
+            <div class="sec">
+              <div class="sh"><span>Plan review</span><span>Ready to start</span></div>
+              <div class="tgl"><span class="sw on"></span><div><b>Adversarial plan review</b><small>Plan posted 4m ago.</small></div></div>
+              <div class="step">Rounds<span class="stepper"><span>−</span><span class="v">5</span><span>+</span></span></div>
+              <span class="btn pri wide">Start review · 5 rounds</span>
+              <span class="hint">Nothing is sent until you start.</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <span class="cap"><b>Review running:</b> changing rounds changes the target</span>
+        <div class="win short" style="width:236px">
+          <div class="side" style="width:100%">
+            <div class="sec">
+              <div class="sh"><span>Plan review</span><span>Round 2 of 5</span></div>
+              <div class="rounds"><i class="d"></i><i class="r"></i><i></i><i></i><i></i></div>
+              <div class="tgl"><span class="sw on"></span><div><b>Adversarial plan review</b></div></div>
+              <div class="step">Rounds<span class="stepper"><span>−</span><span class="v">5</span><span>+</span></span></div>
+              <span class="hint blue">Target changed from 2 to 5. The agent picks it up when round 2 ends.</span>
+            </div>
+          </div>
+        </div>
+        <span class="cap">The thread gets a single event instead of four prompts:</span>
+        <div class="ev" style="padding:6px 10px;border:1px solid var(--border);border-radius:8px;background:var(--card);width:300px"><span class="ic"></span>Review target set to 5 rounds (was 2)</div>
+      </div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <div class="ann"><span class="num">a</span><p><b>The rounds count is card state.</b> The planning agent reads the current target at each round boundary (the same way it reads its brief), so the stepper never sends a prompt. Lowering it below the current round ends the review after that round.</p></div>
+      <div class="ann"><span class="num">b</span><p><b>If a message is unavoidable</b> (the agent is idle and has to be woken up), send at most one, 1.5s after the last click, carrying the final value. A newer one replaces an earlier queued one rather than stacking behind it.</p></div>
+      <div class="ann"><span class="num">c</span><p><b>Toggling on when a plan already exists</b> arms the review with the default rounds and shows <b>Start review</b>, so you can set rounds first. When there's no plan yet it starts by itself once the plan is posted, as it does today.</p></div>
+    </div>
+  </div>
+
+  <!-- 6. Default auto-review setting -->
+  <div style="display:flex;flex-direction:column;gap:16px">
+    <div style="display:flex;align-items:center;gap:8px"><span class="tag">6</span><span class="h2">Auto-review every card by default</span></div>
+    <div style="display:flex;flex-wrap:wrap;gap:40px;align-items:flex-start">
+
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <span class="cap"><b>Settings › Planning:</b> the default sits with the other plan review settings</span>
+        <div class="win short" style="width:480px">
+          <div class="whead"><span class="wtitle" style="margin:0">Planning</span><span class="tabs"><span class="tab">Global</span><span class="tab on">walls</span></span></div>
+          <div style="padding:4px 18px 16px;display:flex;flex-direction:column">
+            <div class="mtitle" style="padding:12px 0 4px">Plan review</div>
+            <div style="display:flex;align-items:flex-start;gap:12px;padding:12px 0;border-bottom:1px solid var(--border)">
+              <div style="flex:1"><b style="font:500 12.5px var(--font-sans)">Auto-review plans</b><div class="hint" style="margin-top:3px">All cards will be automatically reviewed by agents for <b style="color:var(--fg)">3 rounds</b>.</div></div>
+              <span class="sw on" style="margin-top:3px"></span>
+            </div>
+            <div style="display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--border)">
+              <div style="flex:1"><b style="font:500 12.5px var(--font-sans)">Rounds</b><div class="hint" style="margin-top:3px">Used for every new card. You can change it on any card.</div></div>
+              <span class="stepper"><span>−</span><span class="v">3</span><span>+</span></span>
+            </div>
+            <div style="display:flex;align-items:flex-start;gap:12px;padding:12px 0">
+              <div style="flex:1"><b style="font:500 12.5px var(--font-sans)">Run unattended</b><div class="hint" style="margin-top:3px">Reviews run like auto-plan, without stopping to ask you. With auto sign-off on, reviewed plans are approved without you.</div></div>
+              <span class="sw" style="margin-top:3px"></span>
+            </div>
+          </div>
+        </div>
+        <div class="win short" style="width:480px">
+          <div style="padding:4px 18px 4px;display:flex;flex-direction:column">
+            <div style="display:flex;align-items:flex-start;gap:12px;padding:12px 0">
+              <div style="flex:1"><b style="font:500 12.5px var(--font-sans)">Auto-review plans</b><div class="hint" style="margin-top:3px">Off. Turn plan review on per card from its sidebar.</div></div>
+              <span class="sw" style="margin-top:3px"></span>
+            </div>
+          </div>
+        </div>
+        <span class="cap">Off: the rounds row is hidden and the sentence switches.</span>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <span class="cap"><b>On a new card:</b> review is already on, and it says where the setting came from</span>
+        <div class="win short" style="width:236px">
+          <div class="side" style="width:100%">
+            <div class="sec">
+              <div class="sh"><span>Plan review</span><span>Waiting for plan</span></div>
+              <div class="tgl"><span class="sw on"></span><div><b>Adversarial plan review</b><small>On by default for walls · 3 rounds</small></div></div>
+              <div class="step">Rounds<span class="stepper"><span>−</span><span class="v">3</span><span>+</span></span></div>
+              <div class="tgl" style="padding-top:8px;border-top:1px dashed var(--border)"><span class="sw"></span><div><b>Unattended</b><small>Off: the agent can stop to ask you about findings between rounds.</small></div></div>
+            </div>
+            <div class="sec"><div class="sh"><span>Automation</span></div><div class="gates"><span class="g">Plan · you</span><span class="g a">Build · auto</span><span class="g a">Merge · auto</span></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <div class="ann"><span class="num">a</span><p><b>Global, with a project override.</b> The project tab inherits the global value until you change it. The resource sizes header's <i>Edit in project</i> link opens this page too.</p></div>
+      <div class="ann"><span class="num">b</span><p><b>Applies to new cards only.</b> Existing cards keep what they have. A card that's switched off stays off, and its sidebar says “Off for this card”.</p></div>
+      <div class="ann"><span class="num">c</span><p><b>Run unattended</b> sits under the toggle and only shows when auto-review is on. New cards then start with Unattended on in their Plan review section. Whether a reviewed plan signs itself off is still the card&#39;s auto sign-off gate.</p></div>
+    </div>
+  </div>
+
+</section>
+</x-dc>
+</body>
+</html>

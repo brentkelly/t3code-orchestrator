@@ -187,6 +187,14 @@ Reason lines:
   - The planner's reason sits in a dashed box.
 - **Threads list:** each row shows the abbreviation of the worker it ran on (`SRV`, `B02`), with the full name in the tooltip. The Measured table's step column does the same.
 
+### 6.1a New card dialog: pin at creation (5.6 to 5.8)
+- **No Worker field in the form.** Remove the “Worker · where this card runs” dropdown. Project and Base branch go back to two columns; the dialog is no taller than it was before remote workers.
+- **Footer pin button.** A pin icon sits in the footer beside the schedule clock, with no label. Tooltip: “Builds go to any ready worker. Pin to a worker…”. Not pinned is the default and shows nothing else.
+- **Menu.** Clicking opens the same menu as Pin builds to… (5.3), opening upward, with a header line “Pin builds to a worker. Planning always runs on This server.” Readiness is checked for the project picked in the dialog. Not-ready and offline workers are disabled with their reason. No Set up button here.
+- **Pinned.** The icon becomes a chip: pin icon, “Pinned to”, the full worker name in mono, and × to unpin. Clicking the chip reopens the menu.
+- **Project changed.** If the new project isn't ready on the pinned worker, the pin is dropped and the footer reads in amber “Pin removed · {worker} isn't ready for {project}” until the next change.
+- It sets the same pin as card detail. Pinning to a ready but full worker is allowed; the card waits there with the usual blue reason line.
+
 ### 6.2 Setup progress (main column)
 - A panel header: “Setup progress”, worker, start time, elapsed time, and **Cancel setup**.
 - Left: the stage list, e.g. Clone repo → Install toolchain → Seed nightly cache → Warm Gradle daemon → Readiness script.
@@ -273,6 +281,7 @@ Reason lines:
 | Rename worker dialog | Workers page |
 | 5-segment stepped progress bar | Card face, readiness, setup |
 | Summary pane Worker row and Pin builds to… menu | Card detail |
+| Footer pin button and Pinned to chip | New card dialog |
 | S / M / L / XL segmented control per dimension, with reserved value and too-big state | Card detail |
 | Setup progress panel (stages, log tail, error, Retry, Cancel, collapsed line) | Card detail |
 | Measured table with Partial, Not measured and so-far states, row-linked to Usage | Card detail |
