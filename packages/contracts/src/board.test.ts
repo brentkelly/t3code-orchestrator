@@ -2017,6 +2017,20 @@ describe("cards that need a human (boardCardAttention)", () => {
       expect(flag?.label).toBe("Needs permission");
     });
 
+    // T3o: the answer gate never touches a permission prompt; an unattended planning run parked on
+    // one reads violet, waiting on a human, never blue (T3O-115).
+    it("flags an Auto-plan card parked on a permission prompt violet", () => {
+      const flag = attention({
+        ...permission,
+        stepRunning: true,
+        autoPlanSetting: true,
+        autoPlanPending: true,
+        stage: BOARD_SEED_STAGE_IDS.planning,
+      });
+      expect(flag?.reason).toBe("permission");
+      expect(flag?.tone).toBe("attention");
+    });
+
     it("derives from the thread shells the card already rides", () => {
       // The real shape: the provider's turn is still RUNNING, blocked on the
       // prompt — which is why the card used to read as working.
@@ -3178,6 +3192,7 @@ describe("automation (T3O-38)", () => {
     it("returns one gate per card, in pipeline order", () => {
       expect(BOARD_GATES).toEqual([
         "plan",
+        "answer",
         "review-start",
         "sign-off",
         "split-sign-off",

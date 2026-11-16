@@ -118,7 +118,7 @@ function resolvePhaseRuntimeMode(input: {
     input.phase === "review"
       ? (input.roundOverride?.runtimeMode ?? input.cardOverride?.runtimeMode)
       : undefined;
-  return effectiveBoardRuntimeMode(override ?? input.configuredRuntimeMode, "build");
+  return effectiveBoardRuntimeMode(override ?? input.configuredRuntimeMode);
 }
 
 /**

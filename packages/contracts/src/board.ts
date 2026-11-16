@@ -12945,14 +12945,12 @@ export type BoardSettingsPatch = typeof BoardSettingsPatch.Type;
  * through, keeping the user's rounds and per-phase edits.
  */
 /**
- * Honours the user's pick, else `auto` in build mode and `approval-required` in plan mode,
- * which runs in the shared project root. The board never forces `full-access`.
+ * Honours the user's pick, else `auto`, planning included (T3O-115): an unattended planning run
+ * must not wait on approvals, and its envelope forbids changing the shared project root. The
+ * board never forces `full-access`.
  */
-export function effectiveBoardRuntimeMode(
-  runtimeMode: RuntimeMode | undefined,
-  mode: BoardStageMode,
-): RuntimeMode {
-  return runtimeMode ?? (mode === "build" ? "auto" : "approval-required");
+export function effectiveBoardRuntimeMode(runtimeMode: RuntimeMode | undefined): RuntimeMode {
+  return runtimeMode ?? "auto";
 }
 
 /** Whether board-wide auto-merge is on: the merge-role stage's own
@@ -13151,7 +13149,7 @@ export function resolveBoardStageExecution(
       ...base,
       mode: "build",
       humanInLoop: false,
-      runtimeMode: effectiveBoardRuntimeMode(base.runtimeMode, "build"),
+      runtimeMode: effectiveBoardRuntimeMode(base.runtimeMode),
     };
   }
   if (stageId === BOARD_SEED_STAGE_IDS.merge) {
@@ -13171,7 +13169,7 @@ export function resolveBoardStageExecution(
         : base.prompt,
       autoExecute: false,
       mode: "build",
-      runtimeMode: effectiveBoardRuntimeMode(base.runtimeMode, "build"),
+      runtimeMode: effectiveBoardRuntimeMode(base.runtimeMode),
     };
   }
   if (stageId === BOARD_SEED_STAGE_IDS.building) {
@@ -13193,7 +13191,7 @@ export function resolveBoardStageExecution(
       ...base,
       mode: "build",
       humanInLoopWithPlan: false,
-      runtimeMode: effectiveBoardRuntimeMode(base.runtimeMode, "build"),
+      runtimeMode: effectiveBoardRuntimeMode(base.runtimeMode),
     };
   }
   if (stageId === BOARD_SEED_STAGE_IDS.ci) {
@@ -13213,7 +13211,7 @@ export function resolveBoardStageExecution(
       humanInLoopWithPlan: false,
       humanInLoopWithoutPlan: false,
       autoAdvance: true,
-      runtimeMode: effectiveBoardRuntimeMode(base.runtimeMode, "build"),
+      runtimeMode: effectiveBoardRuntimeMode(base.runtimeMode),
     };
   }
   // Planning always runs read-only and human-in-the-loop, with the retired pause-on-plan
@@ -13232,7 +13230,7 @@ export function resolveBoardStageExecution(
       mode: "plan",
       humanInLoop: true,
       humanInLoopWithPlan: false,
-      runtimeMode: effectiveBoardRuntimeMode(base.runtimeMode, "plan"),
+      runtimeMode: effectiveBoardRuntimeMode(base.runtimeMode),
     };
   }
   const resolved = applyBoardStageExecutionPatch(
@@ -13241,7 +13239,7 @@ export function resolveBoardStageExecution(
   );
   return {
     ...resolved,
-    runtimeMode: effectiveBoardRuntimeMode(resolved.runtimeMode, resolved.mode),
+    runtimeMode: effectiveBoardRuntimeMode(resolved.runtimeMode),
   };
 }
 

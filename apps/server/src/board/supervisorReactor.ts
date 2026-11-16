@@ -8710,7 +8710,7 @@ const make = Effect.gen(function* () {
       prompt: submit.prompt,
       providerInstanceId: model.instanceId,
       model: model.model,
-      runtimeMode: effectiveBoardRuntimeMode(submit.runtimeMode, "build"),
+      runtimeMode: effectiveBoardRuntimeMode(submit.runtimeMode),
       ...(model.options === undefined ? {} : { modelOptions: model.options }),
       mode: "build",
       // Unattended whatever the card's human-in-the-loop stance: there is

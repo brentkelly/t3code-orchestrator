@@ -314,7 +314,8 @@ strict per-worker order, which let one large card stall every smaller card behin
 **Decision:** a card with children is a **group**; a card without is a **leaf**, and only leaves run
 the pipeline. Groups nest to any depth. A group's settings live on the card (`BoardCard.group`):
 its merge **target** (`own` integration branch, or `inherit` from its own parent, else trunk),
-**auto-build**, **auto-merge**, **auto-plan**, whether the human has **started** it, the column it
+**auto-build**, **auto-merge**, **auto-plan**, whether it has **started** (which places a group at
+build; since T3O-115 it no longer gates Auto-build), the column it
 was **placed** in, the stage it had before it became a group, whether it is an empty **heading**,
 and whether its own branch is **integrated**.
 
@@ -469,8 +470,9 @@ a human act unless listed below.
 - Building → Code review when the build step reports success.
 - A group's stage follows its children (D12): it is derived, so a group reaches Building, its
   integration review or Done as its children do.
-- Once a human has started a group with auto-build on, each ready child whose dependencies are met
-  starts itself (D12). Turning auto-build off stops new starts and never interrupts a running child.
+- In a group with auto-build on, each ready child whose dependencies are met starts itself, whether
+  or not the group has started (D12, T3O-115). Turning auto-build off stops new starts and never
+  interrupts a running child.
 - Done → archived after the configured window, when auto-archive is enabled (D15).
 - **Automation toggles** (T3O-38): each card has Auto-plan, Auto-build and Auto-merge, each on,
   off or inherited from its parent group. Turning one on is the human act that authorises the
@@ -481,10 +483,10 @@ a human act unless listed below.
     the card goes on through Ready to Building once its dependencies are met (every gate still
     applies). A split is approved with the card's toggles, and its group starts.
   - Auto-build alone: an approved card at Ready starts itself once its dependencies are met.
-  - A card's **own** Auto-build is its authorisation by itself; an **inherited** one acts only once
-    a human has started the group (D12, t3o-28 D1 — begun is `group.started`, set by a human or
-    cascade move into build, never by a child's own Auto-build). Approving a split still starts
-    nothing on its own.
+  - A card's **own** Auto-build and an **inherited** one act alike: neither waits for the group to
+    start (T3O-115; `group.started` now only places the group). Every gate is a predicate over
+    state (`boardGateDue`), asked by the event that reaches it and again by the 30s tick and the
+    boot pass, so a lost event costs at most one tick.
   - Board-wide auto-merge turns every card's Auto-merge on, group children included.
   - Dragging a card back out of Building turns its Auto-build off, back into Planning its Auto-plan
     off (D7), so a card pulled back never relaunches under the person parking it. A human Stop or
