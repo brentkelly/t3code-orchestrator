@@ -335,8 +335,8 @@ owns a copy of its plan and lands in Ready, so "planned" is a property of the ca
 child gets the body as its brief only and lands in Backlog — and makes the card a group with the
 chosen settings. Omitted advice falls back to: every child planned → `own` with auto-build;
 otherwise inherit, auto-build off; under an ancestor with its own branch → inherit. Approval starts
-nothing: the human starting the group
-(moving it to build) does, and from then on every ready child whose dependencies are met starts
+nothing unless the group has Auto sign-off and Auto-build both on (the human's go-ahead, set ahead
+of time); otherwise the human starting the group (moving it to build) does, and from then on every ready child whose dependencies are met starts
 itself while auto-build is on. Children of an `own` group branch off its integration branch, their
 pull requests target it, and the group's own review is the final integration review against its
 target. **Grouping alone never touches git**: an inherit group has no branch at all.
@@ -479,12 +479,13 @@ a human act unless listed below.
     decision. Alone, its plan still waits at the approval gate (Planning → Ready stays human).
   - Auto-plan + Auto-build: the plan is approved when it arrives, unclear decisions included, and
     the card goes on through Ready to Building once its dependencies are met (every gate still
-    applies). A split is approved with the card's toggles, and its group starts.
+    applies). A split still waits for the human's approval (T3O-103); once
+    approved with Auto sign-off on, its group starts.
   - Auto-build alone: an approved card at Ready starts itself once its dependencies are met.
   - A card's **own** Auto-build is its authorisation by itself; an **inherited** one acts only once
     a human has started the group (D12, t3o-28 D1 — begun is `group.started`, set by a human or
-    cascade move into build, never by a child's own Auto-build). Approving a split still starts
-    nothing on its own.
+    cascade move into build, never by a child's own Auto-build). Approving a split starts the
+    group only when its Auto sign-off and Auto-build are both on.
   - Board-wide auto-merge turns every card's Auto-merge on, group children included.
   - Dragging a card back out of Building turns its Auto-build off, back into Planning its Auto-plan
     off (D7), so a card pulled back never relaunches under the person parking it. A human Stop or

@@ -11046,7 +11046,7 @@ const make = Effect.gen(function* () {
   ) {
     yield* ensureIntegrationBranch(event.payload.card);
     // Approving a split on a parent already at build emits no move, so the cascade's usual trigger
-    // never comes. The helper no-ops unless the parent is at build.
+    // never comes. The helper no-ops unless the group has started.
     yield* cascadeUnblockedChildren(event.payload.card.id);
   });
 
