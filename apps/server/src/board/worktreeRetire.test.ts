@@ -402,18 +402,22 @@ describe("retireWorktree", () => {
       assert.include(events, "remove:plain");
       const childPid = Number(read("child.pid")?.trim());
       assert.isTrue(Number.isInteger(childPid) && childPid > 0);
-      // The group was SIGKILLed; the signal is delivered before kill() returns,
-      // and reaping can lag, so a zombie (state Z) also counts as dead.
+      // kill() returns once SIGKILL is queued, not once the child is gone: a child
+      // still running with SIGKILL pending, or a zombie awaiting reaping, counts as killed.
       const alive = (() => {
         try {
           process.kill(childPid, 0);
         } catch {
           return false;
         }
-        const stat = NodeFS.existsSync(`/proc/${childPid}/stat`)
-          ? NodeFS.readFileSync(`/proc/${childPid}/stat`, "utf8")
+        const status = NodeFS.existsSync(`/proc/${childPid}/status`)
+          ? NodeFS.readFileSync(`/proc/${childPid}/status`, "utf8")
           : "";
-        return !/\) Z /.test(stat);
+        if (/^State:\s+[ZX]/m.test(status)) return false;
+        const sigkillPending = [...status.matchAll(/^(?:SigPnd|ShdPnd):\s+([0-9a-f]+)$/gm)].some(
+          (match) => (BigInt(`0x${match[1]}`) & 0x100n) !== 0n,
+        );
+        return !sigkillPending;
       })();
       if ((yield* HostProcessPlatform) === "linux") {
         assert.isFalse(alive, "the hook's child was not killed");
