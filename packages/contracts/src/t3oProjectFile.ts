@@ -30,6 +30,7 @@ import {
   type BoardState,
 } from "./board.ts";
 import { normalizeBoardReadinessPath, type BoardProjectResources } from "./boardCapacity.ts";
+import { BoardScheduleWhen, type T3oFileSchedule } from "./boardSchedules.ts";
 
 // T3o: a `t3o.json` is only an import/export format for a
 // project's delta, never read at run time.
@@ -41,6 +42,9 @@ export interface ResolvedT3oProjectFile {
   readonly delta: BoardProjectImportDelta;
   /** Stages the import creates: default off, on for this project. */
   readonly createStages: ReadonlyArray<BoardStageDefinition>;
+  /** T3o: the file's schedules (T3O-117). Null when the key is absent, which
+      leaves schedules alone; `[]` deletes every schedule the file set up. */
+  readonly schedules: ReadonlyArray<T3oFileSchedule> | null;
 }
 
 const STAGE_FILE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
@@ -296,6 +300,7 @@ export function resolveT3oProjectFile(input: {
   // Stored only as false; absent is Yes.
   let stopOnFailure = true;
   let resources: BoardProjectResources | undefined;
+  let schedules: ReadonlyArray<T3oFileSchedule> | null = null;
   const result = (createStages: ReadonlyArray<BoardStageDefinition> = []) => ({
     delta: {
       stageSwitches,
@@ -305,6 +310,7 @@ export function resolveT3oProjectFile(input: {
       ...(resources === undefined ? {} : { resources }),
     },
     createStages,
+    schedules,
   });
   if (input.raw === null || input.raw === undefined) return result();
   if (!isRecord(input.raw)) {
@@ -312,12 +318,15 @@ export function resolveT3oProjectFile(input: {
     return result();
   }
   for (const key of Object.keys(input.raw)) {
-    if (!["$schema", "version", "stages", "ci", "resources"].includes(key)) {
+    if (!["$schema", "version", "stages", "ci", "resources", "schedules"].includes(key)) {
       warnings.push(`${key}: unknown key; ignored.`);
     }
   }
   if (input.raw.resources !== undefined) {
     resources = decodeResources(input.raw.resources, warnings);
+  }
+  if (input.raw.schedules !== undefined) {
+    schedules = decodeSchedules(input.raw.schedules, warnings);
   }
   const stagesBlock = input.raw.stages ?? {};
   if (!isRecord(stagesBlock)) {
@@ -573,6 +582,77 @@ function decodeResources(value: unknown, warnings: string[]): BoardProjectResour
   };
 }
 
+const decodeScheduleWhen = Schema.decodeUnknownOption(BoardScheduleWhen);
+const SCHEDULE_KEYS = new Set(["id", "title", "schedule", "enabled", "prompt", "freshSession"]);
+
+/** T3o: the file's `schedules` block (T3O-117). A bad entry or a repeated id is
+    dropped with a warning and the rest still apply. `freshSession` is accepted
+    and reserved: every run is already a new thread in a fresh worktree. */
+function decodeSchedules(value: unknown, warnings: string[]): ReadonlyArray<T3oFileSchedule> {
+  if (!Array.isArray(value)) {
+    warnings.push("schedules: expected a list of schedules; ignored.");
+    return [];
+  }
+  const out: T3oFileSchedule[] = [];
+  const ids = new Set<string>();
+  value.forEach((entry, index) => {
+    const at = `schedules[${index}]`;
+    if (!isRecord(entry)) {
+      warnings.push(`${at}: expected an object; ignored.`);
+      return;
+    }
+    for (const key of Object.keys(entry)) {
+      if (!SCHEDULE_KEYS.has(key)) warnings.push(`${at}.${key}: unknown key; ignored.`);
+    }
+    const { id } = entry;
+    if (typeof id !== "string" || !STAGE_FILE_ID_PATTERN.test(id)) {
+      warnings.push(`${at}.id: needs letters, digits, "-" or "_" (at most 64); schedule ignored.`);
+      return;
+    }
+    const named = `${at} ("${id}")`;
+    if (ids.has(id)) {
+      warnings.push(`${named}: the id is used twice; the later one is ignored.`);
+      return;
+    }
+    const title = typeof entry.title === "string" ? entry.title.trim() : "";
+    if (title.length === 0) {
+      warnings.push(`${named}.title: required; schedule ignored.`);
+      return;
+    }
+    const prompt = typeof entry.prompt === "string" ? entry.prompt.trim() : "";
+    if (prompt.length === 0) {
+      warnings.push(`${named}.prompt: required; schedule ignored.`);
+      return;
+    }
+    const rawWhen = entry.schedule;
+    const kind = isRecord(rawWhen) ? rawWhen.type : undefined;
+    if (kind === "once" || kind === "webhook") {
+      warnings.push(
+        `${named}.schedule: ${kind} schedules can't be declared in ${T3O_PROJECT_FILE_NAME}; schedule ignored.`,
+      );
+      return;
+    }
+    const when = Option.getOrNull(decodeScheduleWhen(rawWhen));
+    if (when === null) {
+      warnings.push(
+        `${named}.schedule: expected { "type": "interval", "everyMs": 60000 or more } or { "type": "fixed_time", "timeOfDay": "HH:MM", "weekdays"?: [0-6] }; schedule ignored.`,
+      );
+      return;
+    }
+    let enabled = true;
+    if (entry.enabled !== undefined) {
+      if (typeof entry.enabled === "boolean") enabled = entry.enabled;
+      else warnings.push(`${named}.enabled: expected true or false; treated as true.`);
+    }
+    if (entry.freshSession !== undefined && typeof entry.freshSession !== "boolean") {
+      warnings.push(`${named}.freshSession: expected true or false; ignored.`);
+    }
+    ids.add(id);
+    out.push({ id, title, schedule: when, enabled, prompt });
+  });
+  return out;
+}
+
 /** Where a stage the file adds goes: after its `after` anchor, but never
     between CI and the merge stage (an anchor there is dropped with a
     warning, and the stage goes just before CI). */
@@ -625,6 +705,8 @@ export function buildT3oProjectFile(input: {
   readonly config: Pick<BoardProjectStageConfig, "stageSwitches" | "overrides" | "ci"> & {
     readonly resources?: BoardProjectResources | undefined;
   };
+  /** T3o: written when present, even empty (T3O-117). */
+  readonly schedules?: ReadonlyArray<T3oFileSchedule> | undefined;
 }): Record<string, unknown> {
   const ordered = boardStagesInOrder(input.board);
   const remove: string[] = [];
@@ -706,6 +788,15 @@ export function buildT3oProjectFile(input: {
       };
     }
     if (Object.keys(block).length > 0) file.resources = block;
+  }
+  if (input.schedules !== undefined) {
+    file.schedules = input.schedules.map((schedule) => ({
+      id: schedule.id,
+      title: schedule.title,
+      schedule: schedule.schedule,
+      enabled: schedule.enabled,
+      prompt: schedule.prompt,
+    }));
   }
   return file;
 }
