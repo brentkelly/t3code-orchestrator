@@ -1,8 +1,6 @@
-// T3o: the automation gates' state (T3O-115). `stage_entered_at` marks a card's current stay in its
-// stage, on the card and on the step row selected during it; `gate_block` records a gate attempt
-// that could not act. Backfill: a card's stay began at its latest move or creation (else its last
-// update); its step row shares the stay only when it was selected since, else a sentinel no card
-// matches, so a card dragged back into Planning is never signed off from its old step.
+// T3o: automation gate state (T3O-115). A card's stay began at its latest move or creation; its step
+// row shares the stay only when selected since, else a sentinel no card matches, so a card dragged
+// back into Planning is never signed off from its old step.
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 

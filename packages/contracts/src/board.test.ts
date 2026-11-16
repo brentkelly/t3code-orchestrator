@@ -3071,7 +3071,7 @@ describe("automation (T3O-38)", () => {
         nowMs: input.nowMs ?? Date.parse(NOW),
         ...(input.unreachable === undefined
           ? {}
-          : { unreachableWorkerIds: new Set(input.unreachable) }),
+          : { workerUnreachable: (id: string) => input.unreachable!.includes(id) }),
       })?.gate ?? null;
 
     it("plan: due in Planning with Auto-plan on and no step this stay", () => {

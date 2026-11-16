@@ -75,8 +75,8 @@ export interface BoardGateInput {
   readonly card: BoardCard;
   readonly settings: BoardSettings;
   readonly nowMs: number;
-  /** Workers the board cannot reach now; a card bound to one has no gate due. */
-  readonly unreachableWorkerIds?: ReadonlySet<string> | undefined;
+  /** Whether the board cannot reach a worker now; a card bound to one has no gate due. */
+  readonly workerUnreachable?: ((workerId: string) => boolean) | undefined;
   /** Prebuilt lookups for a whole-board pass; built on demand otherwise. */
   readonly index?: BoardGateIndex | undefined;
 }
@@ -128,7 +128,7 @@ export function boardGateDue(input: BoardGateInput): BoardGateDue {
   // A split parent's plans are frozen and it builds through its children.
   if ((index.liveChildCount.get(String(card.id)) ?? 0) > 0) return null;
   const bound = card.placedWorkerId ?? card.pinnedWorkerId;
-  if (bound !== null && input.unreachableWorkerIds?.has(String(bound)) === true) return null;
+  if (bound !== null && input.workerUnreachable?.(String(bound)) === true) return null;
   const stage = boardStageById(board, card.stage);
   if (stage === null) return null;
   const role = effectiveBoardStageRole(stage);

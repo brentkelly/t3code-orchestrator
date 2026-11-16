@@ -365,8 +365,13 @@ it.effect(
           assert.strictEqual(boardCardStepState(yield* board, id), null);
 
           yield* setAutomation(h, id, { autoPlan: true }, 1);
+          // The plan gate may start it directly (T3O-115); either way a fresh run is asked for.
           assert.ok(
-            (yield* h.commands).some((command) => command.type === "board.card.start-stage-thread"),
+            (yield* h.commands).some(
+              (command) =>
+                command.type === "board.card.start-stage-thread" ||
+                command.type === "board.card.select-step",
+            ),
           );
 
           // The harness does not loop the reactor's own events back into it,
@@ -424,7 +429,7 @@ const splitCard = (id: string, autoBuild: boolean) =>
 
 const splitPlans = (id: string) => [plan(id, "a", 0), plan(id, "b", 1)];
 
-it.effect("a split is never approved automatically, even with every gate on", () => {
+it.effect("Auto sign-off approves a split with the parent's own toggles (T3O-115)", () => {
   const card = { ...splitCard("split", true), autoSignOffSetting: true };
   return withGovernor(
     {
@@ -437,18 +442,23 @@ it.effect("a split is never approved automatically, even with every gate on", ()
         yield* pumpDomain(cardMoved(card, "sprint", "planning", 1));
         yield* pumpDomain(stepCompleted(id, "succeeded", 2, PLANNING));
 
+        const sent = yield* commands;
+        const approval = sent.find((command) => command.type === "board.plans.approve");
+        // The card's own Auto-build wins over the planner's recommendation; the merge target is
+        // the planner's.
+        assert.deepInclude(approval, {
+          autoBuild: true,
+          mergeTarget: "own",
+          autoPlan: true,
+          autoSignOff: true,
+        });
+        assert.ok(autoPlanNotes(sent).includes("Split auto-approved (Auto sign-off)."));
         const after = yield* board;
         const parent = cardOf(after.cards, "split");
-        assert.strictEqual(after.cards.filter((c) => c.parentCardId === id).length, 0);
-        assert.strictEqual(parent?.group, null);
-        assert.strictEqual(parent?.stage, BOARD_SEED_STAGE_IDS.planning);
-        const sent = yield* commands;
-        assert.isFalse(sent.some((command) => command.type === "board.plans.approve"));
-        assert.ok(
-          autoPlanNotes(sent).includes(
-            "Auto-plan proposed a split. Splits always need your approval.",
-          ),
-        );
+        assert.strictEqual(after.cards.filter((c) => c.parentCardId === id).length, 2);
+        assert.notStrictEqual(parent?.group, null);
+        // Its planning is finished: the group waits in Ready, not Planning.
+        assert.strictEqual(parent?.stage, BOARD_SEED_STAGE_IDS.ready);
       }),
   );
 });
@@ -1045,7 +1055,7 @@ const answersOf = (commands: ReadonlyArray<HarnessCommand>, text: string) =>
 it.effect(
   "Auto-plan turned on after planning was marked finished waits for the turn, then approves and builds",
   () => {
-    const card = planningCard("late", { autoSignOffSetting: true, autoBuildSetting: true });
+    const card = planningCard("late", { autoBuildSetting: true });
     return withGovernor(
       {
         board: { cards: [card], plans: [plan("late", "one", 0)], nextCardNumberByProject: {} },
@@ -1056,7 +1066,7 @@ it.effect(
           const id = BoardCardId.make("late");
           const threadId = yield* finishedPlanning(h, id, card, (thread) => aliveThread(thread));
 
-          yield* setAutomation(h, id, { autoPlan: true }, 3);
+          yield* setAutomation(h, id, { autoPlan: true, autoSignOff: true }, 3);
           const reopened = yield* h.board;
           const state = boardCardStepState(reopened, id)!;
           assert.strictEqual(state.status, "running");
@@ -1097,7 +1107,7 @@ it.effect(
 );
 
 it.effect("a reopened prompt whose send fails stays pending, so recovery sends it", () => {
-  const card = planningCard("flaky", { autoSignOffSetting: true, autoBuildSetting: true });
+  const card = planningCard("flaky", { autoBuildSetting: true });
   let failures = 1;
   return withGovernor(
     {
@@ -1122,7 +1132,7 @@ it.effect("a reopened prompt whose send fails stays pending, so recovery sends i
       Effect.gen(function* () {
         const id = BoardCardId.make("flaky");
         const threadId = yield* finishedPlanning(h, id, card, (thread) => aliveThread(thread));
-        yield* setAutomation(h, id, { autoPlan: true }, 3);
+        yield* setAutomation(h, id, { autoPlan: true, autoSignOff: true }, 3);
         yield* Ref.update(
           h.shells,
           (shells) => new Map([...shells, [threadId, fakeThreadState(threadId)]]),
@@ -1138,7 +1148,7 @@ it.effect("a reopened prompt whose send fails stays pending, so recovery sends i
 });
 
 it.effect("a reopened step whose turn hits a usage limit parks with its prompt pending", () => {
-  const card = planningCard("limited", { autoSignOffSetting: true, autoBuildSetting: true });
+  const card = planningCard("limited", { autoBuildSetting: true });
   return withGovernor(
     {
       board: { cards: [card], plans: [plan("limited", "one", 0)], nextCardNumberByProject: {} },
@@ -1148,7 +1158,7 @@ it.effect("a reopened step whose turn hits a usage limit parks with its prompt p
       Effect.gen(function* () {
         const id = BoardCardId.make("limited");
         const threadId = yield* finishedPlanning(h, id, card, (thread) => aliveThread(thread));
-        yield* setAutomation(h, id, { autoPlan: true }, 3);
+        yield* setAutomation(h, id, { autoPlan: true, autoSignOff: true }, 3);
         yield* Ref.update(
           h.shells,
           (shells) =>
@@ -1177,7 +1187,7 @@ it.effect("a reopened step whose turn hits a usage limit parks with its prompt p
 });
 
 it.effect("a refused reopen says so on the card's rail", () => {
-  const card = planningCard("refused", { autoSignOffSetting: true, autoBuildSetting: true });
+  const card = planningCard("refused", { autoBuildSetting: true });
   let beforeReopen: Effect.Effect<void> = Effect.void;
   return withGovernor(
     {
@@ -1209,7 +1219,7 @@ it.effect("a refused reopen says so on the card's rail", () => {
             ),
           },
         }));
-        yield* setAutomation(h, id, { autoPlan: true }, 3);
+        yield* setAutomation(h, id, { autoPlan: true, autoSignOff: true }, 3);
         const notes = autoPlanNotes(yield* h.commands);
         assert.isTrue(
           notes.some((note) =>
@@ -1222,7 +1232,7 @@ it.effect("a refused reopen says so on the card's rail", () => {
 });
 
 it.effect("a re-completion in the same turn is approved with nothing sent", () => {
-  const card = planningCard("quick", { autoSignOffSetting: true, autoBuildSetting: true });
+  const card = planningCard("quick", { autoBuildSetting: true });
   return withGovernor(
     {
       board: { cards: [card], plans: [plan("quick", "one", 0)], nextCardNumberByProject: {} },
@@ -1232,7 +1242,7 @@ it.effect("a re-completion in the same turn is approved with nothing sent", () =
       Effect.gen(function* () {
         const id = BoardCardId.make("quick");
         yield* finishedPlanning(h, id, card, (thread) => aliveThread(thread));
-        yield* setAutomation(h, id, { autoPlan: true }, 3);
+        yield* setAutomation(h, id, { autoPlan: true, autoSignOff: true }, 3);
         yield* h.pumpDomain(completedAgain(id, 4));
         assert.strictEqual(cardStage(yield* h.board, id), BOARD_SEED_STAGE_IDS.building);
         assert.lengthOf(sendsOf(yield* h.commands, reopenedText(true)), 0);
@@ -1261,7 +1271,7 @@ it.effect("with Auto sign-off off the re-completed plan waits at the gate", () =
 });
 
 it.effect("a pending question is answered with the prompt at once, and not sent again", () => {
-  const card = planningCard("asking", { autoSignOffSetting: true, autoBuildSetting: true });
+  const card = planningCard("asking", { autoBuildSetting: true });
   return withGovernor(
     {
       board: { cards: [card], plans: [plan("asking", "one", 0)], nextCardNumberByProject: {} },
@@ -1273,7 +1283,7 @@ it.effect("a pending question is answered with the prompt at once, and not sent 
         const threadId = yield* finishedPlanning(h, id, card, (thread) =>
           aliveThread(thread, { awaitingUserInput: true }),
         );
-        yield* setAutomation(h, id, { autoPlan: true }, 3);
+        yield* setAutomation(h, id, { autoPlan: true, autoSignOff: true }, 3);
         assert.lengthOf(answersOf(yield* h.commands, reopenedText(true)), 1);
         const answered = boardCardStepState(yield* h.board, id)!;
         assert.isString(answered.reopenedPromptAt);
@@ -1289,7 +1299,7 @@ it.effect("a pending question is answered with the prompt at once, and not sent 
 });
 
 it.effect("a question before the reopened prompt is answered; a second one parks", () => {
-  const card = planningCard("later", { autoSignOffSetting: true, autoBuildSetting: true });
+  const card = planningCard("later", { autoBuildSetting: true });
   return withGovernor(
     {
       board: { cards: [card], plans: [plan("later", "one", 0)], nextCardNumberByProject: {} },
@@ -1299,7 +1309,7 @@ it.effect("a question before the reopened prompt is answered; a second one parks
       Effect.gen(function* () {
         const id = BoardCardId.make("later");
         const threadId = yield* finishedPlanning(h, id, card, (thread) => aliveThread(thread));
-        yield* setAutomation(h, id, { autoPlan: true }, 3);
+        yield* setAutomation(h, id, { autoPlan: true, autoSignOff: true }, 3);
         yield* Ref.update(
           h.shells,
           (shells) =>
@@ -1364,7 +1374,7 @@ it.effect("a reopen during a background wait gets its prompt after the check-ins
 });
 
 it.effect("a finished thread keeps the setting, gets no prompt, and the plan waits", () => {
-  const card = planningCard("done", { autoSignOffSetting: true, autoBuildSetting: true });
+  const card = planningCard("done", { autoBuildSetting: true });
   return withGovernor(
     {
       board: { cards: [card], plans: [plan("done", "one", 0)], nextCardNumberByProject: {} },
@@ -1375,7 +1385,7 @@ it.effect("a finished thread keeps the setting, gets no prompt, and the plan wai
         const id = BoardCardId.make("done");
         yield* finishedPlanning(h, id, card, (thread) => fakeThreadState(thread));
         const before = (yield* h.commands).length;
-        yield* setAutomation(h, id, { autoPlan: true }, 3);
+        yield* setAutomation(h, id, { autoPlan: true, autoSignOff: true }, 3);
         const after = yield* h.board;
         assert.strictEqual(boardCardStepState(after, id)?.status, "succeeded");
         assert.strictEqual(cardStage(after, id), BOARD_SEED_STAGE_IDS.planning);
@@ -1398,7 +1408,7 @@ it.effect("a finished thread keeps the setting, gets no prompt, and the plan wai
 });
 
 it.effect("an unreachable planning thread is left alone, not read as finished", () => {
-  const card = planningCard("away", { autoSignOffSetting: true, autoBuildSetting: true });
+  const card = planningCard("away", { autoBuildSetting: true });
   let unreachable = false;
   return withGovernor(
     {
@@ -1416,7 +1426,7 @@ it.effect("an unreachable planning thread is left alone, not read as finished", 
         yield* finishedPlanning(h, id, card, (thread) => aliveThread(thread));
         unreachable = true;
         const before = (yield* h.commands).length;
-        yield* setAutomation(h, id, { autoPlan: true }, 3);
+        yield* setAutomation(h, id, { autoPlan: true, autoSignOff: true }, 3);
         const after = yield* h.board;
         assert.strictEqual(boardCardStepState(after, id)?.status, "succeeded");
         assert.isTrue(cardOf(after.cards, "away")?.autoPlanSetting);
@@ -1465,7 +1475,7 @@ const failingAnswer = (local: LocalThreadGatewayShape): ThreadGatewayShape => ({
 });
 
 it.effect("Auto-plan turned on during a late plan review waits for the turn, no interrupt", () => {
-  const card = planningCard("review", { autoSignOffSetting: true, autoBuildSetting: true });
+  const card = planningCard("review", { autoBuildSetting: true });
   return withGovernor(
     {
       board: { cards: [card], plans: [plan("review", "one", 0)], nextCardNumberByProject: {} },
@@ -1478,7 +1488,7 @@ it.effect("Auto-plan turned on during a late plan review waits for the turn, no 
         yield* h.pumpDomain(lateReviewStarted(boardCardStepState(yield* h.board, id)!, 3));
         assert.strictEqual(boardCardStepState(yield* h.board, id)?.status, "running");
 
-        yield* setAutomation(h, id, { autoPlan: true }, 4);
+        yield* setAutomation(h, id, { autoPlan: true, autoSignOff: true }, 4);
         const commands = yield* h.commands;
         assert.isFalse(commands.some((command) => command.type === "thread.interrupt"));
         assert.lengthOf(sendsOf(commands, boardAutoPlanInstruction(true)), 0);
@@ -1497,7 +1507,7 @@ it.effect("Auto-plan turned on during a late plan review waits for the turn, no 
 });
 
 it.effect("a reopen whose answer fails ends Auto-plan and settles the finish back", () => {
-  const card = planningCard("lost", { autoSignOffSetting: true, autoBuildSetting: true });
+  const card = planningCard("lost", { autoBuildSetting: true });
   return withGovernor(
     {
       board: { cards: [card], plans: [plan("lost", "one", 0)], nextCardNumberByProject: {} },
@@ -1510,7 +1520,7 @@ it.effect("a reopen whose answer fails ends Auto-plan and settles the finish bac
         yield* finishedPlanning(h, id, card, (thread) =>
           aliveThread(thread, { awaitingUserInput: true }),
         );
-        yield* setAutomation(h, id, { autoPlan: true }, 3);
+        yield* setAutomation(h, id, { autoPlan: true, autoSignOff: true }, 3);
         const after = yield* h.board;
         assert.strictEqual(boardCardStepState(after, id)?.status, "succeeded");
         assert.isNotNull(cardOf(after.cards, "lost")?.autoPlan?.endedAt ?? null);
@@ -1520,7 +1530,7 @@ it.effect("a reopen whose answer fails ends Auto-plan and settles the finish bac
 });
 
 it.effect("a re-armed reopen whose answer fails keeps the step running with a human", () => {
-  const card = planningCard("rearm", { autoSignOffSetting: true, autoBuildSetting: true });
+  const card = planningCard("rearm", { autoBuildSetting: true });
   let failAnswers = false;
   return withGovernor(
     {
@@ -1539,7 +1549,7 @@ it.effect("a re-armed reopen whose answer fails keeps the step running with a hu
       Effect.gen(function* () {
         const id = BoardCardId.make("rearm");
         const threadId = yield* finishedPlanning(h, id, card, (thread) => aliveThread(thread));
-        yield* setAutomation(h, id, { autoPlan: true }, 3);
+        yield* setAutomation(h, id, { autoPlan: true, autoSignOff: true }, 3);
         yield* setAutomation(h, id, { autoPlan: false }, 4);
         yield* Ref.update(
           h.shells,
@@ -1558,7 +1568,7 @@ it.effect("a re-armed reopen whose answer fails keeps the step running with a hu
 });
 
 it.effect("the timeout sweep holds the reopened prompt while the turn is live", () => {
-  const card = planningCard("sweep", { autoSignOffSetting: true, autoBuildSetting: true });
+  const card = planningCard("sweep", { autoBuildSetting: true });
   return withGovernor(
     {
       board: { cards: [card], plans: [plan("sweep", "one", 0)], nextCardNumberByProject: {} },
@@ -1568,7 +1578,7 @@ it.effect("the timeout sweep holds the reopened prompt while the turn is live", 
       Effect.gen(function* () {
         const id = BoardCardId.make("sweep");
         yield* finishedPlanning(h, id, card, (thread) => aliveThread(thread));
-        yield* setAutomation(h, id, { autoPlan: true }, 3);
+        yield* setAutomation(h, id, { autoPlan: true, autoSignOff: true }, 3);
         yield* TestClock.adjust(Duration.hours(6));
         yield* h.reactor.sweep;
         yield* h.reactor.drain;
@@ -1608,7 +1618,7 @@ it.effect("turning Auto-plan off while reopened sends the reopened off text", ()
 it.effect(
   "turning Auto-plan on again while still reopened waits for the turn, no interrupt",
   () => {
-    const card = planningCard("again", { autoSignOffSetting: true, autoBuildSetting: true });
+    const card = planningCard("again", { autoBuildSetting: true });
     return withGovernor(
       {
         board: { cards: [card], plans: [plan("again", "one", 0)], nextCardNumberByProject: {} },
@@ -1618,7 +1628,7 @@ it.effect(
         Effect.gen(function* () {
           const id = BoardCardId.make("again");
           const threadId = yield* finishedPlanning(h, id, card, (thread) => aliveThread(thread));
-          yield* setAutomation(h, id, { autoPlan: true }, 3);
+          yield* setAutomation(h, id, { autoPlan: true, autoSignOff: true }, 3);
           yield* setAutomation(h, id, { autoPlan: false }, 4);
           yield* setAutomation(h, id, { autoPlan: true }, 5);
           const commands = yield* h.commands;
@@ -1679,7 +1689,7 @@ it.effect("a group turning Auto-plan on never reopens a child's finished plannin
 
 it.effect("boot reconcile hands a reopened step its prompt instead of settling it", () =>
   Effect.gen(function* () {
-    const card = planningCard("boot", { autoSignOffSetting: true, autoBuildSetting: true });
+    const card = planningCard("boot", { autoBuildSetting: true });
     let seeded: { board: BoardState; threadId: string } | undefined;
     yield* withGovernor(
       {
@@ -1690,7 +1700,7 @@ it.effect("boot reconcile hands a reopened step its prompt instead of settling i
         Effect.gen(function* () {
           const id = BoardCardId.make("boot");
           const threadId = yield* finishedPlanning(h, id, card, (thread) => aliveThread(thread));
-          yield* setAutomation(h, id, { autoPlan: true }, 3);
+          yield* setAutomation(h, id, { autoPlan: true, autoSignOff: true }, 3);
           seeded = { board: yield* h.board, threadId };
         }),
     );

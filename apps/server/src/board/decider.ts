@@ -2421,7 +2421,11 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
               doneStageId,
             })
           : card.orderKey);
-      const disarmed = backwardMoveDisarms(board, card, command.toStage);
+      // T3o: only a person's backward move disarms; an agent's or the board's never does (T3O-115).
+      const disarmed =
+        command.cause === "human"
+          ? backwardMoveDisarms(board, card, command.toStage)
+          : { settings: {}, changed: null };
       const nextCard: BoardCard = {
         ...card,
         stage: command.toStage,
@@ -4839,6 +4843,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       // A child whose plan is only a brief lands in the first stage to be
       // planned on its own; a planned one lands on the floor.
       const backlog = boardProjectFirstStageId(board, card.projectId);
+      const planStageId = boardStageWithRole(board, "plan")?.stageId;
       const recommendation = boardSplitRecommendationOf(board, card);
       const cardAutomation = resolveBoardCardAutomationIn({
         board,
@@ -4901,7 +4906,13 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         const childId = childIdByPlan.get(plan.planId)!;
         childCardIds.push(childId);
         const planned = isBoardPlanPlanned(plan);
-        const stage = planned ? floor.stageId : backlog;
+        // T3o: an unplanned child is planned unattended straight away when the group's Auto-plan
+        // is on, which the child inherits (T3O-115). The tick never sweeps Backlog.
+        const stage = planned
+          ? floor.stageId
+          : settings.autoPlan && planStageId !== undefined
+            ? planStageId
+            : backlog;
         const orderKey = nextOrderKey(stage);
         const cardNumber = nextNumber;
         nextNumber += 1;
@@ -4950,8 +4961,8 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           },
         });
       }
-      // The parent becomes a group with the settings confirmed at the split gate, and
-      // only its timestamp otherwise changes: no stage move, `blocked` untouched. Its
+      // The parent becomes a group with the settings confirmed at the split gate; the group
+      // derivation then moves it to `placed`, and `blocked` is untouched. Its
       // Auto-plan/Auto-build move into group settings; its own Auto-merge stays.
       const parentAfterApproval: BoardCard = {
         ...card,
@@ -4959,6 +4970,8 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         group: defaultBoardCardGroup(board, card, {
           ...settings,
           started: card.stage === buildStage.stageId,
+          // T3o: its planning is finished, so the group waits in Ready, not Planning (T3O-115).
+          ...(card.stage === planStageId ? { placed: floor.stageId } : {}),
         }),
         // Its children copied its priority above; a group has none.
         priority: "normal",
@@ -7178,7 +7191,10 @@ const decideOneBoardCommand = Effect.fn("decideOneBoardCommand")(function* (inpu
  */
 function withStageEntryStamps(decided: BoardDecision, board: BoardState): BoardDecision {
   const events = boardDecidedEvents(decided);
-  const known = new Map<string, Pick<BoardCard, "stage" | "stageEnteredAt">>();
+  const known = new Map<
+    string,
+    { readonly stage: BoardCard["stage"]; readonly stageEnteredAt: string | undefined }
+  >();
   const priorOf = (cardId: string) =>
     known.get(cardId) ?? board.cards.find((candidate) => String(candidate.id) === cardId);
   let changed = false;
