@@ -2071,6 +2071,18 @@ export function boardCardCiSteps(
   }));
 }
 
+/**
+ * T3o: an automation gate that was due but could not act on its last attempt (T3O-115): a
+ * refused move or a fault. Derived blocks (unmet dependencies, no capacity) are not recorded
+ * here; they already show. Written only when `gate` + `reason` change, cleared by the move.
+ */
+export const BoardCardGateBlock = Schema.Struct({
+  gate: TrimmedNonEmptyString,
+  reason: Schema.Literals(["move-refused", "fault"]),
+  detail: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type BoardCardGateBlock = typeof BoardCardGateBlock.Type;
+
 export const BoardCard = Schema.Struct({
   id: BoardCardId,
   /** Generated `<prefix>-<cardNumber>`, e.g. "T3-195". */
@@ -2241,6 +2253,12 @@ export const BoardCard = Schema.Struct({
   resources: Schema.NullOr(BoardCardResources).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  /** T3o: when the card entered its current stage (T3O-115), stamped by the decider on every
+      stage change and copied onto the step row at `select-step`, so "this stay" is decidable.
+      Absent on rows and events older than migration 080. */
+  stageEnteredAt: Schema.optionalKey(IsoDateTime),
+  /** T3o: the last automation gate attempt that could not act (T3O-115). Absent when none. */
+  gateBlock: Schema.optionalKey(BoardCardGateBlock),
   /** Derived from unmet dependencies at Ready and beyond, recorded by
       the decider at each move / dependency edit / unarchive. */
   blocked: Schema.Boolean,
@@ -2718,6 +2736,9 @@ export const BoardCardStepState = Schema.Struct({
   queuedDetail: Schema.NullOr(BoardStepQueuedDetail).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  /** T3o: the selecting card's `stageEnteredAt` (T3O-115): this row belongs to the card's
+      current stay only while the two match. Absent on older rows and events. */
+  stageEnteredAt: Schema.optionalKey(IsoDateTime),
   /** When the step began running; null while pending/queued. */
   startedAt: Schema.NullOr(IsoDateTime),
   updatedAt: IsoDateTime,
@@ -3900,9 +3921,6 @@ export interface BoardResolvedAutomationToggle {
   readonly source: "own" | "inherited" | "board" | null;
   /** The parent group the card inherits from (or overrides), when it has one. */
   readonly inheritedFrom: { readonly id: string; readonly key: string } | null;
-  /** Auto-build only: the parent group has it on but has not begun, so the
-      inherited value stays off until a human starts the group. */
-  readonly waitingForGroupStart: boolean;
   /** Turning the toggle ON is refused, including an inherit that would pick
       up the group's on; turning it off is always accepted. */
   readonly locked: boolean;
@@ -3957,7 +3975,7 @@ function automationStageFacts(
 
 /**
  * The one reading of a card's Automation toggles. Own setting wins; null inherits
- * from the nearest group (Auto-build only once the group has started). Board-wide
+ * from the nearest group, whether or not the group has started (T3O-115). Board-wide
  * auto-merge locks every card's on. Locks refuse only turning a toggle on.
  */
 export function resolveBoardCardAutomation(input: {
@@ -3978,7 +3996,6 @@ export function resolveBoardCardAutomation(input: {
     toggle: BoardAutomationToggle,
     inherited: boolean | null,
     lock: string | null,
-    waitingForGroupStart = false,
   ): BoardResolvedAutomationToggle => {
     const own = ownAutomationSetting(card, toggle);
     const value = own ?? inherited ?? false;
@@ -3988,7 +4005,6 @@ export function resolveBoardCardAutomation(input: {
       own,
       source,
       inheritedFrom,
-      waitingForGroupStart: own === null && waitingForGroupStart,
       locked: lock !== null,
       lockReason: lock,
     };
@@ -4007,19 +4023,13 @@ export function resolveBoardCardAutomation(input: {
 
   const autoPlan = resolve("autoPlan", group === null ? null : group.autoPlan, planLock);
   const autoSignOff = resolve("autoSignOff", group === null ? null : group.autoSignOff, planLock);
-  const autoBuild = resolve(
-    "autoBuild",
-    group === null ? null : group.autoBuild && group.started,
-    buildLock,
-    group !== null && group.autoBuild && !group.started,
-  );
+  const autoBuild = resolve("autoBuild", group === null ? null : group.autoBuild, buildLock);
   const autoMerge: BoardResolvedAutomationToggle = input.boardWideAutoMerge
     ? {
         value: true,
         own: ownAutomationSetting(card, "autoMerge"),
         source: "board",
         inheritedFrom,
-        waitingForGroupStart: false,
         locked: true,
         lockReason: BOARD_AUTOMATION_BOARD_WIDE_MERGE_REASON,
       }
@@ -4046,16 +4056,28 @@ export function boardPlanAutomatedBy(
   return review?.unattendedInPlanning === true ? "review" : null;
 }
 
+/**
+ * T3o: the card's step row when it belongs to the card's current stay in its stage (T3O-115):
+ * same stage step and the same `stageEnteredAt`, so a card dragged back into a stage never
+ * reads the row it left behind. Null otherwise.
+ */
+export function boardCardStepThisStay(
+  state: BoardCardStepState | null,
+  card: Pick<BoardCard, "stage" | "stageEnteredAt">,
+): BoardCardStepState | null {
+  if (state === null || state.stepId !== card.stage) return null;
+  return (state.stageEnteredAt ?? null) === (card.stageEnteredAt ?? null) ? state : null;
+}
+
 /** Whether the card's planning run for its current stay in Planning finished:
-    its plan-role step succeeded. */
+    its plan-role step for this stay succeeded. */
 export function boardCardPlanningFinished(
   board: BoardState,
-  card: Pick<BoardCard, "id" | "stage">,
+  card: Pick<BoardCard, "id" | "stage" | "stageEnteredAt">,
 ): boolean {
   const stage = boardStageById(board, card.stage);
   if (stage === null || effectiveBoardStageRole(stage) !== "plan") return false;
-  const state = boardCardStepState(board, card.id);
-  return state !== null && state.stepId === card.stage && state.status === "succeeded";
+  return boardCardStepThisStay(boardCardStepState(board, card.id), card)?.status === "succeeded";
 }
 
 /**
@@ -4120,35 +4142,6 @@ export function boardAutomationTogglesTurnedOn(input: {
   return BOARD_AUTOMATION_TOGGLES.filter(
     (toggle) => !before[toggle].value && after[toggle].value,
   ).map((toggle) => ({ toggle, before: before[toggle] }));
-}
-
-/**
- * Whether a card's OWN Auto-build should start it now: a live leaf
- * with its own Auto-build on, waiting in the stage before build with every
- * dependency met. An inherited Auto-build is the group cascade's to act on
- * (`cascadeUnblockedChildren`), so one card never has two movers.
- */
-export function boardCardAutoBuildDue(input: {
-  readonly board: BoardState;
-  readonly card: Pick<
-    BoardCard,
-    "id" | "parentCardId" | "stage" | "archivedAt" | "dependsOn" | "autoBuildSetting"
-  > & {
-    readonly group?: BoardCard["group"] | undefined;
-  };
-}): boolean {
-  const card = input.card;
-  if (card.autoBuildSetting !== true) return false;
-  if (card.archivedAt !== null || (card.group ?? null) !== null) return false;
-  const before = boardStageBeforeBuild(input.board);
-  if (before === null || card.stage !== before.stageId) return false;
-  return (
-    unmetBoardCardDependencies({
-      board: input.board,
-      dependsOn: boardCardInheritedDependsOn(input.board, card),
-      cards: input.board.cards,
-    }).length === 0
-  );
 }
 
 function resolveBoardAutoMergeValue(
@@ -5345,6 +5338,8 @@ export const BoardCardUpdateCommand = Schema.Struct({
       planner's; `sizeEditor` says whose edit it is, a human's unless an agent's tool says so. */
   size: Schema.optional(Schema.NullOr(BoardCardSize)),
   sizeEditor: Schema.optional(BoardCardSizeEditor),
+  /** T3o: the supervisor's gate-attempt record (T3O-115). Absent leaves it; null clears it. */
+  gateBlock: Schema.optional(Schema.NullOr(BoardCardGateBlock)),
   createdAt: IsoDateTime,
 });
 export type BoardCardUpdateCommand = typeof BoardCardUpdateCommand.Type;

@@ -57,6 +57,7 @@ import {
   BoardCardModelOverrides,
   BoardSplitRecommendation,
   BoardPendingSplitApproval,
+  BoardCardGateBlock,
   BoardCardAutoPlan,
   BoardCardPlanReview,
   BoardCardDecision,
@@ -192,6 +193,9 @@ const BoardCardDbRow = Schema.Struct({
   splitRecommendation: Schema.NullOr(Schema.fromJsonString(BoardSplitRecommendation)),
   // T3o: NULL before migration 078 and whenever no split approval is pending (T3O-105).
   pendingSplitApproval: Schema.NullOr(Schema.fromJsonString(BoardPendingSplitApproval)),
+  // T3o: NULL before migration 080's backfill, and when no gate attempt is blocked (T3O-115).
+  stageEnteredAt: Schema.NullOr(IsoDateTime),
+  gateBlock: Schema.NullOr(Schema.fromJsonString(BoardCardGateBlock)),
   autoPlan: Schema.NullOr(Schema.fromJsonString(BoardCardAutoPlan)),
   /** NULL for every row written before migration 054 and for every card that
       follows the Settings default (plan review). */
@@ -527,6 +531,8 @@ const BoardCardStepStateDbRow = Schema.Struct({
   // NULL before migration 067 and on every step Auto-plan never reopened.
   reopenedAt: Schema.NullOr(IsoDateTime),
   reopenedPromptAt: Schema.NullOr(IsoDateTime),
+  // T3o: NULL before migration 080 on rows it could not place in a stay (T3O-115).
+  stageEnteredAt: Schema.NullOr(IsoDateTime),
   humanInLoop: Schema.Int,
   maxAttempts: BoardCardStepState.fields.maxAttempts,
   timeoutMs: BoardCardStepState.fields.timeoutMs,
@@ -753,6 +759,8 @@ function boardCardToRow(card: BoardCard): BoardCardDbRow {
     splitRationale: card.splitRationale,
     splitRecommendation: card.splitRecommendation ?? null,
     pendingSplitApproval: card.pendingSplitApproval ?? null,
+    stageEnteredAt: card.stageEnteredAt ?? null,
+    gateBlock: card.gateBlock ?? null,
     autoPlan: card.autoPlan ?? null,
     planReview: card.planReview ?? null,
     baseBranch: card.baseBranch,
@@ -863,6 +871,8 @@ function rowToBoardCard(
     ...(row.pendingSplitApproval === null
       ? {}
       : { pendingSplitApproval: row.pendingSplitApproval }),
+    ...(row.stageEnteredAt === null ? {} : { stageEnteredAt: row.stageEnteredAt }),
+    ...(row.gateBlock === null ? {} : { gateBlock: row.gateBlock }),
     ...(row.autoPlan === null ? {} : { autoPlan: row.autoPlan }),
     ...(row.planReview === null ? {} : { planReview: row.planReview }),
     baseBranch: row.baseBranch,
@@ -943,6 +953,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         split_rationale,
         split_recommendation,
         pending_split_approval,
+        stage_entered_at,
+        gate_block,
         auto_plan,
         plan_review,
         base_branch,
@@ -1000,6 +1012,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ${row.splitRationale},
         ${row.splitRecommendation},
         ${row.pendingSplitApproval},
+        ${row.stageEnteredAt},
+        ${row.gateBlock},
         ${row.autoPlan},
         ${row.planReview},
         ${row.baseBranch},
@@ -1057,6 +1071,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         split_rationale = excluded.split_rationale,
         split_recommendation = excluded.split_recommendation,
         pending_split_approval = excluded.pending_split_approval,
+        stage_entered_at = excluded.stage_entered_at,
+        gate_block = excluded.gate_block,
         auto_plan = excluded.auto_plan,
         plan_review = excluded.plan_review,
         base_branch = excluded.base_branch,
@@ -1124,6 +1140,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         split_rationale AS "splitRationale",
         split_recommendation AS "splitRecommendation",
         pending_split_approval AS "pendingSplitApproval",
+        stage_entered_at AS "stageEnteredAt",
+        gate_block AS "gateBlock",
         auto_plan AS "autoPlan",
         plan_review AS "planReview",
         base_branch AS "baseBranch",
@@ -1548,6 +1566,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         split_rationale AS "splitRationale",
         split_recommendation AS "splitRecommendation",
         pending_split_approval AS "pendingSplitApproval",
+        stage_entered_at AS "stageEnteredAt",
+        gate_block AS "gateBlock",
         auto_plan AS "autoPlan",
         plan_review AS "planReview",
         base_branch AS "baseBranch",
@@ -2291,7 +2311,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         last_error, awaiting_reason, human_turn_at, stalled_reason, retry_at,
         plan_review_started_at, plan_review_rounds, plan_review_round, plan_review_done_at,
         plan_review_awaiting_start, plan_review_policy_sent, reopened_at, reopened_prompt_at,
-        human_in_loop, max_attempts, timeout_ms, thread_id, status, slot_held, force_start,
+        stage_entered_at, human_in_loop, max_attempts, timeout_ms, thread_id, status, slot_held, force_start,
         queued_by, queued_detail, started_at, updated_at
       )
       VALUES (
@@ -2302,7 +2322,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ${row.lastError}, ${row.awaitingReason}, ${row.humanTurnAt}, ${row.stalledReason}, ${row.retryAt},
         ${row.planReviewStartedAt}, ${row.planReviewRounds}, ${row.planReviewRound},
         ${row.planReviewDoneAt}, ${row.planReviewAwaitingStart}, ${row.planReviewPolicySent},
-        ${row.reopenedAt}, ${row.reopenedPromptAt},
+        ${row.reopenedAt}, ${row.reopenedPromptAt}, ${row.stageEnteredAt},
         ${row.humanInLoop}, ${row.maxAttempts},
         ${row.timeoutMs}, ${row.threadId}, ${row.status}, ${row.slotHeld}, ${row.forceStart},
         ${row.queuedBy}, ${row.queuedDetail}, ${row.startedAt}, ${row.updatedAt}
@@ -2336,6 +2356,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         plan_review_policy_sent = excluded.plan_review_policy_sent,
         reopened_at = excluded.reopened_at,
         reopened_prompt_at = excluded.reopened_prompt_at,
+        stage_entered_at = excluded.stage_entered_at,
         human_in_loop = excluded.human_in_loop,
         max_attempts = excluded.max_attempts,
         timeout_ms = excluded.timeout_ms,
@@ -2383,6 +2404,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         plan_review_policy_sent AS "planReviewPolicySent",
         reopened_at AS "reopenedAt",
         reopened_prompt_at AS "reopenedPromptAt",
+        stage_entered_at AS "stageEnteredAt",
         human_in_loop AS "humanInLoop",
         max_attempts AS "maxAttempts",
         timeout_ms AS "timeoutMs",
@@ -3132,6 +3154,7 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
         planReviewPolicySent: state.planReviewPolicySent ?? null,
         reopenedAt: state.reopenedAt ?? null,
         reopenedPromptAt: state.reopenedPromptAt ?? null,
+        stageEnteredAt: state.stageEnteredAt ?? null,
         humanInLoop: state.humanInLoop ? 1 : 0,
         maxAttempts: state.maxAttempts,
         timeoutMs: state.timeoutMs,
@@ -4125,6 +4148,7 @@ function loadBoardState(
               : { planReviewPolicySent: row.planReviewPolicySent }),
             ...(row.reopenedAt === null ? {} : { reopenedAt: row.reopenedAt }),
             ...(row.reopenedPromptAt === null ? {} : { reopenedPromptAt: row.reopenedPromptAt }),
+            ...(row.stageEnteredAt === null ? {} : { stageEnteredAt: row.stageEnteredAt }),
             humanInLoop: row.humanInLoop !== 0,
             maxAttempts: row.maxAttempts,
             timeoutMs: row.timeoutMs,
