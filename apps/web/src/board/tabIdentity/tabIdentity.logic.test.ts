@@ -183,7 +183,7 @@ describe("resolveIdentity", () => {
         title: "Same id elsewhere · mesh-dev",
         icon: {
           kind: "tile",
-          prefix: "MWE",
+          prefix: "MW",
           number: null,
           fill: projectAccent(ProjectId.make("project-unset")).mutedHex,
           foreground: "#ffffff",
