@@ -5,18 +5,17 @@
 // loads native modules and launches the test browser, for a human to run by hand.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
-import * as NodeModule from "node:module";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import {
   checkPinnedVersion,
-  chromiumInstallDirs,
   formatResult,
   redactCredentials,
   verdict,
   type CheckResult,
 } from "./lib/t3o-ready.ts";
+import { playwrightCore, testBrowser } from "./lib/t3o-playwright.ts";
 import { selectUpstreamBase } from "./lib/t3o-release.ts";
 
 const ROOT = NodePath.resolve(import.meta.dirname, "..");
@@ -290,48 +289,20 @@ function checkDependencies(): CheckResult {
       };
 }
 
-function playwrightCore(): string | null {
-  try {
-    const web = NodeModule.createRequire(NodePath.join(ROOT, "apps/web/package.json"));
-    const playwright = web.resolve("playwright/package.json");
-    return NodePath.dirname(
-      NodeModule.createRequire(playwright).resolve("playwright-core/package.json"),
-    );
-  } catch {
-    return null;
-  }
-}
-
-function browsersRoot(): string {
-  const configured = process.env.PLAYWRIGHT_BROWSERS_PATH;
-  if (configured && configured !== "0") return configured;
-  if (process.platform === "darwin")
-    return NodePath.join(NodeOS.homedir(), "Library/Caches/ms-playwright");
-  if (process.platform === "win32") {
-    return NodePath.join(process.env.LOCALAPPDATA ?? NodeOS.homedir(), "ms-playwright");
-  }
-  return NodePath.join(
-    process.env.XDG_CACHE_HOME ?? NodePath.join(NodeOS.homedir(), ".cache"),
-    "ms-playwright",
-  );
-}
-
 const BROWSER_FIX = "apps/web/node_modules/.bin/playwright install --with-deps chromium";
 
 function checkBrowser(): CheckResult {
-  const core = depsInstalled() ? playwrightCore() : null;
-  if (core === null) {
+  const browser = depsInstalled() ? testBrowser(ROOT) : null;
+  if (browser === null || browser.kind === "no-playwright") {
     return { name: "test browser", status: "skip", detail: "needs dependencies installed" };
   }
-  const manifestPath = NodePath.join(core, "browsers.json");
-  const dirs = chromiumInstallDirs(JSON.parse(NodeFS.readFileSync(manifestPath, "utf8")));
-  const root = browsersRoot();
-  const found = dirs.find((dir) => NodeFS.existsSync(NodePath.join(root, dir)));
-  if (found) return { name: "test browser", status: "pass", detail: `${found} installed` };
+  if (browser.kind === "installed") {
+    return { name: "test browser", status: "pass", detail: `${browser.dir} installed` };
+  }
   return {
     name: "test browser",
     status: "warn",
-    detail: `${dirs[0] ?? "chromium"} not in ${root}; upstream-sync CI runs the web browser tests`,
+    detail: `${browser.path} is missing; CI's install step downloads it`,
     fix: BROWSER_FIX,
   };
 }
@@ -375,7 +346,7 @@ function fullNodePty(): CheckResult {
 }
 
 function fullBrowserLaunch(): CheckResult {
-  const core = playwrightCore();
+  const core = playwrightCore(ROOT);
   if (core === null) {
     return {
       name: "browser launch",

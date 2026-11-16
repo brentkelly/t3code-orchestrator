@@ -63,17 +63,16 @@ export function redactCredentials(text: string): string {
   return text.replace(/\b([a-z][\w+.-]*:\/\/)[^/@\s]+@/gi, "$1***@");
 }
 
-/** Playwright's install directory names for the browsers vitest's chromium instance may launch. */
-export function chromiumInstallDirs(browsersJson: unknown): Array<string> {
+/** The headless shell's install directory name (what vitest's chromium launches), or null. */
+export function headlessShellDir(browsersJson: unknown): string | null {
   const browsers = (browsersJson as { browsers?: ReadonlyArray<unknown> } | null)?.browsers ?? [];
-  const dirs: Array<string> = [];
   for (const entry of browsers) {
     const { name, revision } = (entry ?? {}) as { name?: unknown; revision?: unknown };
-    if (typeof name !== "string" || typeof revision !== "string") continue;
-    if (name !== "chromium" && name !== "chromium-headless-shell") continue;
-    dirs.push(`${name.replace(/-/g, "_")}-${revision}`);
+    if (name === "chromium-headless-shell" && typeof revision === "string") {
+      return `chromium_headless_shell-${revision}`;
+    }
   }
-  return dirs;
+  return null;
 }
 
 /** The one-line summary the board shows: ready unless anything failed. */

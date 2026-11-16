@@ -2,8 +2,8 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   checkPinnedVersion,
-  chromiumInstallDirs,
   formatResult,
+  headlessShellDir,
   parseVersion,
   redactCredentials,
   verdict,
@@ -66,21 +66,21 @@ describe("redactCredentials", () => {
   });
 });
 
-describe("chromiumInstallDirs", () => {
-  it("names the chromium and headless shell directories", () => {
+describe("headlessShellDir", () => {
+  it("names the headless shell directory, not full chromium", () => {
     const json = {
       browsers: [
-        { name: "chromium", revision: "1255" },
-        { name: "chromium-headless-shell", revision: "1255" },
+        { name: "chromium", revision: "1248" },
+        { name: "chromium-headless-shell", revision: "1248" },
         { name: "firefox", revision: "1500" },
       ],
     };
-    expect(chromiumInstallDirs(json)).toEqual(["chromium-1255", "chromium_headless_shell-1255"]);
+    expect(headlessShellDir(json)).toBe("chromium_headless_shell-1248");
   });
 
   it("tolerates a malformed manifest", () => {
-    expect(chromiumInstallDirs(null)).toEqual([]);
-    expect(chromiumInstallDirs({ browsers: [null, { name: "chromium" }] })).toEqual([]);
+    expect(headlessShellDir(null)).toBeNull();
+    expect(headlessShellDir({ browsers: [null, { name: "chromium-headless-shell" }] })).toBeNull();
   });
 });
 

@@ -13,6 +13,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { readWorkspace } from "../.github/scripts/ci-changes.cjs";
+import { testBrowser } from "./lib/t3o-playwright.ts";
 import { predictNextRelease, protocolReleaseProblem, readProtocolPins } from "./lib/t3o-release.ts";
 
 export const ROOT = NodePath.resolve(import.meta.dirname, "..");
@@ -204,7 +205,7 @@ export function parseVitestJson(
 }
 
 const INFRA_OUTPUT =
-  /Executable doesn't exist|npx playwright install|playwright install|ENOSPC|no space left on device/i;
+  /Executable doesn't exist|npx playwright install|playwright install|Host system is missing dependencies|error while loading shared libraries|ENOSPC|no space left on device/i;
 
 const OUTPUT_CAP = 4 * 1024 * 1024;
 
@@ -508,7 +509,34 @@ async function install(base: Base | undefined, tier: Tier | undefined) {
     const { machine, reason } = classifyInstallFailure({ output: result.output, manifestsChanged });
     return fail("install", reason, [{ title: `[install] ${reason}`, machine }], machine);
   }
+  if (!(await installTestBrowser())) return;
   writeResult(`install ok (${tier ? tierLabel(tier) : "tier unknown"})`, []);
+}
+
+/** A Playwright bump needs a new headless shell; fetch it here rather than fail every browser test. */
+async function installTestBrowser(): Promise<boolean> {
+  const browser = testBrowser(ROOT);
+  if (browser.kind !== "missing") return true;
+  progress(`installing ${browser.dir} for the web browser tests`);
+  const result = await run(NodePath.join(ROOT, "apps/web/node_modules/.bin/playwright"), [
+    "install",
+    "chromium-headless-shell",
+  ]);
+  if (result.code === 0 && !result.spawnError) return true;
+  const reason = `could not install ${browser.dir}`;
+  fail(
+    "install",
+    reason,
+    [
+      {
+        title: `[install] ${reason}`,
+        detail: `${result.spawnError ?? firstLine(result.output.trim().split("\n").at(-1))}\nfix: apps/web/node_modules/.bin/playwright install --with-deps chromium`,
+        machine: true,
+      },
+    ],
+    true,
+  );
+  return false;
 }
 
 /** A worker protocol bump must name the release that will ship it (see docs/t3o/releasing.md). */
