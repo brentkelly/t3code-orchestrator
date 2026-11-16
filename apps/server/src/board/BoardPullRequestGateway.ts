@@ -3,6 +3,7 @@
  * `GitManager` / `PullRequestService` whole. Errors flatten to the forge's own
  * words, because the card shows them to the user.
  */
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -21,6 +22,8 @@ import { boardMergeStateOf, type BoardMergeState } from "./boardMergeState.ts";
 import { boardRepositoryOf, type BoardRepository } from "./boardRepository.ts";
 import { BoardGitStatus } from "./ports/BoardGitStatus.ts";
 import { ThreadGateway } from "./ThreadGateway.ts";
+
+const ORIGIN_URL_TTL_MS = 5 * 60_000;
 
 /**
  * Where a refused merge was refused: `host` (the host said no; probe `mergeState`),
@@ -222,13 +225,34 @@ export const layer: Layer.Layer<
      * The project's `origin`, host-qualified when it is not the project
      * identity's own repository (see `boardRepository.ts`).
      */
+    // `git config` is a subprocess and every forge call asks it: kept per checkout for a few
+    // minutes, which bounds how long a re-pointed `origin` goes unseen (T3O-108).
+    const originByCheckout = new Map<
+      string,
+      { readonly at: number; readonly url: string | null }
+    >();
+    const originUrlOf = Effect.fn("BoardPullRequestGateway.originUrlOf")(function* (
+      workspaceRoot: string,
+    ) {
+      const now = yield* Clock.currentTimeMillis;
+      const known = originByCheckout.get(workspaceRoot);
+      if (known !== undefined && now - known.at < ORIGIN_URL_TTL_MS) return known.url;
+      // A failed read answers null for this call only: caching it would send a fork's forge
+      // calls to the identity's `upstream` for the whole TTL.
+      return yield* git.readConfigValue(workspaceRoot, "remote.origin.url").pipe(
+        Effect.tap((url) =>
+          Effect.sync(() => originByCheckout.set(workspaceRoot, { at: now, url })),
+        ),
+        Effect.orElseSucceed(() => null),
+      );
+    });
+
     const repository = (projectId: ProjectId, operation = "repository") =>
       threads.project(projectId).pipe(
         Effect.catch(fail(operation)),
         Effect.flatMap((project) => {
           if (project === null) return Effect.succeed(null);
-          return git.readConfigValue(project.workspaceRoot, "remote.origin.url").pipe(
-            Effect.orElseSucceed(() => null),
+          return originUrlOf(project.workspaceRoot).pipe(
             Effect.map((originUrl) => boardRepositoryOf(project.repositoryIdentity, originUrl)),
           );
         }),

@@ -762,3 +762,22 @@ it.effect(
       assert.isNull((yield* service.snapshot("board-a")).hold?.cardId ?? null);
     }).pipe(Effect.provide(TestClock.layer()), (effect) => withMachine(makeFakes())(effect)),
 );
+
+it.effect("a claim takes one thread reading for its hold tick and its decision", () => {
+  const fakes = makeFakes();
+  return Effect.gen(function* () {
+    const { service } = yield* makeBoardWorkerCapacity(portsOver(fakes));
+    const before = fakes.threadReads;
+    const result = yield* service.claim("board-a", {
+      claimId: "c1",
+      seq: 1,
+      cardId: "card-1",
+      repositoryKey: null,
+      kind: "placement",
+      profile: { cpuCores: 1, ramGiB: 1, diskGB: 1 },
+      providerInstanceId: null,
+    });
+    assert.strictEqual(result.outcome, "granted");
+    assert.strictEqual(fakes.threadReads - before, 1);
+  }).pipe(withMachine(fakes));
+});

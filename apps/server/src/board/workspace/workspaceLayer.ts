@@ -43,10 +43,18 @@ import {
 } from "./LocalBoardWorkspace.ts";
 import { remoteCardWorkspace } from "./RemoteBoardWorkspace.ts";
 
+/** Reads shared by one `groupByWorkspace` call, so N cards cost one read per distinct
+    workspace rather than one per card. Opaque to callers; empty when made. */
+export interface BoardPlacementPass {
+  cardsById?: ReadonlyMap<string, BoardCard>;
+  readonly workerProjects: Map<string, ProjectId | null>;
+}
+
 export interface BoardWorkspacesOptions {
   /** Where a card runs when it is not here; null for this server. */
   readonly placementOf?: (
     card: Pick<BoardCard, "id" | "projectId">,
+    pass?: BoardPlacementPass,
   ) => Effect.Effect<BoardWorkspacePlacement | null>;
   /** The placed card's workspace on its worker. */
   readonly remote?: (placement: BoardWorkspacePlacement) => Effect.Effect<BoardCardWorkspace>;
@@ -86,15 +94,28 @@ export function makeBoardWorkspaces(
       );
 
   // Untraced: runs once per card on every orphan-worktree sweep.
-  const forCard: BoardWorkspacesShape["forCard"] = Effect.fnUntraced(function* (card) {
+  const forCard: BoardWorkspacesShape["forCard"] = (card) => forCardIn(card);
+
+  /** With `memo`, a workspace already made for the same placement is reused. */
+  const forCardIn = Effect.fnUntraced(function* (
+    card: Pick<BoardCard, "id" | "projectId">,
+    pass?: BoardPlacementPass,
+    memo?: Map<string, BoardCardWorkspace>,
+  ) {
     const placement =
       options.placementOf === undefined || options.remote === undefined
         ? null
-        : yield* options.placementOf(card);
-    if (placement === null || options.remote === undefined) {
-      return yield* localProject(card.projectId);
-    }
-    return yield* options.remote(placement);
+        : yield* options.placementOf(card, pass);
+    const key =
+      placement === null ? `\0${card.projectId}` : `${placement.workerId}\0${placement.projectId}`;
+    const known = memo?.get(key);
+    if (known !== undefined) return known;
+    const workspace =
+      placement === null || options.remote === undefined
+        ? yield* localProject(card.projectId)
+        : yield* options.remote(placement);
+    memo?.set(key, workspace);
+    return workspace;
   });
 
   const isWithinRoot = (candidate: string, root: string) => {
@@ -194,8 +215,10 @@ export function makeBoardWorkspaces(
         string,
         { workspace: BoardCardWorkspace; cards: Array<(typeof cards)[number]> }
       >();
+      const pass: BoardPlacementPass = { workerProjects: new Map() };
+      const memo = new Map<string, BoardCardWorkspace>();
       for (const card of cards) {
-        const workspace = yield* forCard(card);
+        const workspace = yield* forCardIn(card, pass, memo);
         const key = `${workspace.workerId}\0${workspace.projectId}`;
         const group = groups.get(key);
         if (group === undefined) groups.set(key, { workspace, cards: [card] });
@@ -288,17 +311,29 @@ export const BoardWorkspacesLive = Layer.effect(
     });
     return makeBoardWorkspaces(deps, {
       // Untraced: runs once per card on every orphan-worktree sweep.
-      placementOf: Effect.fnUntraced(function* (card) {
-        const board = (yield* engine.getReadModel).board ?? EMPTY_BOARD_STATE;
-        const placed = board.cards.find((candidate) => candidate.id === card.id);
+      placementOf: Effect.fnUntraced(function* (card, pass) {
+        let placed: BoardCard | undefined;
+        if (pass === undefined) {
+          const board = (yield* engine.getReadModel).board ?? EMPTY_BOARD_STATE;
+          placed = board.cards.find((candidate) => candidate.id === card.id);
+        } else {
+          if (pass.cardsById === undefined) {
+            const board = (yield* engine.getReadModel).board ?? EMPTY_BOARD_STATE;
+            pass.cardsById = new Map(board.cards.map((candidate) => [candidate.id, candidate]));
+          }
+          placed = pass.cardsById.get(card.id);
+        }
         if (placed === undefined) return null;
         // T3o: an unplaced card's read-only checks run in the board server's checkout (T3O-87).
         const workerId = boardCardPlacementTarget(placed);
         if (workerId === null || workerId === BOARD_LOCAL_WORKER_ID) return null;
-        return {
-          workerId,
-          projectId: (yield* workerProjectOf(workerId, card.projectId)) ?? card.projectId,
-        };
+        const memoKey = `${workerId}\0${card.projectId}`;
+        let workerProject = pass?.workerProjects.get(memoKey);
+        if (workerProject === undefined) {
+          workerProject = yield* workerProjectOf(workerId, card.projectId);
+          pass?.workerProjects.set(memoKey, workerProject);
+        }
+        return { workerId, projectId: workerProject ?? card.projectId };
       }),
       remote: remoteCardWorkspace(connections),
       workerProjectOf,

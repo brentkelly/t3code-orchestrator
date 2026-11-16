@@ -7,9 +7,12 @@ import {
   BOARD_SEED_STAGES,
   BoardCardId,
   BoardStageId,
+  makeBoardCardShell,
+  ProjectId,
   type BoardCardShell,
   type BoardStageId as BoardStageIdType,
 } from "@t3tools/contracts";
+import { useState } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
@@ -231,5 +234,71 @@ describe("sub-board column auto-collapse", () => {
         cardCount: 1,
       }),
     ).toBe(false);
+  });
+});
+
+function cards(count: number): ReadonlyArray<BoardCardShell> {
+  return Array.from({ length: count }, (_, index) =>
+    makeBoardCardShell({
+      cardId: BoardCardId.make(`card-${index + 1}`),
+      key: `T-${index + 1}`,
+      projectId: ProjectId.make("project-1"),
+      labelIds: [],
+      stage: BoardStageId.make("done"),
+      orderKey: `k${String(index).padStart(3, "0")}`,
+      title: `Card ${index + 1}`,
+      blocked: false,
+      dependencyCount: 0,
+      hasBrief: false,
+      activeThreadId: null,
+    }),
+  );
+}
+
+function LongColumn(props: Partial<BoardColumnProps>) {
+  const [showAll, setShowAll] = useState(false);
+  return (
+    <BoardColumn
+      {...columnProps({
+        stage: BoardStageId.make("done"),
+        label: "Done",
+        showAll,
+        onSetShowAll: (_stage, next) => setShowAll(next),
+        ...props,
+      })}
+    />
+  );
+}
+
+describe("BoardColumn long-column cap", () => {
+  const mounted = (container: Element) => container.querySelectorAll("[draggable]").length;
+
+  it("shows 30 of 31 cards behind a Show all link, and folds back with Show fewer", async () => {
+    await using screen = await render(<LongColumn cards={cards(31)} />);
+    await expect.element(screen.getByRole("button", { name: "Show all 31" })).toBeVisible();
+    expect(mounted(screen.container)).toBe(30);
+    expect(screen.getByText("Card 31").query()).toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: "Show all 31" }));
+    await expect.element(screen.getByText("Card 31")).toBeVisible();
+    expect(mounted(screen.container)).toBe(31);
+
+    await userEvent.click(screen.getByRole("button", { name: "Show fewer" }));
+    await expect.element(screen.getByRole("button", { name: "Show all 31" })).toBeVisible();
+    expect(mounted(screen.container)).toBe(30);
+  });
+
+  it("shows a column of 30 whole, with no link", async () => {
+    await using screen = await render(<LongColumn cards={cards(30)} />);
+    await expect.element(screen.getByText("Card 30")).toBeVisible();
+    expect(mounted(screen.container)).toBe(30);
+    expect(screen.getByRole("button", { name: /Show all/ }).query()).toBeNull();
+  });
+
+  it("never hides the open card: a selection past the cap shows the whole column", async () => {
+    await using screen = await render(<LongColumn cards={cards(40)} selectedCardId="card-35" />);
+    await expect.element(screen.getByText("Card 35")).toBeVisible();
+    expect(mounted(screen.container)).toBe(40);
+    expect(screen.getByRole("button", { name: /Show/ }).query()).toBeNull();
   });
 });

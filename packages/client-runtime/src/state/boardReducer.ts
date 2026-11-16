@@ -125,6 +125,80 @@ export function applyBoardShellStreamItem(
   return { ...applyBoardShellStreamEvent(snapshot, item), snapshotSequence: item.sequence };
 }
 
+type BoardFreshReadItem = Extract<BoardShellStreamItem, { kind: "card-threads" | "card-usage" }>;
+
+const isBoardFreshReadItem = (item: BoardShellStreamItem): item is BoardFreshReadItem =>
+  item.kind === "card-threads" || item.kind === "card-usage";
+
+/**
+ * A received batch, oldest first. Runs of `card-threads` and `card-usage` (a resync sends one
+ * per card) fold through one card-id index, so a run costs one pass over cards and links
+ * rather than one per item; the result matches applying them one by one.
+ */
+export function applyBoardShellStreamItems(
+  snapshot: BoardShellSnapshot | null,
+  items: ReadonlyArray<BoardShellStreamItem>,
+): BoardShellSnapshot | null {
+  let next = snapshot;
+  let index = 0;
+  while (index < items.length) {
+    const item = items[index]!;
+    if (!isBoardFreshReadItem(item)) {
+      next = applyBoardShellStreamItem(next, item);
+      index += 1;
+      continue;
+    }
+    let end = index + 1;
+    while (end < items.length && isBoardFreshReadItem(items[end]!)) end += 1;
+    next =
+      end - index === 1
+        ? applyBoardShellStreamItem(next, item)
+        : applyFreshReadRun(next, items.slice(index, end) as ReadonlyArray<BoardFreshReadItem>);
+    index = end;
+  }
+  return next;
+}
+
+function applyFreshReadRun(
+  snapshot: BoardShellSnapshot | null,
+  items: ReadonlyArray<BoardFreshReadItem>,
+): BoardShellSnapshot | null {
+  if (snapshot === null) return null;
+  // Last write wins per card; a re-set moves the card to the end, so the links land in the
+  // order one-by-one replacement would leave them.
+  const threadsByCard = new Map<string, BoardShellSnapshot["cardThreads"]>();
+  const usageByCard = new Map<
+    string,
+    Extract<BoardFreshReadItem, { kind: "card-usage" }>["usage"]
+  >();
+  for (const item of items) {
+    if (item.kind === "card-threads") {
+      threadsByCard.delete(item.cardId);
+      threadsByCard.set(item.cardId, item.threads);
+    } else {
+      usageByCard.set(item.cardId, item.usage);
+    }
+  }
+  let next = snapshot;
+  if (usageByCard.size > 0) {
+    const cards = Arr.map(next.cards, (card) => {
+      if (!usageByCard.has(card.cardId)) return card;
+      const usage = usageByCard.get(card.cardId) ?? null;
+      if (usage === null) {
+        const { usage: _cleared, ...rest } = card;
+        return rest;
+      }
+      return { ...card, usage };
+    });
+    next = { ...next, cards };
+  }
+  if (threadsByCard.size > 0) {
+    const others = next.cardThreads.filter((entry) => !threadsByCard.has(entry.cardId));
+    next = { ...next, cardThreads: [...others, ...[...threadsByCard.values()].flat()] };
+  }
+  return next;
+}
+
 /**
  * Fold one board delta into the board snapshot, ignoring its sequence (see
  * `applyBoardShellStreamItem` for the guard). Every board delta is an

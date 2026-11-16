@@ -40,6 +40,7 @@ const database = SqlitePersistence.layerMemory.pipe(
 const LOCAL_THREAD = ThreadId.make("thread-local");
 const WORKER_THREAD = ThreadId.make("thread-on-worker");
 const REMOVED_THREAD = ThreadId.make("thread-on-removed-worker");
+const DELETED_WORKER_THREAD = ThreadId.make("thread-deleted-on-worker");
 
 /** This server with one settled thread of its own, the in-process worker
     with one thread, and a link for each — plus one to a worker the board
@@ -53,6 +54,7 @@ const setup = Effect.gen(function* () {
   for (const [threadId, workerId] of [
     [LOCAL_THREAD, null],
     [WORKER_THREAD, WORKER_ID],
+    [DELETED_WORKER_THREAD, WORKER_ID],
     [REMOVED_THREAD, "env-removed"],
   ] as const) {
     yield* sql`
@@ -74,6 +76,23 @@ const setup = Effect.gen(function* () {
     worktreePath: WORKER_ROOT,
     text: "Build the card.",
     attachments: [],
+  });
+  yield* env.threads.gateway.spawn({
+    commandId: CommandId.make("server:board-spawn:worker-deleted"),
+    threadId: DELETED_WORKER_THREAD,
+    projectId: WORKER_PROJECT_ID,
+    title: "CARD-1 · Planning",
+    modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5-codex" },
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    branch: null,
+    worktreePath: WORKER_ROOT,
+    text: "Plan the card.",
+    attachments: [],
+  });
+  yield* env.threads.gateway.delete({
+    commandId: CommandId.make("server:board-delete:worker-deleted"),
+    threadId: DELETED_WORKER_THREAD,
   });
   const central = yield* makeFakeThreadGateway({
     threads: new Map([[LOCAL_THREAD, fakeThreadState(LOCAL_THREAD, { settlementDecided: true })]]),
@@ -114,9 +133,16 @@ describe("the thread gateway router's batch read", () => {
         assert.strictEqual((yield* router.threadRecords([REMOVED_THREAD])).size, 0);
 
         // The release sweep's read: the settled local thread is finished, so it is in neither set.
-        const sweep = yield* router.openThreadIds([LOCAL_THREAD, WORKER_THREAD, REMOVED_THREAD]);
+        const sweep = yield* router.openThreadIds([
+          LOCAL_THREAD,
+          WORKER_THREAD,
+          DELETED_WORKER_THREAD,
+          REMOVED_THREAD,
+        ]);
         assert.deepStrictEqual([...sweep.open], [WORKER_THREAD]);
         assert.deepStrictEqual([...sweep.unanswered], [REMOVED_THREAD]);
+        // Only the deleted worker thread is deleted; the settled one can still be reopened.
+        assert.deepStrictEqual([...sweep.deleted], [DELETED_WORKER_THREAD]);
       }),
     ),
   );

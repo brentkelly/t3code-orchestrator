@@ -5,7 +5,6 @@
  * row is this stage's, a step still being admitted, and an unfinished planning interview.
  */
 import {
-  boardCardStepState,
   boardStageById,
   effectiveBoardStageRole,
   parseReviewStepId,
@@ -47,8 +46,13 @@ export function boardReleasedThreadIds(
     seen.add(String(threadId));
     released.push(threadId);
   };
+  // First row per card, as `boardCardStepState` reads it.
+  const stepStates = new Map<string, BoardCardStepState>();
+  for (const state of board.stepStates ?? []) {
+    if (!stepStates.has(state.cardId)) stepStates.set(state.cardId, state);
+  }
   for (const card of board.cards) {
-    const state = boardCardStepState(board, card.id);
+    const state = stepStates.get(card.id) ?? null;
     // An archived card, or one in Done whose worktree the board reclaimed, is done with every
     // thread it holds, whatever its last step row still says. A reclaimed status outlives a
     // reopen, so it counts only while the card is still in Done.

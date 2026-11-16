@@ -18,10 +18,9 @@ import {
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigate, useSearch } from "@tanstack/react-router";
-import * as Option from "effect/Option";
 
 import { SidebarInset } from "../components/ui/sidebar";
-import { environmentShell } from "../state/shell";
+import { environmentProjects } from "../state/projects";
 import { boardEnvironment } from "../state/board";
 import { validateBoardSearch, type BoardSearch } from "../routes/board";
 import { useBoardAttentionSettle } from "./boardAttentionSettle";
@@ -72,14 +71,14 @@ function BoardListPage() {
 function EnvironmentList({ environmentId }: { readonly environmentId: EnvironmentId }) {
   const search = useSearch({ strict: false }) as BoardSearch;
   const navigate = useNavigate();
-  const shellState = useAtomValue(environmentShell.stateValueAtom(environmentId));
+  const allProjects = useAtomValue(environmentProjects.environmentProjectsAtom(environmentId));
+  const threadShellsById = useAtomValue(boardEnvironment.cardThreadShellsAtom(environmentId));
   const cardsByProject = useAtomValue(boardEnvironment.cardsByProjectAtom(environmentId));
   const stageList = useAtomValue(boardEnvironment.stageListAtom(environmentId));
   const orderedStages = stageList.length > 0 ? stageList : BOARD_SEED_STAGES;
   const stageState = stageStateOf(orderedStages);
   const boardSettings = useBoardSettings((settings) => settings.board);
 
-  const allProjects = Option.getOrNull(shellState.snapshot)?.projects ?? [];
   const accentByProject = new Map(
     allProjects.map((project) => [project.id, projectIconColorOf(project)] as const),
   );
@@ -105,9 +104,6 @@ function EnvironmentList({ environmentId }: { readonly environmentId: Environmen
     scopeProjectId === null || card.projectId === scopeProjectId;
 
   // "Needs you" agrees with the board's card faces: same settle grace.
-  const threadShellsById = new Map(
-    (Option.getOrNull(shellState.snapshot)?.threads ?? []).map((thread) => [thread.id, thread]),
-  );
   const threadShellOf = (threadId: ThreadId) => threadShellsById.get(threadId);
   const { threadIdleSinceByCard, now } = useBoardAttentionSettle({
     cards: shells,

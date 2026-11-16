@@ -742,7 +742,7 @@ const makeThreadGatewayV2 = Effect.gen(function* () {
    * release sweep asks after every thread the board ever released. Ids go as one JSON array, past
    * SQLite's bound-parameter cap. A deleted thread reads as deleted only, as the shell read did.
    */
-  const threadRecordRows = (threadIds: ReadonlyArray<ThreadId>, openOnly: boolean) =>
+  const threadRecordRows = (threadIds: ReadonlyArray<ThreadId>, openOrDeleted: boolean) =>
     threadIds.length === 0
       ? Effect.succeed([])
       : sql<{
@@ -761,11 +761,11 @@ const makeThreadGatewayV2 = Effect.gen(function* () {
               AS "settlementDecided"
           FROM orchestration_v2_projection_threads t
           WHERE t.thread_id IN (SELECT value FROM json_each(${JSON.stringify(threadIds)}))${
-            openOnly
+            openOrDeleted
               ? sql`
-            AND t.deleted_at IS NULL
-            AND json_extract(t.payload_json, '$.archivedAt') IS NULL
-            AND json_extract(t.payload_json, '$.settledOverride') IS NULL`
+            AND (t.deleted_at IS NOT NULL
+              OR (json_extract(t.payload_json, '$.archivedAt') IS NULL
+                AND json_extract(t.payload_json, '$.settledOverride') IS NULL))`
               : sql``
           }
         `.pipe(NodeSqliteClient.readOnly);
@@ -1094,10 +1094,11 @@ const makeThreadGatewayV2 = Effect.gen(function* () {
     openThreadIds: Effect.fn("ThreadGatewayV2.openThreadIds")(
       function* (threadIds) {
         const rows = yield* threadRecordRows(threadIds, true);
-        return {
-          open: new Set(rows.map((row) => ThreadId.make(row.threadId))),
-          unanswered: new Set<ThreadId>(),
-        };
+        const open = new Set<ThreadId>();
+        const deleted = new Set<ThreadId>();
+        for (const row of rows)
+          (row.deleted === 1 ? deleted : open).add(ThreadId.make(row.threadId));
+        return { open, unanswered: new Set<ThreadId>(), deleted };
       },
       Effect.mapError(readError("openThreadIds")),
     ),
@@ -1177,8 +1178,24 @@ const makeThreadGatewayV2 = Effect.gen(function* () {
     ),
     // The timeout sweep's life sign: the thread's own update time moves with
     // every message, turn item and run change the engine records.
+    // One row, not a shell read: the 30 s timeout sweep asks this of every overdue step.
     lastSignalAt: (threadId) =>
-      shellOf(threadId).pipe(Effect.map((shell) => isoOrNull(shell?.updatedAt))),
+      sql<{ readonly updatedAt: string | null }>`
+        SELECT json_extract(payload_json, '$.updatedAt') AS "updatedAt"
+        FROM orchestration_v2_projection_threads
+        WHERE thread_id = ${threadId} AND deleted_at IS NULL
+      `.pipe(
+        NodeSqliteClient.readOnly,
+        Effect.map((rows) => {
+          const updatedAt = rows[0]?.updatedAt;
+          if (updatedAt == null) return null;
+          return Option.match(DateTime.make(updatedAt), {
+            onNone: () => null,
+            onSome: DateTime.formatIso,
+          });
+        }),
+        Effect.mapError(readError("lastSignalAt")),
+      ),
     // A turn requested but not yet running: the latest run is still being
     // prepared, queued behind another, or waiting for its provider to start.
     // A restart continuation upstream has yet to start reads the same way, from the cut run's end.

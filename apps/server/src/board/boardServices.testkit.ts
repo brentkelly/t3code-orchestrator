@@ -26,6 +26,7 @@ export const inertBoardQueries = (overrides?: Partial<BoardQueriesShape>): Board
     }),
   boardArchivedCards: () => Effect.succeed([]),
   boardCardDetail: () => Effect.succeed(null),
+  boardCardCiPasses: () => Effect.succeed([]),
   boardCardActivity: () => Effect.succeed([]),
   boardCardBrief: () => Effect.succeed(null),
   boardPlanBody: () => Effect.succeed(null),

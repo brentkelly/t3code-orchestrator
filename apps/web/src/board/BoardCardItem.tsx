@@ -35,8 +35,9 @@ import {
   CircleSlashIcon,
 } from "lucide-react";
 import { PullRequestGlyph } from "../components/pullRequest/pullRequestIcons";
-import type { DragEvent, ReactNode } from "react";
+import { memo, type DragEvent, type ReactNode } from "react";
 
+import { useNowMinute } from "../hooks/useNowMinute";
 import { cn } from "../lib/utils";
 import {
   boardCardProgressBlock,
@@ -67,6 +68,7 @@ import { projectAccent } from "./projectAccent";
 import { useBoardWorkersState } from "./workers/BoardWorkersContext";
 import { boardCardWorkerChip } from "./workers/cardWorker";
 import { BoardHint } from "./BoardHint";
+import { sameBoardCardItemProps } from "./boardCardItemProps";
 import type { BoardQueueInfo } from "./boardQueueInfo";
 import type { BoardGroupCardVm } from "./boardGroups";
 import { BOARD_GROUP_PIP_CLASS } from "./boardGroupPips";
@@ -444,8 +446,8 @@ export function BoardCardContent({
       : childRunning !== undefined && childRunning > 0
         ? boardCardChildRunningLabel(childRunning)
         : null;
-  // oxlint-disable-next-line react/purity -- the face samples the clock whenever the card re-renders on a board push.
-  const faceNow = Date.now();
+  // The shared minute tick, so the face's clock is a render input rather than a sample.
+  const faceNow = Date.parse(`${useNowMinute()}Z`);
   const { own, tone, notice } = boardCardFace({
     card,
     summary,
@@ -475,8 +477,7 @@ export function BoardCardContent({
     scheduledStartAt: card.scheduledStartAt ?? null,
     done: summary.muted,
     parked: card.stepAwaiting !== null || card.stalled,
-    // oxlint-disable-next-line react/purity -- the pill samples the clock whenever the card re-renders on a board push.
-    nowMs: Date.now(),
+    nowMs: faceNow,
   });
   // The card's Auto-build. Yields the single right-hand slot to a
   // schedule pill, which names a concrete moment and is the more specific
@@ -742,7 +743,7 @@ export function BoardCardContent({
  * `@legendapp/list`'s absolute positioning. `dragging` dims the source while
  * the page-built clone follows the cursor.
  */
-export function DraggableBoardCard({
+function DraggableBoardCardView({
   card,
   labelsById,
   queueSlot,
@@ -783,7 +784,7 @@ export function DraggableBoardCard({
   readonly accentName?: ProjectIconColor | null | undefined;
   readonly todos?: BoardCardTodoContext | undefined;
   readonly parentKey?: string | undefined;
-  readonly onOpenSubBoard?: (() => void) | undefined;
+  readonly onOpenSubBoard?: ((card: BoardCardShell) => void) | undefined;
   readonly attention?: BoardCardAttention | null | undefined;
   readonly childAttention?: BoardCardChildAttention | undefined;
   readonly childRunning?: number | undefined;
@@ -795,6 +796,7 @@ export function DraggableBoardCard({
   readonly worktreeKeptReason?: string | null | undefined;
   readonly stageGone?: string | null | undefined;
 }) {
+  const openSubBoard = onOpenSubBoard === undefined ? undefined : () => onOpenSubBoard(card);
   return (
     // Keyboard path: the card is a focusable button-role element — Enter/Space
     // opens the detail dialog, whose stage actions are real buttons, so moving
@@ -817,9 +819,9 @@ export function DraggableBoardCard({
         }
         // Ctrl/Cmd+Arrow reorders; plain arrows stay free for scrolling and focus.
         // Alt+Down drills into a group's board.
-        if (event.altKey && event.key === "ArrowDown" && group !== null && onOpenSubBoard) {
+        if (event.altKey && event.key === "ArrowDown" && group !== null && openSubBoard) {
           event.preventDefault();
-          onOpenSubBoard();
+          openSubBoard();
           return;
         }
         if (
@@ -841,7 +843,7 @@ export function DraggableBoardCard({
         accentName={accentName}
         todos={todos}
         parentKey={parentKey}
-        onOpenSubBoard={onOpenSubBoard}
+        onOpenSubBoard={openSubBoard}
         attention={attention}
         childAttention={childAttention}
         childRunning={childRunning}
@@ -857,6 +859,10 @@ export function DraggableBoardCard({
     </div>
   );
 }
+
+/** Memoised by value (`sameBoardCardItemProps`): a board change re-derives every card's
+    view values, and only the cards whose values changed re-render. */
+export const DraggableBoardCard = memo(DraggableBoardCardView, sameBoardCardItemProps);
 
 /** T3o: a card's setup on its face: Preparing n/4 with a stepped bar, or Setup failed (T3O-86). */
 function BoardCardSetupFace({ card }: { readonly card: BoardCardShell }) {

@@ -856,3 +856,57 @@ it.effect("T3O-12: the branch-commit life sign keeps no ceiling", () =>
       }),
   ),
 );
+
+it.effect("one sweep reads each running step's thread state at most once", () => {
+  const otherCardId = BoardCardId.make("card-sweep-2");
+  const otherThreadId = ThreadId.make("thread-sweep-2");
+  const reads = new Map<string, number>();
+  let counting = false;
+  const base = boardWithStep(runningStep());
+  return withGovernor(
+    {
+      board: {
+        ...base,
+        cards: [
+          ...base.cards,
+          makeBoardCard({
+            id: "card-sweep-2",
+            stage: "building",
+            orderKey: "n",
+            worktree: readyWorktree("card-sweep-2"),
+          }),
+        ],
+        stepStates: [runningStep(), runningStep({ cardId: otherCardId, threadId: otherThreadId })],
+      },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+      capacityFor: 3,
+      // Both threads sit on a permission prompt: the path that asks the most of them.
+      initialShells: new Map([
+        [String(threadId), aliveThread(String(threadId), { pendingApproval: true })],
+        [String(otherThreadId), aliveThread(String(otherThreadId), { pendingApproval: true })],
+      ]),
+      gateway: (local) => ({
+        ...local,
+        threadState: (id) => {
+          if (counting) reads.set(String(id), (reads.get(String(id)) ?? 0) + 1);
+          return local.threadState(id);
+        },
+      }),
+    },
+    ({ reactor }) =>
+      Effect.gen(function* () {
+        // Twice: the first stamps the permission hold, the second re-reads it as well.
+        for (let sweep = 0; sweep < 2; sweep++) {
+          reads.clear();
+          counting = true;
+          yield* reactor.sweep;
+          counting = false;
+          assert.deepStrictEqual(
+            Object.fromEntries(reads),
+            { [String(threadId)]: 1, [String(otherThreadId)]: 1 },
+            `sweep ${sweep + 1}`,
+          );
+        }
+      }),
+  );
+});

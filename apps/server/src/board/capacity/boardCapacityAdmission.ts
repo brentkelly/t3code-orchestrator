@@ -259,10 +259,11 @@ export const makeBoardCapacityAdmission = (deps: BoardCapacityAdmissionDeps) => 
   const freshClaimId = (cardId: BoardCardId) =>
     claimNonce.set(cardId, (claimNonce.get(cardId) ?? 0) + 1);
 
+  /** `keys` may be shared across one `syncAll`, so each project is read once per sweep. */
   const repositoryKeys = Effect.fn("BoardCapacityAdmission.repositoryKeys")(function* (
     board: BoardState,
+    keys: Map<string, string | null> = new Map(),
   ) {
-    const keys = new Map<string, string | null>();
     for (const card of board.cards) {
       if (!keys.has(card.projectId))
         keys.set(card.projectId, yield* deps.repositoryKey(card.projectId));
@@ -284,6 +285,7 @@ export const makeBoardCapacityAdmission = (deps: BoardCapacityAdmissionDeps) => 
   /** Send each worker the board's granted state for it, when it changed. */
   const syncWorker = Effect.fn("BoardCapacityAdmission.syncWorker")(function* (
     workerId: BoardWorkerId,
+    repositoryKeyMemo?: Map<string, string | null>,
   ) {
     return yield* syncLockFor(workerId).withPermits(1)(
       Effect.gen(function* () {
@@ -293,7 +295,7 @@ export const makeBoardCapacityAdmission = (deps: BoardCapacityAdmissionDeps) => 
           workerId,
           Effect.gen(function* () {
             const board = yield* deps.readBoard;
-            const keys = yield* repositoryKeys(board);
+            const keys = yield* repositoryKeys(board, repositoryKeyMemo);
             return syncEntriesFor({ board, workerId, repositoryKey: keys });
           }),
         );
@@ -311,7 +313,8 @@ export const makeBoardCapacityAdmission = (deps: BoardCapacityAdmissionDeps) => 
 
   const syncAll = Effect.fn("BoardCapacityAdmission.syncAll")(function* () {
     const board = yield* deps.readBoard;
-    for (const workerId of workersOf(board)) yield* syncWorker(workerId);
+    const repositoryKeyMemo = new Map<string, string | null>();
+    for (const workerId of workersOf(board)) yield* syncWorker(workerId, repositoryKeyMemo);
   });
 
   /** A placement claim, immediately before the card's provision is dispatched. */
@@ -357,6 +360,31 @@ export const makeBoardCapacityAdmission = (deps: BoardCapacityAdmissionDeps) => 
     return { kind: "granted", claimId, profile } as PlacementDecision;
   });
 
+  /** Per card, the worker snapshot its last grow claim was denied against: until a newer one
+      (or the settle time) shows room may have moved, a pass sends no claim to hear it again. */
+  const growDeniedAgainst = new Map<
+    BoardCardId,
+    {
+      readonly workerId: BoardWorkerId;
+      readonly snapshot: BoardWorkerCapacitySnapshot | null;
+      readonly hold: boolean;
+      readonly providerInstanceId: string | null;
+      readonly profile: BoardResourceProfile;
+      readonly at: number;
+      readonly answer: CapacityHold;
+    }
+  >();
+  /** The board itself freed room on a worker: a denial there no longer stands. */
+  const forgetGrowDenials = (workerId: BoardWorkerId) => {
+    for (const [cardId, denied] of growDeniedAgainst) {
+      if (denied.workerId === workerId) growDeniedAgainst.delete(cardId);
+    }
+  };
+  const sameProfile = (left: BoardResourceProfile, right: BoardResourceProfile) =>
+    left.cpuCores === right.cpuCores &&
+    left.ramGiB === right.ramGiB &&
+    left.diskGB === right.diskGB;
+
   /**
    * Before a step on a placed card: a heavy grant needs nothing; a light one takes a grow
    * claim at the profile it was granted. Null when the step may go ahead, else its hold.
@@ -382,8 +410,26 @@ export const makeBoardCapacityAdmission = (deps: BoardCapacityAdmissionDeps) => 
       } as CapacityHold;
     }
     const profile = grant?.profile ?? requestedProfileOf(board, card);
+    // Denied against this very snapshot, with the same ask: the worker would say the same.
+    const now = yield* nowMs;
+    const snapshot = yield* deps.client.latest(workerId);
+    const denied = growDeniedAgainst.get(card.id);
+    if (
+      !force &&
+      denied !== undefined &&
+      denied.workerId === workerId &&
+      denied.snapshot !== null &&
+      denied.snapshot === snapshot &&
+      denied.hold === hold &&
+      denied.providerInstanceId === providerInstanceId &&
+      sameProfile(denied.profile, profile) &&
+      now - denied.at < SNAPSHOT_SETTLE_MS + SNAPSHOT_INTERVAL_MS
+    ) {
+      return denied.answer;
+    }
+    growDeniedAgainst.delete(card.id);
     const answer = yield* claimOn(workerId, {
-      claimId: `${card.id}:grow:${yield* nowMs}`,
+      claimId: `${card.id}:grow:${now}`,
       cardId: card.id,
       repositoryKey: yield* deps.repositoryKey(card.projectId),
       kind: "grow",
@@ -399,7 +445,19 @@ export const makeBoardCapacityAdmission = (deps: BoardCapacityAdmissionDeps) => 
         blocksWorker: false,
       } as CapacityHold;
     }
-    if (answer.outcome === "denied") return holdForDenial(answer, workerId, "grow");
+    if (answer.outcome === "denied") {
+      const denial = holdForDenial(answer, workerId, "grow");
+      growDeniedAgainst.set(card.id, {
+        workerId,
+        snapshot,
+        hold,
+        providerInstanceId,
+        profile,
+        at: now,
+        answer: denial,
+      });
+      return denial;
+    }
     yield* deps.dispatch({
       type: "board.card.record-grant",
       commandId: yield* deps.commandId("grow"),
@@ -516,6 +574,7 @@ export const makeBoardCapacityAdmission = (deps: BoardCapacityAdmissionDeps) => 
       ) {
         continue;
       }
+      forgetGrowDenials(workerId);
       yield* deps.dispatch({
         type: "board.card.record-grant",
         commandId: yield* deps.commandId("resize"),
@@ -577,7 +636,7 @@ export const makeBoardCapacityAdmission = (deps: BoardCapacityAdmissionDeps) => 
       if (grant === null) continue;
       // An archived card runs nothing; a worktree its reclaim left behind keeps only its disk.
       if (card.archivedAt !== null) {
-        if (grant.heavy) yield* release(card);
+        if (grant.heavy) yield* release(card, card.placedWorkerId ?? cardWorkerOf(board, card));
         continue;
       }
       const state = stateOf(card.id);
@@ -604,7 +663,7 @@ export const makeBoardCapacityAdmission = (deps: BoardCapacityAdmissionDeps) => 
       const nothingPending = !active && !stepQueuedInWorktree(state);
       const workerId = card.placedWorkerId ?? cardWorkerOf(board, card);
       if (!heavy) {
-        yield* release(card);
+        yield* release(card, workerId);
       } else if (nothingPending && waitingWorkers.has(workerId)) {
         idle.push({ card, since: lastActive.get(card.id) ?? now });
       }
@@ -616,7 +675,7 @@ export const makeBoardCapacityAdmission = (deps: BoardCapacityAdmissionDeps) => 
       const workerId = card.placedWorkerId ?? cardWorkerOf(board, card);
       if (released.has(workerId)) continue;
       released.add(workerId);
-      yield* release(card);
+      yield* release(card, workerId);
     }
     yield* syncAll();
   });
@@ -694,7 +753,7 @@ export const makeBoardCapacityAdmission = (deps: BoardCapacityAdmissionDeps) => 
       for (const { card } of onWorker) {
         if (freeCpu >= need.cpuCores && freeRam >= need.ramGiB) break;
         const profile = card.resources!.grant!.profile;
-        yield* release(card);
+        yield* release(card, workerId);
         releasedAgainst.set(workerId, { snapshot, at: now });
         released += 1;
         freeCpu += profile.cpuCores;
@@ -706,7 +765,11 @@ export const makeBoardCapacityAdmission = (deps: BoardCapacityAdmissionDeps) => 
     return true;
   });
 
-  const release = Effect.fn("BoardCapacityAdmission.release")(function* (card: BoardCard) {
+  const release = Effect.fn("BoardCapacityAdmission.release")(function* (
+    card: BoardCard,
+    workerId: BoardWorkerId,
+  ) {
+    forgetGrowDenials(workerId);
     yield* deps.dispatch({
       type: "board.card.record-grant",
       commandId: yield* deps.commandId("release-heavy"),

@@ -8,13 +8,12 @@ import {
   BoardWorkerGitError,
   CommandId,
   ProjectId,
-  type BoardCardDetail,
+  type BoardState,
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
 import { boardActivityActorFor, resetBoardActivityActors } from "../activityActors.ts";
-import { inertBoardQueries } from "../boardServices.testkit.ts";
 import { boardActorStamp } from "../rpc.ts";
 import { bindBoardWorkspace, type BoardWorkspace } from "./BoardWorkspace.ts";
 
@@ -47,8 +46,8 @@ const deps = (centralCheckout: string | null, asked: Array<string>) => ({
             },
       ),
   },
-  boardQueries: inertBoardQueries({
-    boardCardDetail: () => Effect.succeed({ card: { projectId } } as unknown as BoardCardDetail),
+  readModel: Effect.succeed({
+    board: { cards: [{ id: cardId, projectId }] } as unknown as BoardState,
   }),
   workspaces: {
     localProject: () =>

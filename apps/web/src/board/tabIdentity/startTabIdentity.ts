@@ -8,7 +8,6 @@ import {
   type BoardShellSnapshot,
   type EnvironmentId,
 } from "@t3tools/contracts";
-import * as Option from "effect/Option";
 import { Atom } from "effect/reactivity";
 
 import { useComposerDraftStore, type DraftId } from "../../composerDraftStore";
@@ -22,7 +21,6 @@ import { environmentPresentations } from "../../state/presentation";
 import { primaryEnvironmentIdAtom } from "../../state/primaryEnvironment";
 import { environmentProjects } from "../../state/projects";
 import { primaryServerConfigAtom, serverEnvironment } from "../../state/server";
-import { environmentShell } from "../../state/shell";
 import { environmentThreadShells } from "../../state/threads";
 import { resolveBoardEnvironment, type BoardEnvironmentCandidate } from "../useBoardEnvironmentId";
 import { tabCreatingCardAtom } from "./creatingCard";
@@ -145,8 +143,8 @@ export function startTabIdentity(router: AppRouter): void {
     Atom.withLabel("t3o-tab-identity-settle-tick"),
   );
 
-  // Reads the shell, which changes on every streaming tick; equality keeps an unchanged status
-  // from recomputing the identity.
+  // Reads card-linked threads only, so an unrelated thread's push does not recompute it; equality
+  // keeps an unchanged status from recomputing the identity.
   const cardStatusAtom = Atom.family((cardId: string) =>
     Atom.make((get): CardTabStatus => {
       get(settleTickAtom);
@@ -155,12 +153,11 @@ export function startTabIdentity(router: AppRouter): void {
       const environmentId = boardEnv.environmentId;
       const board = get(boardEnvironment.boardAtom(environmentId));
       if (board === null) return NO_CARD_STATUS;
-      const shell = get(environmentShell.stateValueAtom(environmentId));
-      const threads = Option.isSome(shell.snapshot) ? shell.snapshot.value.threads : [];
+      const threads = get(boardEnvironment.cardThreadShellsAtom(environmentId));
       return resolveCardTabStatus({
         cardId,
         cards: board.cards,
-        threadOf: (threadId) => threads.find((thread) => thread.id === threadId),
+        threadOf: (threadId) => threads.get(threadId),
         stageList: get(boardEnvironment.stageListAtom(environmentId)),
         projectStageConfigs: get(boardEnvironment.projectStageConfigsAtom(environmentId)),
         serverSettings: get(serverEnvironment.settingsValueAtom(environmentId)),

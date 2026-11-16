@@ -407,7 +407,9 @@ it.layer(makeBoardStackTestLayer("t3o-thread-gateway-contract-"))(
         });
         assert.notInclude(yield* threads.listBusyThreadIds(), threadId);
         assert.isTrue((yield* threads.threadRecords([threadId])).get(threadId)!.archived);
-        assert.strictEqual((yield* threads.openThreadIds([threadId])).open.size, 0);
+        // Archived is finished but not for good: unarchive reopens it.
+        const archivedSweep = yield* threads.openThreadIds([threadId]);
+        assert.strictEqual(archivedSweep.open.size + archivedSweep.deleted.size, 0);
 
         // The turn the spawn asked for reads as the BOARD's, never a human's.
         const requested = signalsOf(yield* loggedSince(before)).filter(
@@ -961,7 +963,9 @@ it.layer(makeBoardStackTestLayer("t3o-thread-gateway-contract-"))(
           archived: false,
           settlementDecided: false,
         });
-        assert.strictEqual((yield* threads.openThreadIds([threadId])).open.size, 0);
+        const sweep = yield* threads.openThreadIds([threadId]);
+        assert.strictEqual(sweep.open.size, 0);
+        assert.deepStrictEqual([...sweep.deleted], [threadId]);
 
         const after = yield* threads.todoLogHead;
         const logged = yield* Stream.runCollect(threads.readTodoLog(before, after));
@@ -1221,6 +1225,10 @@ it.layer(makeBoardStackTestLayer("t3o-thread-gateway-contract-"))(
         ]);
         const after = yield* threads.lastSignalAt(threadId);
         assert.isTrue(after! > before!, `${before} -> ${after}`);
+        // The thread's own update time, as its shell reads it; a deleted thread has none.
+        assert.strictEqual(after, "2099-01-01T00:00:00.000Z");
+        yield* threads.delete({ commandId: boardCommandId("delete-signal-thread"), threadId });
+        assert.isNull(yield* threads.lastSignalAt(threadId));
       }),
     );
 

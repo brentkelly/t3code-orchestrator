@@ -12,6 +12,7 @@ import {
   type BoardCardGrant,
   type BoardCardStepState,
   type BoardCommand,
+  type BoardResourceProfile,
   type BoardState,
   type BoardWorkerCapacitySnapshot,
   type BoardWorkerId,
@@ -654,9 +655,56 @@ it.effect(
         ...heavy,
         resources: { sizing: null, setup: null, grant: grant({ heavy: false }) },
       };
+      h.fake.frozen.set(
+        BOARD_LOCAL_WORKER_ID,
+        (yield* h.fake.client.latest(BOARD_LOCAL_WORKER_ID))!,
+      );
       const hold = yield* h.admission.ensureHeavy(light, "codex", false);
       assert.deepInclude(hold, { queuedBy: "capacity", blocksWorker: false });
+      assert.lengthOf(h.fake.claims, 2);
+      // The next pass against the same snapshot asks nothing, and holds the same.
+      assert.deepStrictEqual(yield* h.admission.ensureHeavy(light, "codex", false), hold);
+      assert.lengthOf(h.fake.claims, 2);
+      // A grow hold, a Start now or a new snapshot is a new question.
+      yield* h.admission.ensureHeavy(light, "codex", false, true);
+      assert.lengthOf(h.fake.claims, 3);
+      yield* h.admission.ensureHeavy(light, "codex", true);
+      assert.lengthOf(h.fake.claims, 4);
+      h.fake.external.delete(BOARD_LOCAL_WORKER_ID);
+      h.fake.frozen.delete(BOARD_LOCAL_WORKER_ID);
+      assert.isNull(yield* h.admission.ensureHeavy(light, "codex", false));
+      assert.lengthOf(h.fake.claims, 5);
     }),
+);
+
+it.effect("a grow denied against a snapshot is asked again once the board frees room there", () =>
+  Effect.gen(function* () {
+    const now = { ms: T0 };
+    const waiting = {
+      ...step("a", "queued"),
+      queuedBy: "capacity" as const,
+      queuedDetail: { workerId: BOARD_LOCAL_WORKER_ID },
+    };
+    const big = { cpuCores: 12, ramGiB: 8, diskGB: 5 };
+    const h = yield* harness(
+      boardWith(
+        [granted("a", { heavy: false, profile: big }), granted("b", { profile: big })],
+        [waiting],
+      ),
+      now,
+    );
+    yield* h.admission.syncAll();
+    h.fake.frozen.set(BOARD_LOCAL_WORKER_ID, (yield* h.fake.client.latest(BOARD_LOCAL_WORKER_ID))!);
+    const light = (yield* Ref.get(h.board)).cards[0]!;
+    assert.deepInclude(yield* h.admission.ensureHeavy(light, "codex", false), {
+      queuedBy: "capacity",
+    });
+    assert.lengthOf(h.fake.claims, 1);
+    // The cut-short releases b; the worker's snapshot doesn't show it yet, but the claim is new.
+    assert.isTrue(yield* h.admission.releaseForWaiting());
+    assert.isNull(yield* h.admission.ensureHeavy(light, "codex", false));
+    assert.lengthOf(h.fake.claims, 2);
+  }),
 );
 
 it("syncCards lists cards provisioning or ready with a grant on that worker, never a group", () => {
@@ -748,3 +796,38 @@ it("the upgrade's baseline keeps the old throttle: n builds still fit on each wo
 });
 
 void projectId;
+
+it.effect("syncAll reads each project's repository key once, however many workers it syncs", () =>
+  Effect.gen(function* () {
+    const W2 = EnvironmentId.make("env-w2");
+    const fake = yield* makeFakeCapacity(
+      new Map<BoardWorkerId, BoardResourceProfile>([
+        [BOARD_LOCAL_WORKER_ID, { cpuCores: 16, ramGiB: 64, diskGB: 200 }],
+        [W1, { cpuCores: 16, ramGiB: 64, diskGB: 200 }],
+        [W2, { cpuCores: 16, ramGiB: 64, diskGB: 200 }],
+      ]),
+    );
+    const other = "project-other" as BoardCard["projectId"];
+    const board: BoardState = {
+      ...boardWith([granted("a"), granted("b"), { ...granted("c"), projectId: other }]),
+      workers: [{ id: W1 }, { id: W2 }] as unknown as BoardState["workers"],
+    };
+    const keyReads: Array<string> = [];
+    const admission = makeBoardCapacityAdmission({
+      client: fake.client,
+      readBoard: Effect.succeed(board),
+      dispatch: () => Effect.succeed(true),
+      commandId: (tag) => Effect.succeed(`cmd-${tag}` as BoardCommand["commandId"]),
+      nowIso: Effect.succeed(iso(T0)),
+      repositoryKey: (projectId) =>
+        Effect.sync(() => {
+          keyReads.push(projectId);
+          return `github.com/acme/${projectId}`;
+        }),
+      awaitingPermission: () => Effect.succeed(false),
+    });
+    yield* admission.syncAll();
+    assert.strictEqual(fake.syncs.length, 3);
+    assert.deepStrictEqual([...keyReads].sort(), [other, projectId].sort());
+  }),
+);
