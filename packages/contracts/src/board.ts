@@ -4046,21 +4046,6 @@ export function resolveBoardCardAutomation(input: {
 }
 
 /**
- * What automates the card's planning, which is when the Auto sign-off gate applies. Null means
- * a person plans, so the plan always waits for them. Plan review's unattended mode adds "review".
- */
-export type BoardPlanAutomatedBy = "auto-plan" | "review" | null;
-
-export function boardPlanAutomatedBy(
-  resolved: BoardResolvedAutomation,
-  /** The card sits in Planning with an unattended plan review on. */
-  review?: { readonly unattendedInPlanning: boolean },
-): BoardPlanAutomatedBy {
-  if (resolved.autoPlan.value) return "auto-plan";
-  return review?.unattendedInPlanning === true ? "review" : null;
-}
-
-/**
  * T3o: the card's step row when it belongs to the card's current stay in its stage (T3O-115):
  * same stage step and the same `stageEnteredAt`, so a card dragged back into a stage never
  * reads the row it left behind. Null otherwise.
@@ -4082,21 +4067,6 @@ export function boardCardPlanningFinished(
   const stage = boardStageById(board, card.stage);
   if (stage === null || effectiveBoardStageRole(stage) !== "plan") return false;
   return boardCardStepThisStay(boardCardStepState(board, card.id), card)?.status === "succeeded";
-}
-
-/**
- * An unattended plan review finished on the card's plan step and its single plan waits on the
- * Sign-off gate. Auto sign-off then approves it; a split always waits for a human.
- */
-export function isBoardCardReviewSignOffPending(
-  board: BoardState,
-  card: Pick<BoardCard, "id" | "stage" | "planReview">,
-): boolean {
-  if (card.planReview?.enabled !== true || card.planReview.unattended !== true) return false;
-  if (!boardCardPlanningFinished(board, card)) return false;
-  const state = boardCardStepState(board, card.id);
-  if (state?.planReviewStartedAt === undefined) return false;
-  return boardCardPlans(board, card.id).length === 1;
 }
 
 /** `resolveBoardCardAutomation` over the full board state. */
@@ -7685,6 +7655,8 @@ export const BoardCardShell = Schema.Struct({
   autoMergeSetting: Schema.optionalKey(Schema.Boolean),
   /** The current planning run is unattended, absent otherwise. */
   autoPlanPending: Schema.optionalKey(Schema.Boolean),
+  /** T3o: an automation gate's last attempt could not act (T3O-115); absent otherwise. */
+  gateBlock: Schema.optionalKey(BoardCardGateBlock),
   /** When auto-merge was first refused, absent when nothing is held (key-optional for the
       byte budget). The pill's elapsed clock measures from here, so it shows the whole wait,
       not the time since the last retry. */
@@ -8073,6 +8045,7 @@ export function makeBoardCardShell(input: {
   readonly autoBuildSetting?: boolean | null | undefined;
   readonly autoMergeSetting?: boolean | null | undefined;
   readonly autoPlanPending?: boolean | null | undefined;
+  readonly gateBlock?: BoardCardGateBlock | null | undefined;
   /** The auto-merge hold's shell facts. On the card
       aggregate, so BOTH producers — the SQL snapshot query
       and the JS delta derivation — must carry them or a held card's pill
@@ -8181,6 +8154,7 @@ export function makeBoardCardShell(input: {
     ...(input.autoBuildSetting == null ? {} : { autoBuildSetting: input.autoBuildSetting }),
     ...(input.autoMergeSetting == null ? {} : { autoMergeSetting: input.autoMergeSetting }),
     ...(input.autoPlanPending === true ? { autoPlanPending: true } : {}),
+    ...(input.gateBlock == null ? {} : { gateBlock: input.gateBlock }),
     // The auto-merge hold: three byte-cheap facts, each omitted
     // when it has nothing to say, so a board that has never held a merge is
     // byte-identical to an older payload.
@@ -8300,6 +8274,7 @@ export function boardCardShellFromCard(
     autoBuildSetting: card.autoBuildSetting,
     autoMergeSetting: card.autoMergeSetting,
     autoPlanPending: isBoardCardAutoPlanPending(card),
+    gateBlock: card.gateBlock ?? null,
     autoMergeHeldSince: card.autoMergeHold?.heldSince ?? null,
     autoMergeGaveUp: boardCardAutoMergeGaveUp(card.autoMergeHold),
     prDraft: boardCardPullRequestIsOpenDraft(card.pullRequest),

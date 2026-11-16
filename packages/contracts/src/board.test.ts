@@ -32,7 +32,6 @@ import {
   DEFAULT_BOARD_SETTINGS,
   BOARD_AUTOMATION_BOARD_WIDE_MERGE_REASON,
   resolveBoardCardAutomationIn,
-  boardPlanAutomatedBy,
   boardCardPlanningFinished,
   isBoardCardAutoMergeSoft,
   boardStageBeforeBuild,
@@ -2904,16 +2903,11 @@ describe("automation (T3O-38)", () => {
       const inherited = resolve(child, [outer, inner]);
       expect(inherited.autoPlan).toMatchObject({ value: true, source: "inherited" });
       expect(inherited.autoSignOff).toMatchObject({ value: true, source: "inherited" });
-      expect(boardPlanAutomatedBy(inherited)).toBe("auto-plan");
       const signOffOverridden = resolve({ ...child, autoSignOffSetting: false }, [outer, inner]);
       expect(signOffOverridden.autoSignOff).toMatchObject({ value: false, source: "own" });
-      // Turning Auto-plan off leaves sign-off stored, but nothing automates the planning.
+      // Turning Auto-plan off leaves sign-off stored.
       const planOff = resolve({ ...child, autoPlanSetting: false }, [outer, inner]);
       expect(planOff.autoSignOff.value).toBe(true);
-      expect(boardPlanAutomatedBy(planOff)).toBe(null);
-      // An unattended plan review in Planning automates it too; Auto-plan still names itself.
-      expect(boardPlanAutomatedBy(planOff, { unattendedInPlanning: true })).toBe("review");
-      expect(boardPlanAutomatedBy(inherited, { unattendedInPlanning: true })).toBe("auto-plan");
       expect(inherited.autoPlan.inheritedFrom).toEqual({ id: "inner", key: "INNER" });
       expect(inherited.autoMerge).toMatchObject({ value: true, source: "inherited" });
       const overridden = resolve({ ...child, autoPlanSetting: false, autoMergeSetting: false }, [

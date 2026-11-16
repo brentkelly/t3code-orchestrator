@@ -667,6 +667,8 @@ const BoardCardShellDbRow = Schema.Struct({
   autoBuildSetting: Schema.NullOr(Schema.Int),
   autoMergeSetting: Schema.NullOr(Schema.Int),
   autoPlanPending: Schema.Int,
+  // T3o: the card's last blocked gate attempt (T3O-115), carried as it is stored.
+  gateBlock: Schema.NullOr(Schema.fromJsonString(BoardCardGateBlock)),
   /** The card's auto-merge hold, flattened to the facts the shell carries:
       when the hold started and whether its ladder is spent.
       Derived in SQL here and in JS on the delta path;
@@ -1282,6 +1284,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
           WHEN auto_plan IS NOT NULL AND json_extract(auto_plan, '$.endedAt') IS NULL THEN 1
           ELSE 0
         END AS "autoPlanPending",
+        gate_block AS "gateBlock",
         -- The SECOND producer of the auto-merge shell facts (T3O-38, D14). The
         -- delta path derives the same three in JS off the card aggregate's
         -- autoMergeHold; these derive them in SQL
@@ -1388,6 +1391,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
           WHEN auto_plan IS NOT NULL AND json_extract(auto_plan, '$.endedAt') IS NULL THEN 1
           ELSE 0
         END AS "autoPlanPending",
+        gate_block AS "gateBlock",
         -- The SECOND producer of the auto-merge shell facts (T3O-38, D14). The
         -- delta path derives the same three in JS off the card aggregate's
         -- autoMergeHold; these derive them in SQL
@@ -4363,6 +4367,7 @@ function boardShellCards(
           autoBuildSetting: settingFromInt(row.autoBuildSetting),
           autoMergeSetting: settingFromInt(row.autoMergeSetting),
           autoPlanPending: row.autoPlanPending !== 0,
+          gateBlock: row.gateBlock,
           autoMergeHeldSince: row.autoMergeHeldSince,
           autoMergeGaveUp: row.autoMergeGaveUp !== 0,
           prDraft: row.prDraft !== 0,
@@ -4459,6 +4464,7 @@ function boardArchivedShellCards(
             autoBuildSetting: settingFromInt(row.autoBuildSetting),
             autoMergeSetting: settingFromInt(row.autoMergeSetting),
             autoPlanPending: row.autoPlanPending !== 0,
+            gateBlock: row.gateBlock,
             autoMergeHeldSince: row.autoMergeHeldSince,
             autoMergeGaveUp: row.autoMergeGaveUp !== 0,
             prDraft: row.prDraft !== 0,
