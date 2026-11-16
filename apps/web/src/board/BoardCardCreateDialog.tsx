@@ -71,12 +71,8 @@ import {
 } from "./boardCardDraftStore";
 import { boardCardCreateShortcutLabel, isBoardCardCreateShortcut } from "./boardCardCreateShortcut";
 import { BoardBaseBranchSelect } from "./BoardBaseBranchSelect";
-import { BoardWorkerPicker } from "./workers/BoardWorkerPicker";
-import {
-  BOARD_ANY_READY_WORKER_LABEL,
-  boardWorkerCheckoutWarning,
-  boardWorkerFieldLabel,
-} from "./workers/cardWorker";
+import { BoardWorkerPinButton } from "./workers/BoardWorkerPinButton";
+import { boardWorkerLabel } from "./workers/cardWorker";
 import { useBoardWorkerChoices } from "./workers/useBoardWorkerChoices";
 import { BoardCardSchedulePopover } from "./BoardCardSchedulePopover";
 import { BoardLabelField } from "./BoardLabelField";
@@ -190,6 +186,26 @@ export function BoardCardCreateDialog({
   // now, and a worker can be gone by the time a draft is reopened.
   const [pinnedWorkerId, setPinnedWorkerId] = useState<BoardWorkerId | null>(null);
   const workerField = useBoardWorkerChoices(environmentId, projectId);
+  // Amber footer line after a project change drops the pin (prototype 5.8).
+  const [pinNotice, setPinNotice] = useState<string | null>(null);
+  const [pinCheckedProjectId, setPinCheckedProjectId] = useState(projectId);
+  if (pinCheckedProjectId !== projectId) {
+    setPinCheckedProjectId(projectId);
+    setPinNotice(null);
+    const pinReady =
+      pinnedWorkerId === null ||
+      workerField.choices.some((choice) => choice.workerId === pinnedWorkerId && choice.selectable);
+    if (!pinReady) {
+      setPinNotice(
+        `Pin removed · ${boardWorkerLabel(pinnedWorkerId, workerField.workers)} isn't ready for ${workerField.projectName}`,
+      );
+      setPinnedWorkerId(null);
+    }
+  }
+  const selectPin = (workerId: BoardWorkerId | null) => {
+    setPinNotice(null);
+    setPinnedWorkerId(workerId);
+  };
   /** The card's scheduled start, null until the clock is touched. */
   const [scheduledStartAt, setScheduledStartAt] = useState<string | null>(null);
   const [priority, setPriority] = useState<BoardCardPriority>("normal");
@@ -286,6 +302,7 @@ export function BoardCardCreateDialog({
     setProjectId(defaultProjectId ?? projects[0]?.id ?? null);
     setBaseBranch(null);
     setPinnedWorkerId(null);
+    setPinNotice(null);
     setScheduledStartAt(null);
     setPriority("normal");
     setStage(defaultStage);
@@ -357,6 +374,7 @@ export function BoardCardCreateDialog({
         setProjectId(fields.projectId);
         setBaseBranch(fields.baseBranch);
         setPinnedWorkerId(null);
+        setPinNotice(null);
         setScheduledStartAt(fields.scheduledStartAt);
         setPriority(fields.priority);
         setStage(fields.stage);
@@ -674,9 +692,6 @@ export function BoardCardCreateDialog({
                     // Dependencies are kept (cross-project edges are legal), but a
                     // base branch from the old project's checkout means nothing here.
                     setBaseBranch(null);
-                    // So does the worker pin: a worker chosen for the
-                    // old project may have no checkout of the new one.
-                    setPinnedWorkerId(null);
                   }}
                   value={projectId ?? ""}
                 >
@@ -734,42 +749,7 @@ export function BoardCardCreateDialog({
                 />
               </div>
             )}
-
-            {workerField.shown ? (
-              // Where the card runs (prototype 4.1). Only once a second
-              // worker exists.
-              <div className="min-w-0 flex-1">
-                <BoardSectionHeading className="mb-[7px]">
-                  Worker{" "}
-                  <span className="font-normal text-muted-foreground normal-case">
-                    where this card runs
-                  </span>
-                </BoardSectionHeading>
-                <BoardWorkerPicker
-                  choices={workerField.choices}
-                  className="h-8 w-full"
-                  followLabel={BOARD_ANY_READY_WORKER_LABEL}
-                  onSelect={setPinnedWorkerId}
-                  onSetUp={workerField.setUp}
-                  pinnedWorkerId={pinnedWorkerId}
-                  value={boardWorkerFieldLabel(pinnedWorkerId, workerField.workers)}
-                />
-              </div>
-            ) : null}
           </div>
-          {workerField.shown
-            ? (() => {
-                const warning = boardWorkerCheckoutWarning({
-                  state: workerField.workers,
-                  pinnedWorkerId,
-                  projectRepositoryKey: workerField.projectRepositoryKey,
-                  projectName: workerField.projectName,
-                });
-                return warning === null ? null : (
-                  <p className="-mt-2 text-board-12 text-warning-foreground">{warning}</p>
-                );
-              })()
-            : null}
 
           {/* Title and Label share a row. Title comes FIRST and holds
               autofocus: the label control used to be the dialog's first text
@@ -887,13 +867,28 @@ export function BoardCardCreateDialog({
           {/* Left of Cancel, and a bare clock until a time is set: the brief
               asks for this to be largely hidden, and it is one of the few
               things on a new card that almost nobody sets. */}
-          <BoardCardSchedulePopover
-            className="sm:mr-auto"
-            kind="before-build"
-            onChange={setScheduledStartAt}
-            scheduledStartAt={scheduledStartAt}
-            stageLabel="the build"
-          />
+          <div className="flex min-w-0 items-center gap-1 sm:mr-auto">
+            <BoardCardSchedulePopover
+              kind="before-build"
+              onChange={setScheduledStartAt}
+              scheduledStartAt={scheduledStartAt}
+              stageLabel="the build"
+            />
+            {/* The worker pin (prototype 5.6–5.8): as rarely set as the clock,
+                so it sits beside it rather than taking a row in the form. */}
+            {workerField.shown ? (
+              <BoardWorkerPinButton
+                field={workerField}
+                onSelect={selectPin}
+                pinnedWorkerId={pinnedWorkerId}
+              />
+            ) : null}
+            {pinNotice === null ? null : (
+              <span className="min-w-0 truncate text-board-11-5 text-warning-foreground">
+                {pinNotice}
+              </span>
+            )}
+          </div>
           {/* X, Esc and the backdrop all keep the draft; this footer is the only
               discard path. With no draft left (card created, only attachments
               failed) it reverts to a plain Cancel. */}

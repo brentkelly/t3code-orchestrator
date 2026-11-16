@@ -1,8 +1,7 @@
 /**
- * T3o (prototype 4.1–4.3): the Worker field's picker: "Follow default
- * ({worker})", or Pin to a worker. Each row says the worker's load, or why it
- * can't be picked, and a worker with no checkout of the project offers Set up
- * on worker inline. Shared by the create dialog and the card's details column.
+ * T3o (prototype 4.1–4.3): card detail's Worker field. Any ready worker, or a pin;
+ * each row gives the worker's load or why it can't be picked, and Set up when
+ * it lacks a checkout. The create dialog uses `BoardWorkerPinButton` instead.
  */
 import type { BoardWorkerId } from "@t3tools/contracts";
 import { CheckIcon, ChevronDownIcon } from "lucide-react";
@@ -24,7 +23,7 @@ export function BoardWorkerPicker(props: {
   readonly value: { readonly label: string; readonly pinned: boolean };
   readonly onSelect: (workerId: BoardWorkerId | null) => void;
   readonly onSetUp: (workerId: BoardWorkerId) => void;
-  /** Where the popover opens: down in the create dialog, up in the side panel. */
+  /** Where the popover opens; the side panel opens it upward. */
   readonly side?: "top" | "bottom";
   readonly className?: string;
 }) {
@@ -59,67 +58,96 @@ export function BoardWorkerPicker(props: {
         inset="1"
         side={props.side ?? "bottom"}
       >
-        <button
-          className="flex flex-col items-start rounded-md px-2 py-1.5 text-left hover:bg-accent"
-          onClick={() => pick(null)}
-          type="button"
-        >
-          <span className="flex w-full items-center gap-1.5 text-board-12-5">
-            <span className="min-w-0 flex-1 truncate">{props.followLabel}</span>
-            {props.pinnedWorkerId === null ? (
-              <CheckIcon className="size-3 shrink-0 text-muted-foreground" />
-            ) : null}
-          </span>
-          <span className="text-board-11 text-muted-foreground">
-            The board picks the best ready worker when the build starts
-          </span>
-        </button>
-        <p className="px-2 pt-2 pb-1 text-board-11 font-medium text-muted-foreground">
-          Pin builds to
-        </p>
-        {props.choices.map((choice) => {
-          const row = (
-            <div
-              className={cn(
-                "flex h-7 items-center gap-1.5 rounded-md px-2 text-board-12-5",
-                choice.selectable ? "cursor-pointer hover:bg-accent" : "text-muted-foreground",
-              )}
-              key={choice.workerId}
-            >
-              <button
-                className="flex min-w-0 flex-1 items-center gap-1.5 text-left disabled:cursor-default"
-                disabled={!choice.selectable}
-                onClick={() => pick(choice.workerId)}
-                type="button"
-              >
-                <span className="min-w-0 flex-1 truncate">{choice.label}</span>
-                {props.pinnedWorkerId === choice.workerId ? (
-                  <CheckIcon className="size-3 shrink-0 text-muted-foreground" />
-                ) : null}
-                <span className="shrink-0 text-board-11 text-muted-foreground">
-                  {choice.detail}
-                </span>
-              </button>
-              {choice.canSetUp ? (
-                <button
-                  className="shrink-0 rounded px-1 text-board-11 font-medium text-foreground hover:bg-accent"
-                  onClick={() => props.onSetUp(choice.workerId)}
-                  type="button"
-                >
-                  Set up on worker
-                </button>
-              ) : null}
-            </div>
-          );
-          return choice.tooltip === null || choice.selectable ? (
-            row
-          ) : (
-            <BoardHint key={choice.workerId} label={choice.tooltip} side="left">
-              {row}
-            </BoardHint>
-          );
-        })}
+        <BoardWorkerPinMenu
+          choices={props.choices}
+          followLabel={props.followLabel}
+          onPick={pick}
+          onSetUp={props.onSetUp}
+          pinnedWorkerId={props.pinnedWorkerId}
+        />
       </BoardPopoverPopup>
     </Popover>
+  );
+}
+
+/**
+ * The picker's rows: "Any ready worker", then Pin builds to each worker. Shared
+ * by the Worker field and the create dialog's footer pin (prototype 5.7), which
+ * leaves out Set up and heads the rows with `note`.
+ */
+export function BoardWorkerPinMenu(props: {
+  readonly choices: ReadonlyArray<BoardWorkerChoice>;
+  readonly pinnedWorkerId: BoardWorkerId | null;
+  readonly followLabel: string;
+  readonly onPick: (workerId: BoardWorkerId | null) => void;
+  readonly onSetUp?: (workerId: BoardWorkerId) => void;
+  readonly note?: string;
+}) {
+  return (
+    <>
+      {props.note === undefined ? null : (
+        <p className="px-2 pt-1.5 pb-1 text-board-11 leading-board-1-45 text-muted-foreground">
+          {props.note}
+        </p>
+      )}
+      <button
+        className="flex flex-col items-start rounded-md px-2 py-1.5 text-left hover:bg-accent"
+        onClick={() => props.onPick(null)}
+        type="button"
+      >
+        <span className="flex w-full items-center gap-1.5 text-board-12-5">
+          <span className="min-w-0 flex-1 truncate">{props.followLabel}</span>
+          {props.pinnedWorkerId === null ? (
+            <CheckIcon className="size-3 shrink-0 text-muted-foreground" />
+          ) : null}
+        </span>
+        <span className="text-board-11 text-muted-foreground">
+          The board picks the best ready worker when the build starts
+        </span>
+      </button>
+      <p className="px-2 pt-2 pb-1 text-board-11 font-medium text-muted-foreground">
+        Pin builds to
+      </p>
+      {props.choices.map((choice) => {
+        const row = (
+          <div
+            className={cn(
+              "flex h-7 items-center gap-1.5 rounded-md px-2 text-board-12-5",
+              choice.selectable ? "cursor-pointer hover:bg-accent" : "text-muted-foreground",
+            )}
+            key={choice.workerId}
+          >
+            <button
+              className="flex min-w-0 flex-1 items-center gap-1.5 text-left disabled:cursor-default"
+              disabled={!choice.selectable}
+              onClick={() => props.onPick(choice.workerId)}
+              type="button"
+            >
+              <span className="min-w-0 flex-1 truncate">{choice.label}</span>
+              {props.pinnedWorkerId === choice.workerId ? (
+                <CheckIcon className="size-3 shrink-0 text-muted-foreground" />
+              ) : null}
+              <span className="shrink-0 text-board-11 text-muted-foreground">{choice.detail}</span>
+            </button>
+            {choice.canSetUp && props.onSetUp !== undefined ? (
+              <button
+                className="shrink-0 rounded px-1 text-board-11 font-medium text-foreground hover:bg-accent"
+                onClick={() => props.onSetUp?.(choice.workerId)}
+                type="button"
+              >
+                Set up on worker
+              </button>
+            ) : null}
+          </div>
+        );
+        return choice.tooltip === null || choice.selectable ? (
+          row
+        ) : (
+          <BoardHint key={choice.workerId} label={choice.tooltip} side="left">
+            {row}
+          </BoardHint>
+        );
+      })}
+    </>
   );
 }

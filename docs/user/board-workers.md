@@ -102,7 +102,8 @@ The board server is in the pool when it's ready; declare it zero build capacity 
 planning only.
 
 **Pin builds to…** in a card's details restricts its builds to one worker; it doesn't affect
-planning. Each worker in the picker says whether it's ready and what it offers. A card that holds a
+planning. To pin a card as you create it, use the pin icon beside the clock in the New card dialog's
+footer. Each worker in the picker says whether it's ready and what it offers. A card that holds a
 worktree stays on its worker: the board only moves it if you **Move** it or its worker is removed.
 **Unpin** leaves a placed card where it is. There is no longer a default worker.
 
