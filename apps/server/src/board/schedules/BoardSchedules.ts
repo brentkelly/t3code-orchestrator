@@ -42,6 +42,7 @@ import type { BoardProject, BoardThreadState, UnknownThreadState } from "../Thre
 import type { BoardScheduleStoreRow, BoardScheduleStoreShape } from "./BoardScheduleStore.ts";
 import { BoardScheduleRunError } from "./scheduleRuns.ts";
 import {
+  SCHEDULE_RUN_BRANCH_PREFIX,
   SKIPPED_NOT_SCHEDULED,
   SKIPPED_STILL_GOING,
   adoptChanges,
@@ -963,7 +964,7 @@ export const makeBoardSchedules = (deps: BoardSchedulesDeps): BoardSchedulesShap
     const uuid = yield* deps.uuid;
     const threadId = ThreadId.make(`thread-schedule-${uuid}`);
     // A name of the board's own, so retention deletes exactly this branch and nothing renames it.
-    const branch = `t3o/schedule-run-${uuid}`;
+    const branch = `${SCHEDULE_RUN_BRANCH_PREFIX}${uuid}`;
     // Recorded before anything launches, so a crash mid-launch still leaves the run.
     yield* store
       .recordRun({

@@ -27,6 +27,9 @@ const RETENTION_KEEP_RECENT = 3;
 const RETENTION_WINDOW_MS = 7 * DAY_MS;
 const OVERLAP_CAP_MS = 6 * HOUR_MS;
 
+/** Every schedule run's branch starts so; a worker prunes no other branch for a board. */
+export const SCHEDULE_RUN_BRANCH_PREFIX = "t3o/schedule-run-";
+
 export const SKIPPED_NOT_SCHEDULED = "Skipped: not scheduled";
 export const SKIPPED_STILL_GOING = "Skipped: previous run still going";
 

@@ -118,7 +118,7 @@ const setup = (options: { readonly relay?: boolean } = {}) =>
     const router = makeThreadGatewayRouter({
       local: central.gateway,
       feed: emptyWorkerSignalFeed,
-      linkedWorkers: makeLinkedThreadWorkers(sql),
+      linkedWorkers: makeLinkedThreadWorkers(sql, CENTRAL_ID),
       remote: (workerId) =>
         makeRemoteThreadGateway({
           workerId,
