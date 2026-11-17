@@ -128,7 +128,7 @@ const make = Effect.gen(function* () {
         Effect.orElseSucceed(() => null),
       ),
     modelFor: (projectId) =>
-      boardFallbackModelSelection(serverSettings, projectId).pipe(
+      boardFallbackModelSelection(serverSettings, projectId, { projectFirst: true }).pipe(
         Effect.map((selection) => {
           const options = "options" in selection ? selection.options : undefined;
           return {
