@@ -98,7 +98,7 @@ export function planReviewPolicyMessage(
     ? ""
     : ", and wait for sign-off before calling board_complete_step";
   const stance = policy.unattended
-    ? "The review is now unattended: do not ask the human anything for the rest of it. Decide every finding yourself, flag a call you are unsure of as unclear with board_record_decisions, and when the review ends summarise the final plan and call board_complete_step without waiting for sign-off."
+    ? "The review is now unattended: do not ask the human anything for the rest of it. Decide every finding yourself, flag a contentious or uncertain call as unclear or important with board_record_decisions, and when the review ends summarise the final plan and call board_complete_step without waiting for sign-off."
     : previous !== undefined && previous.includes("unattended=true")
       ? `The human is back: the review is attended again. If you need a human decision on a finding, ask through your runtime's user-input request${signOff}.`
       : `The review is attended: ask the human through your runtime's user-input request if you need a decision${signOff}.`;

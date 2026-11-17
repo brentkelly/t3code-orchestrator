@@ -310,6 +310,8 @@ export function boardCardFromCreatedPayload(payload: BoardCardCreatedPayload): B
     splitRationale: null,
     blocked: false,
     archivedAt: null,
+    // T3o: a card enters its first stage when it is created (T3O-115).
+    stageEnteredAt: payload.createdAt,
     createdAt: payload.createdAt,
     updatedAt: payload.updatedAt,
   };

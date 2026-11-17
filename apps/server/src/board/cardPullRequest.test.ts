@@ -13,6 +13,8 @@ import {
   BOARD_CHECKS_FIX_STEP_LABEL,
   BOARD_CONFLICT_STEP_LABEL,
   DEFAULT_BOARD_CHECKS_FIX_PROMPT,
+  DEFAULT_BOARD_BRANCH_UPDATE_PROMPT,
+  BOARD_BRANCH_UPDATE_STEP_LABEL,
   BOARD_SEED_STAGE_IDS,
   EMPTY_BOARD_STATE,
   ProviderInstanceId,
@@ -51,6 +53,7 @@ const openPr: VcsStatusChangeRequest = {
 const refusal = (input: {
   readonly blockedReason?: BoardMergeState["blockedReason"];
   readonly failed?: number;
+  readonly updateRequired?: boolean;
 }): BoardMergeState => {
   const failed = input.failed ?? 0;
   return {
@@ -66,6 +69,7 @@ const refusal = (input: {
     },
     headSha: "sha-one",
     checksUnread: false,
+    ...(input.updateRequired === undefined ? {} : { updateRequired: input.updateRequired }),
   };
 };
 
@@ -1356,33 +1360,140 @@ describe("merging a card's pull request", () => {
     ),
   );
 
-  it.effect(
-    "never starts a CI fix when the forge pins the refusal on a draft or a branch behind its base",
-    () =>
-      Effect.forEach(
-        ["draft", "behind"] as const,
-        (blockedReason) =>
-          withGovernor(
-            {
-              board: { nextCardNumberByProject: {}, cards: [cardInMerge()] },
-              settings: settings(),
-              pullRequest: openPr,
-              mergeFailure: "the host refused",
-              // A pushed fix clears neither blocker, so the one CI fix must not
-              // be spent on it.
-              mergeState: refusal({ blockedReason, failed: 1 }),
-            },
-            (h) =>
-              Effect.gen(function* () {
-                const result = yield* h.reactor.mergePullRequest(cardInMerge().id);
-                assert.equal(result.outcome, "refused", blockedReason);
-                const started = (yield* h.commands).filter(
-                  (command) => command.type === "board.card.start-stage-thread",
-                );
-                assert.equal(started.length, 0, blockedReason);
-              }),
-          ),
-        { discard: true },
+  it.effect("never starts a CI fix when the forge pins the refusal on a draft", () =>
+    withGovernor(
+      {
+        board: { nextCardNumberByProject: {}, cards: [cardInMerge()] },
+        settings: settings(),
+        pullRequest: openPr,
+        mergeFailure: "the host refused",
+        // A pushed fix does not clear a draft, so the one CI fix must not be spent on it.
+        mergeState: refusal({ blockedReason: "draft", failed: 1 }),
+      },
+      (h) =>
+        Effect.gen(function* () {
+          const result = yield* h.reactor.mergePullRequest(cardInMerge().id);
+          assert.equal(result.outcome, "refused");
+          const started = (yield* h.commands).filter(
+            (command) => command.type === "board.card.start-stage-thread",
+          );
+          assert.equal(started.length, 0);
+        }),
+    ),
+  );
+
+  it.effect("a branch behind its base is brought up to date, not handed a CI fix (T3O-116)", () =>
+    withGovernor(
+      {
+        board: { nextCardNumberByProject: {}, cards: [cardInMerge()] },
+        settings: settings(),
+        pullRequest: openPr,
+        mergeFailure: "the host refused",
+        mergeState: refusal({ blockedReason: "behind", failed: 1, updateRequired: true }),
+      },
+      (h) =>
+        Effect.gen(function* () {
+          const result = yield* h.reactor.mergePullRequest(cardInMerge().id);
+          assert.equal(result.outcome, "conflict");
+          const started = (yield* h.commands).filter(
+            (command) => command.type === "board.card.start-stage-thread",
+          );
+          assert.equal(started.length, 1);
+          assert.include(String(started[0]?.commandId), "merge-branch-update");
+          const card = (yield* h.board).cards.find((c) => c.id === cardInMerge().id);
+          assert.equal(card?.mergeStay?.branchUpdates, 1);
+          // Its own step and prompt: not a conflict fix told there are conflicts.
+          yield* h.pumpDomain(stageThreadRequested(cardInMerge(), 1));
+          const selected = (yield* h.commands).filter(
+            (command) => command.type === "board.card.select-step",
+          ) as ReadonlyArray<{ readonly prompt: string; readonly stepLabel: string | null }>;
+          assert.equal(selected.length, 1);
+          assert.strictEqual(selected[0]!.stepLabel, BOARD_BRANCH_UPDATE_STEP_LABEL);
+          assert.include(selected[0]!.prompt, DEFAULT_BOARD_BRANCH_UPDATE_PROMPT);
+          assert.notInclude(selected[0]!.prompt, "conflicts with the base branch");
+        }),
+    ),
+  );
+
+  it.effect("an unarmed card's branch update waits for its re-run checks, not a refusal note", () =>
+    Effect.gen(function* () {
+      const card = cardInMerge();
+      let updated = false;
+      yield* withGovernor(
+        {
+          board: { nextCardNumberByProject: {}, cards: [card] },
+          settings: settings(),
+          pullRequest: openPr,
+          mergeFailure: "the host refused",
+          // The update's push restarts CI, so the re-attempt meets pending checks.
+          mergeStateOf: () =>
+            updated
+              ? {
+                  ...refusal({}),
+                  checks: {
+                    total: 1,
+                    passed: 0,
+                    pending: 1,
+                    failed: 0,
+                    failing: [],
+                    running: ["ci"],
+                  },
+                }
+              : refusal({ blockedReason: "behind", updateRequired: true }),
+          initialShells: new Map([
+            ["thread-1", fakeThreadState("thread-1", { sessionStatus: "none" })],
+          ]),
+        },
+        (h) =>
+          Effect.gen(function* () {
+            yield* h.reactor.drain;
+            assert.equal((yield* h.reactor.mergePullRequest(card.id)).outcome, "conflict");
+            updated = true;
+            yield* Ref.update(h.model, (model) => ({
+              ...model,
+              board: {
+                ...(model.board ?? EMPTY_BOARD_STATE),
+                stepStates: [runningMergeStep(card.id)],
+              },
+            }));
+            yield* h.pumpDomain(mergeStepCompleted(card.id, 2));
+            const notes = (yield* h.commands).filter(
+              (command) =>
+                command.type === "board.card.record-note" && command.kind === "card-merge-refused",
+            );
+            assert.deepStrictEqual(notes, []);
+            const held = (yield* h.board).cards.find((c) => c.id === card.id);
+            assert.equal(held?.autoMergeHold?.classification, "soft");
+          }),
+      );
+    }),
+  );
+
+  it.effect.each([false, undefined])(
+    "a behind branch the forge refuses for something else too is not updated: updateRequired %s",
+    (updateRequired) =>
+      withGovernor(
+        {
+          board: { nextCardNumberByProject: {}, cards: [cardInMerge()] },
+          settings: settings(),
+          pullRequest: openPr,
+          mergeFailure: "At least 1 approving review is required.",
+          mergeState: refusal({
+            blockedReason: "behind",
+            ...(updateRequired === undefined ? {} : { updateRequired }),
+          }),
+        },
+        (h) =>
+          Effect.gen(function* () {
+            const result = yield* h.reactor.mergePullRequest(cardInMerge().id);
+            assert.equal(result.outcome, "refused");
+            const started = (yield* h.commands).filter(
+              (command) => command.type === "board.card.start-stage-thread",
+            );
+            assert.equal(started.length, 0);
+            const card = (yield* h.board).cards.find((c) => c.id === cardInMerge().id);
+            assert.equal(card?.mergeStay?.branchUpdates ?? 0, 0);
+          }),
       ),
   );
 

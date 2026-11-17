@@ -208,6 +208,8 @@ export interface ProviderChangeRequestDetail extends ProviderChangeRequest {
   readonly viewerPermissions: PullRequestViewerPermissions;
   readonly baseComparison?: PullRequestBaseComparison;
   readonly behindBy?: number;
+  /** T3o (T3O-116): see `PullRequestDetail.baseUpdateRequired`. */
+  readonly baseUpdateRequired?: boolean;
   readonly autoMergeEnabled?: boolean;
   readonly autoMergeMethod?: PullRequestMergeMethod;
   readonly workflowApprovalsRequired?: number;

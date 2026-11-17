@@ -7,6 +7,7 @@ import {
   assignBoardKeyPrefix,
   BOARD_CONFLICT_VERIFICATION,
   BOARD_SEED_STAGE_IDS,
+  BoardStageId,
   BoardSettings,
   boardProjectAcronym,
   DEFAULT_BOARD_AUTO_ARCHIVE_AFTER_DAYS,
@@ -528,15 +529,31 @@ describe("role-holder invariants forced at resolution (settings redesign)", () =
 });
 
 describe("agent access level is the user's, never forced (t3o-21)", () => {
-  it("effectiveBoardRuntimeMode defaults by mode and honours an explicit choice", () => {
-    // Unset: build defaults to `auto`, plan to `approval-required` — NEVER the
-    // old forced `full-access`.
-    expect(effectiveBoardRuntimeMode(undefined, "build")).toBe("auto");
-    expect(effectiveBoardRuntimeMode(undefined, "plan")).toBe("approval-required");
+  it("effectiveBoardRuntimeMode defaults to auto and honours an explicit choice", () => {
+    // Unset: `auto` — NEVER the old forced `full-access`.
+    expect(effectiveBoardRuntimeMode(undefined)).toBe("auto");
     // A value the user picked is honoured verbatim for either mode.
-    expect(effectiveBoardRuntimeMode("approval-required", "build")).toBe("approval-required");
-    expect(effectiveBoardRuntimeMode("full-access", "build")).toBe("full-access");
-    expect(effectiveBoardRuntimeMode("auto", "plan")).toBe("auto");
+    expect(effectiveBoardRuntimeMode("approval-required")).toBe("approval-required");
+    expect(effectiveBoardRuntimeMode("full-access")).toBe("full-access");
+    expect(effectiveBoardRuntimeMode("auto")).toBe("auto");
+  });
+
+  it("Planning defaults to auto; a custom plan-mode stage, without the root guard, to approval-required", () => {
+    const settings = decodeSettings({
+      pipeline: { research: { mode: "plan" } },
+    });
+    expect(resolveBoardStageExecution(settings, BOARD_SEED_STAGE_IDS.planning).runtimeMode).toBe(
+      "auto",
+    );
+    expect(resolveBoardStageExecution(settings, BoardStageId.make("research")).runtimeMode).toBe(
+      "approval-required",
+    );
+    const building = decodeSettings({
+      pipeline: { research: { mode: "build" } },
+    });
+    expect(resolveBoardStageExecution(building, BoardStageId.make("research")).runtimeMode).toBe(
+      "auto",
+    );
   });
 
   it("no seeded stage resolves to full-access by default", () => {
@@ -548,13 +565,13 @@ describe("agent access level is the user's, never forced (t3o-21)", () => {
       const resolved = resolveBoardStageExecution(DEFAULT_BOARD_SETTINGS, stageId);
       expect(resolved.runtimeMode).not.toBe("full-access");
     }
-    // Building (build-mode) → auto; Planning (plan-mode) → approval-required.
+    // Both default to auto; a stage's configured mode would win (T3O-115).
     expect(
       resolveBoardStageExecution(DEFAULT_BOARD_SETTINGS, BOARD_SEED_STAGE_IDS.building).runtimeMode,
     ).toBe("auto");
     expect(
       resolveBoardStageExecution(DEFAULT_BOARD_SETTINGS, BOARD_SEED_STAGE_IDS.planning).runtimeMode,
-    ).toBe("approval-required");
+    ).toBe("auto");
   });
 
   it("honours a user-chosen access level on a build-mode stage, even full-access", () => {
@@ -594,7 +611,7 @@ describe("agent access level is the user's, never forced (t3o-21)", () => {
     // settings row resolves them to `auto` at render, always build-mode).
     expect(resolved.phases.review.runtimeMode).toBe("full-access");
     expect(resolved.phases.triage.runtimeMode).toBeUndefined();
-    expect(effectiveBoardRuntimeMode(resolved.phases.triage.runtimeMode, "build")).toBe("auto");
+    expect(effectiveBoardRuntimeMode(resolved.phases.triage.runtimeMode)).toBe("auto");
   });
 });
 

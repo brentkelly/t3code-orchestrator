@@ -1076,6 +1076,37 @@ export function isBoardCardAutoMergeSoft(
   return classification === "soft";
 }
 
+export const BoardCardAutoMergeStop = Schema.Literals([
+  "no-pull-request",
+  "no-workspace",
+  "fix-failed",
+]);
+export type BoardCardAutoMergeStop = typeof BoardCardAutoMergeStop.Type;
+
+/**
+ * T3o: the automatic merge fixes spent in one stay in Ready for merge (T3O-116). The ladder resets
+ * its attempt on every new head, and the board's own fix pushes make one, so "one conflict fix" and
+ * "one branch update" are counted per stay instead. Counts apply only while `stageEnteredAt`
+ * equals the card's; a new stay, a human Merge click or someone else's push starts them again.
+ */
+export const BoardCardMergeStay = Schema.Struct({
+  stageEnteredAt: Schema.NullOr(IsoDateTime),
+  conflictFixes: NonNegativeInt,
+  branchUpdates: NonNegativeInt,
+});
+export type BoardCardMergeStay = typeof BoardCardMergeStay.Type;
+
+/** The merge fixes this card has spent in its current stay. */
+export function boardCardMergeStayCounts(
+  card: Pick<BoardCard, "stageEnteredAt" | "mergeStay">,
+): BoardCardMergeStay {
+  const stay = card.mergeStay;
+  const stageEnteredAt = card.stageEnteredAt ?? null;
+  return stay !== undefined && stay.stageEnteredAt === stageEnteredAt
+    ? stay
+    : { stageEnteredAt, conflictFixes: 0, branchUpdates: 0 };
+}
+
 /**
  * On the card aggregate so it survives a restart. Not on step state: a fake step row with no
  * thread would corrupt slot accounting, recovery and boot reconciliation.
@@ -1101,6 +1132,10 @@ export const BoardCardAutoMergeHold = Schema.Struct({
   /** The head commit the probe described. A DIFFERENT sha means new commits
       and therefore new CI, which resets the ladder. */
   headSha: Schema.NullOr(TrimmedNonEmptyString),
+  /** T3o: why the board itself stopped, when it was not the forge's refusal (T3O-116): no pull
+      request (cleared once one is linked), no project checkout, or a fix agent that failed.
+      Absent on forge refusals and older holds. */
+  stop: Schema.optionalKey(BoardCardAutoMergeStop),
 });
 export type BoardCardAutoMergeHold = typeof BoardCardAutoMergeHold.Type;
 
@@ -1117,7 +1152,8 @@ export function boardCardAutoMergeHoldsEqual(
     left.attempt === right.attempt &&
     left.heldSince === right.heldSince &&
     left.retryAt === right.retryAt &&
-    left.headSha === right.headSha
+    left.headSha === right.headSha &&
+    left.stop === right.stop
   );
 }
 
@@ -1218,7 +1254,7 @@ export const BoardCardGroup = Schema.Struct({
   target: BoardCardGroupTarget,
   /** What inheriting children take as their Automation toggles
       (see `resolveBoardCardAutomation`). Auto-build: ready children with their
-      dependencies met start themselves once the group is `started`. */
+      dependencies met start themselves, whether or not the group is `started`. */
   autoBuild: Schema.Boolean,
   /** Children merge themselves, into the integration branch or trunk. */
   autoMerge: Schema.Boolean,
@@ -2079,6 +2115,33 @@ export function boardCardCiSteps(
   }));
 }
 
+/** T3o: the automation gates (T3O-115), roughly in pipeline order; `boardGateDue` decides which is due. */
+export const BOARD_GATES = [
+  "plan",
+  "answer",
+  "review-start",
+  "sign-off",
+  "split-sign-off",
+  "split",
+  "build",
+  // T3o: the merge gates, last (T3O-116).
+  "merged-done",
+  "merge",
+] as const;
+export type BoardGate = (typeof BOARD_GATES)[number];
+
+/**
+ * T3o: an automation gate that was due but could not act on its last attempt (T3O-115): a
+ * refused move or a fault. Derived blocks (unmet dependencies, no capacity) are not recorded
+ * here; they already show. Written only when `gate` + `reason` change, cleared by the move.
+ */
+export const BoardCardGateBlock = Schema.Struct({
+  gate: Schema.Literals(BOARD_GATES),
+  reason: Schema.Literals(["move-refused", "fault"]),
+  detail: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type BoardCardGateBlock = typeof BoardCardGateBlock.Type;
+
 export const BoardCard = Schema.Struct({
   id: BoardCardId,
   /** Generated `<prefix>-<cardNumber>`, e.g. "T3-195". */
@@ -2249,6 +2312,14 @@ export const BoardCard = Schema.Struct({
   resources: Schema.NullOr(BoardCardResources).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  /** T3o: when the card entered its current stage (T3O-115), stamped by the decider on every
+      stage change and copied onto the step row at `select-step`, so "this stay" is decidable.
+      Absent on rows and events older than migration 083. */
+  stageEnteredAt: Schema.optionalKey(IsoDateTime),
+  /** T3o: the last automation gate attempt that could not act (T3O-115). Absent when none. */
+  gateBlock: Schema.optionalKey(BoardCardGateBlock),
+  /** T3o: merge fixes spent this stay in Ready for merge (T3O-116). Absent when none. */
+  mergeStay: Schema.optionalKey(BoardCardMergeStay),
   /** Derived from unmet dependencies at Ready and beyond, recorded by
       the decider at each move / dependency edit / unarchive. */
   blocked: Schema.Boolean,
@@ -2726,6 +2797,13 @@ export const BoardCardStepState = Schema.Struct({
   queuedDetail: Schema.NullOr(BoardStepQueuedDetail).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  /** T3o: the selecting card's `stageEnteredAt` (T3O-115): this row belongs to the card's
+      current stay only while the two match. Absent on older rows and events. */
+  stageEnteredAt: Schema.optionalKey(IsoDateTime),
+  /** T3o: questions the board answered for an unattended planning run on this step, and when it
+      last did (T3O-115). The answer gate stops at `BOARD_AUTO_ANSWER_LIMIT`. Absent when none. */
+  autoAnswers: Schema.optionalKey(PositiveInt),
+  autoAnsweredAt: Schema.optionalKey(IsoDateTime),
   /** When the step began running; null while pending/queued. */
   startedAt: Schema.NullOr(IsoDateTime),
   updatedAt: IsoDateTime,
@@ -3342,11 +3420,21 @@ export const BOARD_CONFLICT_STEP_LABEL = "Conflicts";
  */
 export const BOARD_CHECKS_FIX_STEP_LABEL = "Fixing CI";
 
+/** The step label a merge-stage branch update wears, reserved on the same terms (T3O-116). */
+export const BOARD_BRANCH_UPDATE_STEP_LABEL = "Updating branch";
+
 /** Which merge fix the reactor armed a merge-stage run as, if any. */
-export type BoardMergeFixKind = "conflict" | "checks";
+export type BoardMergeFixKind = "conflict" | "checks" | "update";
 
 function boardMergeFixLabel(kind: BoardMergeFixKind): string {
-  return kind === "conflict" ? BOARD_CONFLICT_STEP_LABEL : BOARD_CHECKS_FIX_STEP_LABEL;
+  switch (kind) {
+    case "conflict":
+      return BOARD_CONFLICT_STEP_LABEL;
+    case "checks":
+      return BOARD_CHECKS_FIX_STEP_LABEL;
+    case "update":
+      return BOARD_BRANCH_UPDATE_STEP_LABEL;
+  }
 }
 
 /**
@@ -3360,7 +3448,8 @@ export function boardSelectedStepLabel(
 ): string | null {
   if (armedFix !== null) return boardMergeFixLabel(armedFix);
   return planStepLabel === BOARD_CONFLICT_STEP_LABEL ||
-    planStepLabel === BOARD_CHECKS_FIX_STEP_LABEL
+    planStepLabel === BOARD_CHECKS_FIX_STEP_LABEL ||
+    planStepLabel === BOARD_BRANCH_UPDATE_STEP_LABEL
     ? null
     : planStepLabel;
 }
@@ -3908,9 +3997,6 @@ export interface BoardResolvedAutomationToggle {
   readonly source: "own" | "inherited" | "board" | null;
   /** The parent group the card inherits from (or overrides), when it has one. */
   readonly inheritedFrom: { readonly id: string; readonly key: string } | null;
-  /** Auto-build only: the parent group has it on but has not begun, so the
-      inherited value stays off until a human starts the group. */
-  readonly waitingForGroupStart: boolean;
   /** Turning the toggle ON is refused, including an inherit that would pick
       up the group's on; turning it off is always accepted. */
   readonly locked: boolean;
@@ -3965,7 +4051,7 @@ function automationStageFacts(
 
 /**
  * The one reading of a card's Automation toggles. Own setting wins; null inherits
- * from the nearest group (Auto-build only once the group has started). Board-wide
+ * from the nearest group, whether or not the group has started (T3O-115). Board-wide
  * auto-merge locks every card's on. Locks refuse only turning a toggle on.
  */
 export function resolveBoardCardAutomation(input: {
@@ -3986,7 +4072,6 @@ export function resolveBoardCardAutomation(input: {
     toggle: BoardAutomationToggle,
     inherited: boolean | null,
     lock: string | null,
-    waitingForGroupStart = false,
   ): BoardResolvedAutomationToggle => {
     const own = ownAutomationSetting(card, toggle);
     const value = own ?? inherited ?? false;
@@ -3996,7 +4081,6 @@ export function resolveBoardCardAutomation(input: {
       own,
       source,
       inheritedFrom,
-      waitingForGroupStart: own === null && waitingForGroupStart,
       locked: lock !== null,
       lockReason: lock,
     };
@@ -4015,19 +4099,13 @@ export function resolveBoardCardAutomation(input: {
 
   const autoPlan = resolve("autoPlan", group === null ? null : group.autoPlan, planLock);
   const autoSignOff = resolve("autoSignOff", group === null ? null : group.autoSignOff, planLock);
-  const autoBuild = resolve(
-    "autoBuild",
-    group === null ? null : group.autoBuild && group.started,
-    buildLock,
-    group !== null && group.autoBuild && !group.started,
-  );
+  const autoBuild = resolve("autoBuild", group === null ? null : group.autoBuild, buildLock);
   const autoMerge: BoardResolvedAutomationToggle = input.boardWideAutoMerge
     ? {
         value: true,
         own: ownAutomationSetting(card, "autoMerge"),
         source: "board",
         inheritedFrom,
-        waitingForGroupStart: false,
         locked: true,
         lockReason: BOARD_AUTOMATION_BOARD_WIDE_MERGE_REASON,
       }
@@ -4040,45 +4118,27 @@ export function resolveBoardCardAutomation(input: {
 }
 
 /**
- * What automates the card's planning, which is when the Auto sign-off gate applies. Null means
- * a person plans, so the plan always waits for them. Plan review's unattended mode adds "review".
+ * T3o: the card's step row when it belongs to the card's current stay in its stage (T3O-115):
+ * same stage step and the same `stageEnteredAt`, so a card dragged back into a stage never
+ * reads the row it left behind. Null otherwise.
  */
-export type BoardPlanAutomatedBy = "auto-plan" | "review" | null;
-
-export function boardPlanAutomatedBy(
-  resolved: BoardResolvedAutomation,
-  /** The card sits in Planning with an unattended plan review on. */
-  review?: { readonly unattendedInPlanning: boolean },
-): BoardPlanAutomatedBy {
-  if (resolved.autoPlan.value) return "auto-plan";
-  return review?.unattendedInPlanning === true ? "review" : null;
+export function boardCardStepThisStay(
+  state: BoardCardStepState | null,
+  card: Pick<BoardCard, "stage" | "stageEnteredAt">,
+): BoardCardStepState | null {
+  if (state === null || state.stepId !== card.stage) return null;
+  return (state.stageEnteredAt ?? null) === (card.stageEnteredAt ?? null) ? state : null;
 }
 
 /** Whether the card's planning run for its current stay in Planning finished:
-    its plan-role step succeeded. */
+    its plan-role step for this stay succeeded. */
 export function boardCardPlanningFinished(
   board: BoardState,
-  card: Pick<BoardCard, "id" | "stage">,
+  card: Pick<BoardCard, "id" | "stage" | "stageEnteredAt">,
 ): boolean {
   const stage = boardStageById(board, card.stage);
   if (stage === null || effectiveBoardStageRole(stage) !== "plan") return false;
-  const state = boardCardStepState(board, card.id);
-  return state !== null && state.stepId === card.stage && state.status === "succeeded";
-}
-
-/**
- * An unattended plan review finished on the card's plan step and its single plan waits on the
- * Sign-off gate. Auto sign-off then approves it; a split always waits for a human.
- */
-export function isBoardCardReviewSignOffPending(
-  board: BoardState,
-  card: Pick<BoardCard, "id" | "stage" | "planReview">,
-): boolean {
-  if (card.planReview?.enabled !== true || card.planReview.unattended !== true) return false;
-  if (!boardCardPlanningFinished(board, card)) return false;
-  const state = boardCardStepState(board, card.id);
-  if (state?.planReviewStartedAt === undefined) return false;
-  return boardCardPlans(board, card.id).length === 1;
+  return boardCardStepThisStay(boardCardStepState(board, card.id), card)?.status === "succeeded";
 }
 
 /** `resolveBoardCardAutomation` over the full board state. */
@@ -4128,35 +4188,6 @@ export function boardAutomationTogglesTurnedOn(input: {
   return BOARD_AUTOMATION_TOGGLES.filter(
     (toggle) => !before[toggle].value && after[toggle].value,
   ).map((toggle) => ({ toggle, before: before[toggle] }));
-}
-
-/**
- * Whether a card's OWN Auto-build should start it now: a live leaf
- * with its own Auto-build on, waiting in the stage before build with every
- * dependency met. An inherited Auto-build is the group cascade's to act on
- * (`cascadeUnblockedChildren`), so one card never has two movers.
- */
-export function boardCardAutoBuildDue(input: {
-  readonly board: BoardState;
-  readonly card: Pick<
-    BoardCard,
-    "id" | "parentCardId" | "stage" | "archivedAt" | "dependsOn" | "autoBuildSetting"
-  > & {
-    readonly group?: BoardCard["group"] | undefined;
-  };
-}): boolean {
-  const card = input.card;
-  if (card.autoBuildSetting !== true) return false;
-  if (card.archivedAt !== null || (card.group ?? null) !== null) return false;
-  const before = boardStageBeforeBuild(input.board);
-  if (before === null || card.stage !== before.stageId) return false;
-  return (
-    unmetBoardCardDependencies({
-      board: input.board,
-      dependsOn: boardCardInheritedDependsOn(input.board, card),
-      cards: input.board.cards,
-    }).length === 0
-  );
 }
 
 function resolveBoardAutoMergeValue(
@@ -5168,11 +5199,11 @@ export const BoardCardMoveCommand = Schema.Struct({
   /** Permits non-adjacent stage moves. A drag is an override — a rigid
       board still has to let you drag a card backwards. */
   override: Schema.optional(Schema.Boolean),
-  /** `auto-build`: the card's own Auto-build started it. Such a
-      move does not begin its parent group, so it never starts its siblings.
-      `human`: stamped by the RPC layer on a person's move, whatever
-      the client sent; it resets the card's CI round trips. */
-  cause: Schema.optional(Schema.Literals(["auto-build", "human"])),
+  /** `auto-build`: the card's own Auto-build moved it; it never begins its parent group.
+      `human`: stamped by the RPC layer on a person's move; it resets CI round trips.
+      `agent`: stamped by board_move_card; like a person's, its backward move disarms the
+      toggle it undoes, and it overrides nothing else. */
+  cause: Schema.optional(Schema.Literals(["auto-build", "human", "agent"])),
   createdAt: IsoDateTime,
 });
 export type BoardCardMoveCommand = typeof BoardCardMoveCommand.Type;
@@ -5353,6 +5384,10 @@ export const BoardCardUpdateCommand = Schema.Struct({
       planner's; `sizeEditor` says whose edit it is, a human's unless an agent's tool says so. */
   size: Schema.optional(Schema.NullOr(BoardCardSize)),
   sizeEditor: Schema.optional(BoardCardSizeEditor),
+  /** T3o: the supervisor's gate-attempt record (T3O-115). Absent leaves it; null clears it. */
+  gateBlock: Schema.optional(Schema.NullOr(BoardCardGateBlock)),
+  /** T3o: the supervisor's per-stay merge fix counts (T3O-116). Absent leaves it; null clears it. */
+  mergeStay: Schema.optional(Schema.NullOr(BoardCardMergeStay)),
   createdAt: IsoDateTime,
 });
 export type BoardCardUpdateCommand = typeof BoardCardUpdateCommand.Type;
@@ -6659,6 +6694,8 @@ export const BoardCardCheckInStepCommand = Schema.Struct({
   progressed: Schema.Boolean,
   /** This check-in delivered a reopened step's Auto-plan prompt. */
   reopenedPrompt: Schema.optionalKey(Schema.Literal(true)),
+  /** T3o: this check-in delivered an auto-answer to a parked planning question (T3O-115). */
+  autoAnswered: Schema.optionalKey(Schema.Literal(true)),
   createdAt: IsoDateTime,
 });
 export type BoardCardCheckInStepCommand = typeof BoardCardCheckInStepCommand.Type;
@@ -6844,6 +6881,9 @@ export const BoardCardUpdatedPayload = Schema.Struct({
   mergeStrategyEdited: Schema.optional(Schema.Literal(true)),
   /** Present when this update marked the card for auto-planning. */
   autoPlanMarked: Schema.optional(Schema.Literal(true)),
+  /** T3o: present when the update only wrote the supervisor's gate bookkeeping (gate block,
+      merge-stay counts), so it does not re-fire the gate that wrote it (T3O-113). */
+  gateStateOnly: Schema.optional(Schema.Literal(true)),
   /** Rides the shell delta so an override edit updates the card face live. Absent when the
       edit cannot touch review; the SQL cache is refreshed either way. */
   reviewSummary: Schema.optionalKey(BoardCardReviewSummary),
@@ -7692,6 +7732,8 @@ export const BoardCardShell = Schema.Struct({
   autoMergeSetting: Schema.optionalKey(Schema.Boolean),
   /** The current planning run is unattended, absent otherwise. */
   autoPlanPending: Schema.optionalKey(Schema.Boolean),
+  /** T3o: an automation gate's last attempt could not act (T3O-115); absent otherwise. */
+  gateBlock: Schema.optionalKey(BoardCardGateBlock),
   /** When auto-merge was first refused, absent when nothing is held (key-optional for the
       byte budget). The pill's elapsed clock measures from here, so it shows the whole wait,
       not the time since the last retry. */
@@ -8080,6 +8122,7 @@ export function makeBoardCardShell(input: {
   readonly autoBuildSetting?: boolean | null | undefined;
   readonly autoMergeSetting?: boolean | null | undefined;
   readonly autoPlanPending?: boolean | null | undefined;
+  readonly gateBlock?: BoardCardGateBlock | null | undefined;
   /** The auto-merge hold's shell facts. On the card
       aggregate, so BOTH producers — the SQL snapshot query
       and the JS delta derivation — must carry them or a held card's pill
@@ -8188,6 +8231,7 @@ export function makeBoardCardShell(input: {
     ...(input.autoBuildSetting == null ? {} : { autoBuildSetting: input.autoBuildSetting }),
     ...(input.autoMergeSetting == null ? {} : { autoMergeSetting: input.autoMergeSetting }),
     ...(input.autoPlanPending === true ? { autoPlanPending: true } : {}),
+    ...(input.gateBlock == null ? {} : { gateBlock: input.gateBlock }),
     // The auto-merge hold: three byte-cheap facts, each omitted
     // when it has nothing to say, so a board that has never held a merge is
     // byte-identical to an older payload.
@@ -8307,6 +8351,7 @@ export function boardCardShellFromCard(
     autoBuildSetting: card.autoBuildSetting,
     autoMergeSetting: card.autoMergeSetting,
     autoPlanPending: isBoardCardAutoPlanPending(card),
+    gateBlock: card.gateBlock ?? null,
     autoMergeHeldSince: card.autoMergeHold?.heldSince ?? null,
     autoMergeGaveUp: boardCardAutoMergeGaveUp(card.autoMergeHold),
     prDraft: boardCardPullRequestIsOpenDraft(card.pullRequest),
@@ -12285,8 +12330,8 @@ export const DEFAULT_BOARD_SYNC_PHASE_PROMPT = `This card's base branch has adva
 export const BoardStepExecution = Schema.Struct({
   prompt: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   model: Schema.NullOr(BoardModelSelection).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
-  /** Unset means the mode-based default `resolveBoardStageExecution` fills: `auto` in build
-      mode, `approval-required` otherwise. A value the user picked is honoured verbatim. */
+  /** Unset means `auto`, filled by `resolveBoardStageExecution`. A value the user picked is
+      honoured verbatim. */
   runtimeMode: Schema.optional(RuntimeMode),
   timeoutMs: PositiveInt.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_STEP_TIMEOUT_MS)),
@@ -12424,8 +12469,8 @@ export const BoardStageExecutionSimple = Schema.Struct({
   autoExecute: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   prompt: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   model: Schema.NullOr(BoardModelSelection).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
-  /** Unset means the mode-based default `resolveBoardStageExecution` fills: `auto` in build
-      mode, `approval-required` otherwise. A value the user picked is honoured verbatim. */
+  /** Unset means `auto`, filled by `resolveBoardStageExecution`. A value the user picked is
+      honoured verbatim. */
   runtimeMode: Schema.optional(RuntimeMode),
   mode: BoardStageMode.pipe(Schema.withDecodingDefault(Effect.succeed("plan" as const))),
   humanInLoop: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
@@ -12481,8 +12526,8 @@ export const BoardStageExecutionReview = Schema.Struct({
   autoExecute: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   prompt: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   model: Schema.NullOr(BoardModelSelection).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
-  /** Unset means the mode-based default `resolveBoardStageExecution` fills: `auto` in build
-      mode, `approval-required` otherwise. A value the user picked is honoured verbatim. */
+  /** Unset means `auto`, filled by `resolveBoardStageExecution`. A value the user picked is
+      honoured verbatim. */
   runtimeMode: Schema.optional(RuntimeMode),
   mode: BoardStageMode.pipe(Schema.withDecodingDefault(Effect.succeed("build" as const))),
   humanInLoop: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
@@ -12600,6 +12645,13 @@ export const RETIRED_BOARD_MERGE_CONFLICT_PROMPTS: ReadonlyArray<string> = [
  */
 export const DEFAULT_BOARD_CHECKS_FIX_PROMPT =
   "This card's pull request cannot merge because its CI checks are failing. Find out why: read the failing checks and their logs (`gh pr checks` and `gh run view --log-failed` on GitHub, or the equivalent for this repository's forge). Fix the cause in this card's branch, then run the project's own checks and tests and fix what they catch. Merge the base branch in only if the failure actually needs it. Then commit and push normally. Do NOT rebase, do NOT force-push, and do NOT convert the pull request back to a draft: a push to a ready pull request re-runs CI, which is exactly what has to happen next. If the failure is flaky, an infrastructure problem, or unrelated to this branch's changes, do not guess at a fix. Stop and say so.";
+
+/**
+ * Compiled in for the same reason: it starts only when the forge refuses a merge solely because
+ * the branch is behind its base, once per stay in the merge stage (T3O-116).
+ */
+export const DEFAULT_BOARD_BRANCH_UPDATE_PROMPT =
+  "This card's pull request cannot merge because its branch is behind the base branch and the repository requires it to be up to date. There are no known conflicts. Merge the base branch into this card's branch. If the merge does conflict after all, resolve each conflict on the merits: read enough of both sides to understand what each change was for and keep the intent of both, never discarding one side to make the merge go through. Then run the project's own checks and tests and fix what the merge broke. Commit and push normally. Do NOT rebase, and do NOT force-push under any circumstances: this branch has an open pull request, and rewriting its history strands the review comments anchored to it and can destroy work someone else pushed. If a conflict needs a decision you cannot make from the code alone, stop and say so rather than guessing.";
 
 /**
  * `autoExecute` is forced off: the only agent run this stage starts is the conflict fix, after
@@ -13010,14 +13062,13 @@ export type BoardSettingsPatch = typeof BoardSettingsPatch.Type;
  * through, keeping the user's rounds and per-phase edits.
  */
 /**
- * Honours the user's pick, else `auto` in build mode and `approval-required` in plan mode,
- * which runs in the shared project root. The board never forces `full-access`.
+ * Honours the user's pick, else `auto`, Planning included (T3O-115): an unattended planning run
+ * must not wait on approvals, and its envelope forbids changing the shared project root. A
+ * custom plan-mode stage has no such guard and defaults to `approval-required` in
+ * `resolveBoardStageExecution`. The board never forces `full-access`.
  */
-export function effectiveBoardRuntimeMode(
-  runtimeMode: RuntimeMode | undefined,
-  mode: BoardStageMode,
-): RuntimeMode {
-  return runtimeMode ?? (mode === "build" ? "auto" : "approval-required");
+export function effectiveBoardRuntimeMode(runtimeMode: RuntimeMode | undefined): RuntimeMode {
+  return runtimeMode ?? "auto";
 }
 
 /** Whether board-wide auto-merge is on: the merge-role stage's own
@@ -13216,7 +13267,7 @@ export function resolveBoardStageExecution(
       ...base,
       mode: "build",
       humanInLoop: false,
-      runtimeMode: effectiveBoardRuntimeMode(base.runtimeMode, "build"),
+      runtimeMode: effectiveBoardRuntimeMode(base.runtimeMode),
     };
   }
   if (stageId === BOARD_SEED_STAGE_IDS.merge) {
@@ -13236,7 +13287,7 @@ export function resolveBoardStageExecution(
         : base.prompt,
       autoExecute: false,
       mode: "build",
-      runtimeMode: effectiveBoardRuntimeMode(base.runtimeMode, "build"),
+      runtimeMode: effectiveBoardRuntimeMode(base.runtimeMode),
     };
   }
   if (stageId === BOARD_SEED_STAGE_IDS.building) {
@@ -13258,7 +13309,7 @@ export function resolveBoardStageExecution(
       ...base,
       mode: "build",
       humanInLoopWithPlan: false,
-      runtimeMode: effectiveBoardRuntimeMode(base.runtimeMode, "build"),
+      runtimeMode: effectiveBoardRuntimeMode(base.runtimeMode),
     };
   }
   if (stageId === BOARD_SEED_STAGE_IDS.ci) {
@@ -13278,7 +13329,7 @@ export function resolveBoardStageExecution(
       humanInLoopWithPlan: false,
       humanInLoopWithoutPlan: false,
       autoAdvance: true,
-      runtimeMode: effectiveBoardRuntimeMode(base.runtimeMode, "build"),
+      runtimeMode: effectiveBoardRuntimeMode(base.runtimeMode),
     };
   }
   // Planning always runs read-only and human-in-the-loop, with the retired pause-on-plan
@@ -13297,7 +13348,7 @@ export function resolveBoardStageExecution(
       mode: "plan",
       humanInLoop: true,
       humanInLoopWithPlan: false,
-      runtimeMode: effectiveBoardRuntimeMode(base.runtimeMode, "plan"),
+      runtimeMode: effectiveBoardRuntimeMode(base.runtimeMode),
     };
   }
   const resolved = applyBoardStageExecutionPatch(
@@ -13306,7 +13357,9 @@ export function resolveBoardStageExecution(
   );
   return {
     ...resolved,
-    runtimeMode: effectiveBoardRuntimeMode(resolved.runtimeMode, resolved.mode),
+    // Only Planning carries the plan root guard, so another plan-mode stage, which shares the
+    // project root, still waits on approvals unless the user picked a mode.
+    runtimeMode: resolved.runtimeMode ?? (resolved.mode === "build" ? "auto" : "approval-required"),
   };
 }
 

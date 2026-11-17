@@ -638,6 +638,9 @@ export const PullRequestDetail = Schema.Struct({
   viewer: Schema.optional(TrimmedNonEmptyString),
   baseComparison: Schema.optional(PullRequestBaseComparison),
   behindBy: Schema.optional(NonNegativeInt),
+  /** T3o (T3O-116): true when the host refuses the merge only because the branch is behind its
+      base, so updating it is what unblocks it. Absent when the host cannot say. */
+  baseUpdateRequired: Schema.optional(Schema.Boolean),
   /** Absent means the host does not report auto-merge state, not that it is off. */
   autoMergeEnabled: Schema.optional(Schema.Boolean),
   autoMergeMethod: Schema.optional(PullRequestMergeMethod),

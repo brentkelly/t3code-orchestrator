@@ -236,13 +236,17 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
   (it) => {
     // ── The approve gate: materialisation shape ──────────────────────────
 
-    it.effect("materialises a two-plan split: children and the approval record, no move", () =>
+    it.effect("materialises a two-plan split: children, the approval record, parent to Ready", () =>
       Effect.gen(function* () {
         const events = yield* decideEvents(approve(), makeReadModel(makeBoard()));
+        // T3o: the parent's planning is finished, so the new group waits in Ready (T3O-115).
         assert.deepStrictEqual(
           events.map((event) => event.type),
-          ["board.card-created", "board.card-created", "board.plans-approved"],
+          ["board.card-created", "board.card-created", "board.plans-approved", "board.card-moved"],
         );
+        const moved = events[3]!;
+        assert.ok(moved.type === "board.card-moved");
+        expect(moved.payload.toStage).toBe(BOARD_SEED_STAGE_IDS.ready);
 
         const [first, second, approved] = events;
         assert.ok(first!.type === "board.card-created" && second!.type === "board.card-created");
@@ -594,7 +598,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
         const events = yield* decideEvents(approve(), readModel);
         assert.deepStrictEqual(
           events.map((event) => event.type),
-          ["board.card-created", "board.card-created", "board.plans-approved"],
+          ["board.card-created", "board.card-created", "board.plans-approved", "board.card-moved"],
         );
 
         // …and the dependency gate still stops the build, one stage later. The
@@ -699,7 +703,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
         );
         assert.deepStrictEqual(
           events.map((event) => event.type),
-          ["board.card-created", "board.card-created", "board.plans-approved"],
+          ["board.card-created", "board.card-created", "board.plans-approved", "board.card-moved"],
         );
       }),
     );

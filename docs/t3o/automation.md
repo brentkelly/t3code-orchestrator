@@ -16,16 +16,20 @@ User-facing wording lives in `docs/user/board-auto-plan.md`, `board-plan-review.
    agent works through every finding on its own, answering questions and making calls. It flags the
    contentious calls in the card summary (decisions marked Unclear or Important) and does not stop
    to ask.
-3. **Auto sign-off.** When the plan is complete, the card moves to Ready. If a split was approved
-   beforehand, the card is split first and then the parent moves to Ready.
+3. **Auto sign-off.** When the plan is complete, the card moves to Ready. A proposed split is
+   approved too: the card is split first and then the group moves to Ready.
 4. **Auto-build.** A card in Ready moves to Building, including one that has only just arrived in
    Ready. "Ready" covers every way in: auto sign-off, a human approval, a dependency finishing, a
    restart, or the toggle being turned on while the card is already there.
-5. **Auto-merge.** A card merges into its target branch as soon as it reaches Ready for merge. If
-   the merge conflicts, the conflicts are resolved automatically and the merge goes ahead.
+5. **Auto-merge.** A card merges into its target branch as soon as it reaches Ready for merge,
+   including one already waiting there. If the merge conflicts, an agent resolves the conflicts
+   once and the merge goes ahead; a branch merely behind its base is brought up to date once. Each
+   allowance is spent per stay in Ready for merge: a second conflict, a failed fix, or a retry
+   ladder run out ends in an amber hold that says why, and the card merges again only after a
+   human clicks Merge or someone else pushes to the branch.
 
-The toggles chain. A card with all five on goes from Planning to merged with no human step, apart
-from approving a split, which only a person can do.
+The toggles chain. A card with all five on goes from Planning to merged with no human step, a split
+included.
 
 ## Rules every toggle obeys
 
@@ -39,4 +43,8 @@ from approving a split, which only a person can do.
   move, a merge it cannot resolve), the card shows why, in the status colour for that state
   (`docs/t3o/status-colours.md`), and the gate acts by itself once the obstacle clears.
 - **Only a person turns a toggle off.** Dragging a card backwards turns off the toggle for the stage
-  it left (see `board-auto-plan.md`). Nothing else turns a toggle off, and a failure never does.
+  it left (see `board-auto-plan.md`), and so does an agent moving it back with `board_move_card`,
+  which acts for a person. Nothing else turns a toggle off, and a failure never does.
+- **No unattended loops.** An unattended planning agent's questions are answered for it at most
+  three times per step; the next one waits for a person. A step that fails with no retry left
+  stops and waits for **Continue** with its toggle still on, rather than starting itself again.

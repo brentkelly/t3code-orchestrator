@@ -52,7 +52,7 @@ import { BOARD_CARD_PRIORITY_NAME } from "./boardCardPriority";
 import { boardCardAutoBuildChip } from "./boardCardAutomation";
 import { boardCardScheduleLabel } from "./boardCardScheduleLabel";
 import { boardCardFace } from "./boardCardFace";
-import type { BoardCardNotice } from "./boardCardNotice";
+import { boardGateBlockTooltip, type BoardCardNotice } from "./boardCardNotice";
 import { boardCardMeta, boardCardSummary } from "./boardCardSummary";
 import { BoardLabelChips } from "./BoardLabelChips";
 import {
@@ -301,21 +301,30 @@ function BoardCardNoticeChip({ notice }: { readonly notice: BoardCardNotice }) {
                       tooltip: `${notice.note}. Move the card on; the column goes once it's empty.`,
                       tint: "text-warning-foreground",
                     }
-                  : notice.kind === "worktree-kept"
+                  : notice.kind === "gate-block"
                     ? {
-                        // Amber: the card is finished but its cleanup is
-                        // blocked, and only a human can clear what is in the way.
-                        icon: <HardDriveIcon className="size-3 shrink-0" />,
-                        label: "Worktree kept",
-                        tooltip: `Worktree kept: ${notice.reason}`,
+                        // T3o: amber, held (T3O-115). The gate is due but its last attempt
+                        // could not act; the tick retries it, and the reason is the board's own.
+                        icon: <TriangleAlertIcon className="size-3 shrink-0" />,
+                        label: "Automation held",
+                        tooltip: boardGateBlockTooltip(notice.block),
                         tint: "text-warning-foreground",
                       }
-                    : {
-                        icon: <LockIcon className="size-3 shrink-0" />,
-                        label: "Blocked",
-                        tooltip: `Blocked by ${notice.dependencyCount} ${notice.dependencyCount === 1 ? "dependency" : "dependencies"}`,
-                        tint: "text-warning-foreground",
-                      };
+                    : notice.kind === "worktree-kept"
+                      ? {
+                          // Amber: the card is finished but its cleanup is
+                          // blocked, and only a human can clear what is in the way.
+                          icon: <HardDriveIcon className="size-3 shrink-0" />,
+                          label: "Worktree kept",
+                          tooltip: `Worktree kept: ${notice.reason}`,
+                          tint: "text-warning-foreground",
+                        }
+                      : {
+                          icon: <LockIcon className="size-3 shrink-0" />,
+                          label: "Blocked",
+                          tooltip: `Blocked by ${notice.dependencyCount} ${notice.dependencyCount === 1 ? "dependency" : "dependencies"}`,
+                          tint: "text-warning-foreground",
+                        };
   return (
     <BoardHint label={view.tooltip}>
       <span
