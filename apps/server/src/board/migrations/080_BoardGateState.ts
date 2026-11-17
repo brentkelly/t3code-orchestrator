@@ -1,11 +1,16 @@
 // T3o: automation gate state (T3O-115). A card's stay began at its latest move or creation; its step
-// row shares the stay only when selected since, else a sentinel no card matches, so a card dragged
-// back into Planning is never signed off from its old step.
+// row shares the stay when live or selected since, else a sentinel no card matches, so a card
+// dragged back into Planning is never signed off from its old step.
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
 /** Earlier than any stay a card can have, so it never equals a card's `stage_entered_at`. */
 export const BOARD_STALE_STAY_SENTINEL = "1970-01-01T00:00:00.000Z";
+
+/** A human move's time is the client's clock and a step's start the server's: a settled step that
+    started up to this long before the move still counts as this stay. A live step on the card's
+    stage always does. */
+const CLOCK_SKEW_SECONDS = 120;
 
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -43,8 +48,11 @@ export default Effect.gen(function* () {
     UPDATE board_card_step_state SET stage_entered_at = (
       SELECT CASE
         WHEN card.stage = board_card_step_state.step_id
-          AND COALESCE(board_card_step_state.started_at, board_card_step_state.updated_at)
-            >= card.stage_entered_at
+          AND (
+            board_card_step_state.status NOT IN ('succeeded', 'failed', 'abandoned')
+            OR COALESCE(board_card_step_state.started_at, board_card_step_state.updated_at)
+              >= strftime('%Y-%m-%dT%H:%M:%fZ', card.stage_entered_at, ${`-${CLOCK_SKEW_SECONDS} seconds`})
+          )
         THEN card.stage_entered_at
         ELSE ${BOARD_STALE_STAY_SENTINEL}
       END

@@ -17,6 +17,7 @@ const CREATED = "2026-01-01T00:00:00.000Z";
 const MOVED = "2026-01-02T00:00:00.000Z";
 const AFTER = "2026-01-02T00:05:00.000Z";
 const BEFORE = "2026-01-01T12:00:00.000Z";
+const SKEWED = "2026-01-01T23:59:55.000Z";
 
 const runBoardLineageThrough = (lastId: number) =>
   Effect.gen(function* () {
@@ -47,14 +48,14 @@ const insertActivity = (cardId: string, kind: string, at: string) =>
     `;
   });
 
-const insertStep = (cardId: string, stepId: string, startedAt: string) =>
+const insertStep = (cardId: string, stepId: string, startedAt: string, status = "succeeded") =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     yield* sql`
       INSERT INTO board_card_step_state
         (card_id, step_id, step_label, attempt, max_attempts, status, slot_held, started_at,
          updated_at)
-      VALUES (${cardId}, ${stepId}, 'Planning', 1, 3, 'succeeded', 0, ${startedAt}, ${startedAt})
+      VALUES (${cardId}, ${stepId}, 'Planning', 1, 3, ${status}, 0, ${startedAt}, ${startedAt})
     `;
   });
 
@@ -72,6 +73,14 @@ it.effect("backfills each card's stay and keeps a step only when it ran during t
     yield* insertCard("dragged", "planning");
     yield* insertActivity("dragged", "card-moved", MOVED);
     yield* insertStep("dragged", "planning", BEFORE);
+    // A client clock seconds ahead stamps the move after the step's server-clock start.
+    yield* insertCard("skewed", "planning");
+    yield* insertActivity("skewed", "card-moved", MOVED);
+    yield* insertStep("skewed", "planning", SKEWED);
+    // A live step on the card's stage is this stay's, whatever the clocks say.
+    yield* insertCard("running", "planning");
+    yield* insertActivity("running", "card-moved", MOVED);
+    yield* insertStep("running", "planning", BEFORE, "running");
     // No activity at all: the stay falls back to the card's last update.
     yield* insertCard("quiet", "ready");
 
@@ -91,6 +100,8 @@ it.effect("backfills each card's stay and keeps a step only when it ran during t
     assert.strictEqual(enteredOf(steps, "planned"), MOVED);
     assert.strictEqual(enteredOf(cards, "dragged"), MOVED);
     assert.strictEqual(enteredOf(steps, "dragged"), BOARD_STALE_STAY_SENTINEL);
+    assert.strictEqual(enteredOf(steps, "skewed"), MOVED);
+    assert.strictEqual(enteredOf(steps, "running"), MOVED);
     assert.strictEqual(enteredOf(cards, "quiet"), CREATED);
 
     // Re-running is a no-op rather than an error.
