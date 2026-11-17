@@ -1,8 +1,8 @@
 /**
  * T3o: Settings → Board → Projects → <project>: the project's
- * differences from the global pipeline, in four deep-linkable tabs —
- * Pipeline (switches and overrides), CI (steps and fix agent), Resources and Import &
- * export (`t3o.json`). Controls need the settings-write scope.
+ * differences from the global pipeline, in deep-linkable tabs — Pipeline
+ * (switches and overrides), CI (steps and fix agent), Schedules (T3O-117),
+ * Resources and Import & export (`t3o.json`). Controls need the settings-write scope.
  */
 import {
   boardProjectConfigDifferenceCount,
@@ -23,8 +23,11 @@ import { BoardProjectCiTab } from "./BoardProjectCiTab";
 import { BoardProjectImportTab } from "./BoardProjectImportTab";
 import { BoardProjectPipelineTab } from "./BoardProjectPipelineTab";
 import { BoardProjectResourcesTab } from "./BoardProjectResourcesTab";
+import { BoardProjectSchedulesTab } from "./BoardProjectSchedulesTab";
+import { useBoardSchedules } from "../schedules/useBoardSchedules";
 import {
   BOARD_PROJECT_SETTINGS_TABS,
+  boardScheduleNeedsAttention,
   parseBoardProjectSettingsTab,
   type BoardProjectSettingsTab,
 } from "./boardProjectSettings.logic";
@@ -35,6 +38,7 @@ import { projectAccent, projectIconColorOf } from "../projectAccent";
 const TAB_LABELS: Readonly<Record<BoardProjectSettingsTab, string>> = {
   pipeline: "Pipeline",
   ci: "CI",
+  schedules: "Schedules",
   resources: "Resources",
   import: "Import & export",
 };
@@ -52,10 +56,16 @@ export function BoardProjectSettingsPage(props: {
   const config = useBoardProjectConfig(environmentId, projectId);
   const ids = [projectId];
   const imports = useBoardImportCandidates(ids);
+  const schedules = useBoardSchedules(environmentId);
+  const projectSchedules = (schedules?.schedules ?? []).filter(
+    (row) => row.projectId === projectId,
+  );
+  const schedulesNeedAttention = projectSchedules.some(boardScheduleNeedsAttention);
   const tabCounts: Readonly<Record<BoardProjectSettingsTab, number>> = {
     pipeline:
       Object.keys(config.shell.stageSwitches).length + Object.keys(config.shell.overrides).length,
     ci: config.shell.ciSteps.length,
+    schedules: projectSchedules.length,
     resources: 0,
     import: 0,
   };
@@ -76,7 +86,7 @@ export function BoardProjectSettingsPage(props: {
       <BoardImportNoticeForProject imports={imports} title={project.title} />
       <nav
         aria-label={`${project.title} settings`}
-        className="mx-3 flex gap-0.5 border-b border-border sm:mx-4"
+        className="mx-3 flex gap-0.5 overflow-x-auto border-b border-border sm:mx-4"
       >
         {BOARD_PROJECT_SETTINGS_TABS.map((candidate) => {
           const count = tabCounts[candidate];
@@ -84,7 +94,7 @@ export function BoardProjectSettingsPage(props: {
             <Link
               aria-current={candidate === tab ? "page" : undefined}
               className={cn(
-                "-mb-px inline-flex items-center gap-1.5 border-b-2 px-2.5 py-2 text-board-13 font-medium",
+                "-mb-px inline-flex shrink-0 items-center gap-1.5 border-b-2 px-2.5 py-2 text-board-13 font-medium whitespace-nowrap",
                 candidate === tab
                   ? "border-foreground text-foreground"
                   : "border-transparent text-muted-foreground hover:text-foreground",
@@ -99,6 +109,12 @@ export function BoardProjectSettingsPage(props: {
                   {count}
                 </span>
               ) : null}
+              {candidate === "schedules" && schedulesNeedAttention ? (
+                <span
+                  aria-label="A schedule needs attention"
+                  className="size-1.5 rounded-full bg-warning-foreground"
+                />
+              ) : null}
             </Link>
           );
         })}
@@ -111,6 +127,12 @@ export function BoardProjectSettingsPage(props: {
         />
       ) : tab === "ci" ? (
         <BoardProjectCiTab config={config} projectId={projectId} projectTitle={project.title} />
+      ) : tab === "schedules" ? (
+        <BoardProjectSchedulesTab
+          list={schedules}
+          projectId={projectId}
+          projectTitle={project.title}
+        />
       ) : tab === "resources" ? (
         <BoardProjectResourcesTab
           config={config}

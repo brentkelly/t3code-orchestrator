@@ -14,7 +14,11 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { describeBoardCommandFailure } from "../boardCommandFeedback";
 import { boardToast } from "../boardToast";
 import { BoardImportConfirmDialog } from "./BoardImportConfirmDialog";
-import { boardImportSummaryChips } from "./boardProjectSettings.logic";
+import {
+  boardImportScheduleChips,
+  boardImportScheduleSummary,
+  boardImportSummaryChips,
+} from "./boardProjectSettings.logic";
 import { useBoardSettingsContext, useBoardSettingsProjects } from "./BoardSettingsLayout";
 
 /** Import candidates for some projects, read when the caller mounts (and on
@@ -138,13 +142,27 @@ function ImportNoticeRow(props: {
   const dismiss = useAtomCommand(boardEnvironment.dismissProjectImport, { reportFailure: false });
   const [confirming, setConfirming] = useState(false);
   const { candidate, imports } = props;
-  const chips = candidate.preview === null ? [] : boardImportSummaryChips(candidate.preview);
+  const preview = candidate.preview;
+  const schedulesOnly = preview?.schedulesOnly === true;
+  const scheduleCounts =
+    preview === null
+      ? []
+      : boardImportScheduleChips(boardImportScheduleSummary(preview.schedules ?? [], {})).counts;
+  const chips =
+    preview === null
+      ? []
+      : [
+          ...(schedulesOnly ? ["Schedules only"] : boardImportSummaryChips(preview)),
+          ...scheduleCounts,
+        ];
   return (
     <div className="flex flex-wrap items-center gap-2 py-1">
       <FileJsonIcon className="size-4 text-attention-foreground" />
       <div className="flex min-w-0 flex-col">
         <span className="text-board-13 text-foreground">
-          {props.title} has a t3o.json. Import its pipeline and CI settings?
+          {schedulesOnly
+            ? `${props.title}'s t3o.json differs only in its schedules. Import to review them; nothing runs until you pick a machine.`
+            : `${props.title} has a t3o.json. Import its ${scheduleCounts.length > 0 ? "pipeline, CI and schedules" : "pipeline and CI settings"}?`}
         </span>
         <span className="text-xs text-muted-foreground">
           {candidate.blobSha?.slice(0, 7)}

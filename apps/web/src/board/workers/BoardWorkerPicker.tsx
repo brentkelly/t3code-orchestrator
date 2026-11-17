@@ -82,6 +82,9 @@ export function BoardWorkerPinMenu(props: {
   readonly onPick: (workerId: BoardWorkerId | null) => void;
   readonly onSetUp?: (workerId: BoardWorkerId) => void;
   readonly note?: string;
+  /** The first row's sub-line, and the heading over the worker rows (T3O-117). */
+  readonly followSub?: string;
+  readonly sectionLabel?: string;
 }) {
   return (
     <>
@@ -102,11 +105,11 @@ export function BoardWorkerPinMenu(props: {
           ) : null}
         </span>
         <span className="text-board-11 text-muted-foreground">
-          The board picks the best ready worker when the build starts
+          {props.followSub ?? "The board picks the best ready worker when the build starts"}
         </span>
       </button>
       <p className="px-2 pt-2 pb-1 text-board-11 font-medium text-muted-foreground">
-        Pin builds to
+        {props.sectionLabel ?? "Pin builds to"}
       </p>
       {props.choices.map((choice) => {
         const row = (
