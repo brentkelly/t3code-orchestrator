@@ -87,7 +87,8 @@ interface FakeProviderScenario {
   prListOtherwise?: ReadonlyArray<FakeChangeRequest>;
   defaultBranch?: string;
   pullRequest?: FakeChangeRequest;
-  repositoryCloneUrls?: Record<string, { url: string; sshUrl: string }>;
+  /** `nameWithOwner` overrides the echoed repository, simulating a renamed repository. */
+  repositoryCloneUrls?: Record<string, { url: string; sshUrl: string; nameWithOwner?: string }>;
   failWith?: string;
   failCause?: unknown;
   failAfterCalls?: number;
@@ -1804,6 +1805,183 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
 
       expect(second).toBeNull();
       expect(listed(providerCalls)).toHaveLength(2);
+    }),
+  );
+
+  // T3o (T3O-119): a renamed repository keeps working through the old remote URL, but its PRs
+  // name the new repository; the strict head match rejected them, so cards never got a PR.
+  const renamedRepositoryCheckout = (branch: string) =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["checkout", "-b", branch]);
+      yield* runGit(repoDir, ["push", "-u", "origin", branch]);
+      yield* configureVisibleRemoteUrlWithLocalRewrite(
+        repoDir,
+        "origin",
+        "git@github.com:brentkelly/t3code-orchestrator.git",
+        remoteDir,
+      );
+      return repoDir;
+    });
+  const renamedRepositoryPr = (
+    branch: string,
+    number: number,
+    overrides: Partial<FakeChangeRequest> = {},
+  ): FakeChangeRequest => ({
+    number,
+    title: "Renamed repository PR",
+    url: `https://github.com/brentkelly/t3o/pull/${number}`,
+    baseRefName: "t3o",
+    headRefName: branch,
+    state: "open",
+    isCrossRepository: false,
+    headRepositoryNameWithOwner: "brentkelly/t3o",
+    headRepositoryOwnerLogin: "brentkelly",
+    ...overrides,
+  });
+  const forgeNames = (nameWithOwner: string) => ({
+    "brentkelly/t3code-orchestrator": {
+      url: `https://github.com/${nameWithOwner}.git`,
+      sshUrl: `git@github.com:${nameWithOwner}.git`,
+      nameWithOwner,
+    },
+  });
+  const cloneUrlLookups = (calls: ReadonlyArray<FakeProviderCall>) =>
+    calls.filter((call) => call.operation === "getRepositoryCloneUrls");
+
+  it.effect("branch PR lookup finds the PR of a repository renamed since origin was set", () =>
+    Effect.gen(function* () {
+      const branch = "board/t3o-115";
+      const repoDir = yield* renamedRepositoryCheckout(branch);
+      const { manager, providerCalls } = yield* makeManager({
+        providerScenario: {
+          prListOtherwise: [renamedRepositoryPr(branch, 285)],
+          repositoryCloneUrls: forgeNames("brentkelly/t3o"),
+        },
+      });
+
+      const pullRequest = yield* manager.branchPullRequest({ cwd: repoDir, branch });
+
+      expect(pullRequest?.number).toBe(285);
+      expect(cloneUrlLookups(providerCalls)).toEqual([
+        { operation: "getRepositoryCloneUrls", repository: "brentkelly/t3code-orchestrator" },
+      ]);
+    }),
+  );
+
+  it.effect("rename tolerance asks the forge only after a near-miss", () =>
+    Effect.gen(function* () {
+      const branch = "board/exact-name";
+      const repoDir = yield* renamedRepositoryCheckout(branch);
+      const { manager, providerCalls } = yield* makeManager({
+        providerScenario: {
+          prListOtherwise: [
+            renamedRepositoryPr(branch, 7, {
+              url: "https://github.com/brentkelly/t3code-orchestrator/pull/7",
+              headRepositoryNameWithOwner: "brentkelly/t3code-orchestrator",
+            }),
+          ],
+        },
+      });
+
+      expect((yield* manager.branchPullRequest({ cwd: repoDir, branch }))?.number).toBe(7);
+      expect(cloneUrlLookups(providerCalls)).toHaveLength(0);
+    }),
+  );
+
+  it.effect("rename tolerance only accepts a PR the forge confirms", () =>
+    Effect.gen(function* () {
+      const branch = "board/rename-rows";
+      const repoDir = yield* renamedRepositoryCheckout(branch);
+      const rows: ReadonlyArray<{
+        readonly name: string;
+        readonly pr: FakeChangeRequest;
+        readonly forge: FakeProviderScenario["repositoryCloneUrls"];
+        readonly found: boolean;
+      }> = [
+        {
+          name: "forge names another repository",
+          pr: renamedRepositoryPr(branch, 1),
+          forge: forgeNames("brentkelly/something-else"),
+          found: false,
+        },
+        {
+          name: "cross-repository PR",
+          pr: renamedRepositoryPr(branch, 2, { isCrossRepository: true }),
+          forge: forgeNames("brentkelly/t3o"),
+          found: false,
+        },
+        {
+          name: "cross-repository flag unknown",
+          pr: renamedRepositoryPr(branch, 3, { isCrossRepository: undefined }),
+          forge: forgeNames("brentkelly/t3o"),
+          found: false,
+        },
+        {
+          name: "forge lookup fails",
+          pr: renamedRepositoryPr(branch, 4),
+          forge: {},
+          found: false,
+        },
+        {
+          name: "transferred to another owner",
+          pr: renamedRepositoryPr(branch, 5, {
+            url: "https://github.com/mesh/t3o/pull/5",
+            headRepositoryNameWithOwner: "mesh/t3o",
+            headRepositoryOwnerLogin: "mesh",
+          }),
+          forge: forgeNames("mesh/t3o"),
+          found: true,
+        },
+      ];
+      for (const row of rows) {
+        const { manager } = yield* makeManager({
+          providerScenario: { prListOtherwise: [row.pr], repositoryCloneUrls: row.forge },
+        });
+        const pullRequest = yield* manager.branchPullRequest({ cwd: repoDir, branch });
+        expect({ name: row.name, found: pullRequest?.number === row.pr.number }).toEqual({
+          name: row.name,
+          found: row.found,
+        });
+      }
+    }),
+  );
+
+  it.effect("rename tolerance caches the forge's answer but never its failure", () =>
+    Effect.gen(function* () {
+      const branch = "board/rename-cache";
+      const repoDir = yield* renamedRepositoryCheckout(branch);
+      const scenario: FakeProviderScenario = {
+        prListOtherwise: [
+          renamedRepositoryPr(branch, 11),
+          renamedRepositoryPr(branch, 12, {
+            url: "https://github.com/brentkelly/other/pull/12",
+            headRepositoryNameWithOwner: "brentkelly/other",
+          }),
+        ],
+        repositoryCloneUrls: forgeNames("brentkelly/t3o"),
+      };
+      const { manager, providerCalls } = yield* makeManager({ providerScenario: scenario });
+
+      expect((yield* manager.branchPullRequest({ cwd: repoDir, branch }))?.number).toBe(11);
+      expect(cloneUrlLookups(providerCalls)).toHaveLength(1);
+      yield* manager.branchPullRequest({ cwd: repoDir, branch }, { refresh: true });
+      expect(listed(providerCalls).length).toBeGreaterThan(1);
+      expect(cloneUrlLookups(providerCalls)).toHaveLength(1);
+
+      const failing: FakeProviderScenario = {
+        prListOtherwise: [renamedRepositoryPr(branch, 11)],
+        repositoryCloneUrls: {},
+      };
+      const { manager: failingManager, providerCalls: failingCalls } = yield* makeManager({
+        providerScenario: failing,
+      });
+      expect(yield* failingManager.branchPullRequest({ cwd: repoDir, branch })).toBeNull();
+      yield* failingManager.branchPullRequest({ cwd: repoDir, branch }, { refresh: true });
+      expect(cloneUrlLookups(failingCalls)).toHaveLength(2);
     }),
   );
 
