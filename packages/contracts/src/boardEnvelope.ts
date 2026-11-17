@@ -926,7 +926,7 @@ export function boardCiFixPromptRules(failureCount: number): ReadonlyArray<strin
       ? ["Later failures may be caused by earlier ones. Work through them in order."]
       : []),
     "Updating a test that this card's change made out of date is fine. Never delete, skip or loosen a check to hide a real failure.",
-    "If a failure also happens on the base branch, still fix it, but keep that fix minimal and in its own commit.",
+    "If a failure also happens on the base branch, still fix it, in its own commit. Neither that, nor the fix being large or needing you to choose a behaviour, is a reason for cannot-fix: choose what the tests and specs point to and say why in the commit message.",
     "",
     `Do not run the CI steps yourself to finish: the board re-runs every step from the top after you report. Complete with outcome "succeeded" and a payload shaped ${BOARD_CI_FIX_PAYLOAD_SHAPE}, giving every issue by its id. Use "fixed" once your fixes are committed and pushed (give \`fixedSha\`), or with nothing to commit when a failure looks transient and a re-run should clear it. Use "cannot-fix", with a \`finding\` saying why, when any issue can't be fixed from this worktree, or only by hiding it: still fix and push the others, and mark each issue "resolved" or "cannot-fix".`,
   ];
