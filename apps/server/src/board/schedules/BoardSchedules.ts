@@ -429,7 +429,13 @@ export const makeBoardSchedules = (deps: BoardSchedulesDeps): BoardSchedulesShap
         !tasks.has(row.taskId),
     );
     const projectIds = [...new Set(gone.map((row) => row.projectId))];
-    for (const projectId of projectIds) yield* reconcile(projectId);
+    // Only the gone rows: a read must not retry or reassert any other.
+    for (const projectId of projectIds) {
+      const only = new Set(
+        gone.filter((row) => row.projectId === projectId).map((row) => row.fileId),
+      );
+      yield* withProjectLock(projectId, reconcileUnlocked(projectId, new Set(), only));
+    }
     return projectIds.length === 0 ? rows : yield* store.rows();
   });
 
