@@ -307,6 +307,8 @@ export function deriveLastResult(input: {
   readonly lastError: string | null;
   readonly scheduled: boolean;
   readonly task: ScheduledTask | null;
+  /** When the board last changed the schedule's row: its definition, machine or adoption. */
+  readonly rowUpdatedAt: string;
   readonly latestRun: BoardScheduleRun | undefined;
   readonly latestState: RunState;
   readonly now: DateTime.DateTime;
@@ -322,6 +324,8 @@ export function deriveLastResult(input: {
       due !== null &&
       nowMs - due > MISSED_GRACE_MS &&
       Date.parse(task.createdAt) < due &&
+      // A schedule changed, resumed or placed after its due time never owed that run.
+      Date.parse(input.rowUpdatedAt) < due &&
       (lastRunAt === null || lastRunAt < due) &&
       (runAt === null || runAt < due)
     ) {

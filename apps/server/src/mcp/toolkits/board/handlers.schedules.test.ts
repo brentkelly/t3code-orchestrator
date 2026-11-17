@@ -150,6 +150,12 @@ describe("a schedule run's board tools", () => {
           .pipe(as(laterRun)),
       );
       assert.include(humans.message, "wasn't created by this schedule");
+      const foreignDependency = yield* Effect.flip(
+        boardHandlers
+          .board_update_card({ cardId: created.cardId, dependsOn: [humanCard] } as never)
+          .pipe(as(laterRun)),
+      );
+      assert.include(foreignDependency.message, "wasn't created by this schedule");
     }));
 
   test("refuses another project, a stage, a foreign parent, and card-scoped tools", () =>

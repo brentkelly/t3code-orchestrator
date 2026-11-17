@@ -268,6 +268,8 @@ export const makeBoardSchedules = (deps: BoardSchedulesDeps): BoardSchedulesShap
       yield* store.remove(row.projectId, row.fileId);
       return { kind: "deleted" } satisfies RowOutcome;
     }
+    // Still the human's task until an import adopts it: never rewritten or deleted here.
+    if (row.exportLinked) return { kind: "unchanged" } satisfies RowOutcome;
     if (row.environmentId === null) {
       if (live === null) {
         if (row.applied !== null || row.lastError !== null) {
@@ -393,6 +395,7 @@ export const makeBoardSchedules = (deps: BoardSchedulesDeps): BoardSchedulesShap
       lastError: row.lastError,
       scheduled,
       task: live,
+      rowUpdatedAt: row.updatedAt,
       latestRun,
       latestState,
       now: yield* localNow,
@@ -538,7 +541,10 @@ export const makeBoardSchedules = (deps: BoardSchedulesDeps): BoardSchedulesShap
     const all = yield* store.rows();
     const tasks = yield* listTasks;
     const byId = new Map(tasks.map((task) => [task.id as string, task]));
-    const rows = (yield* settleMissing(all, byId)).filter((row) => !row.tombstone);
+    // An export-linked task still runs as hand-made, so upstream's own status is the truth.
+    const rows = (yield* settleMissing(all, byId)).filter(
+      (row) => !row.tombstone && !row.exportLinked,
+    );
     const managed = yield* Effect.forEach(
       rows.filter((row) => byId.has(row.taskId)),
       (row) =>
@@ -554,7 +560,11 @@ export const makeBoardSchedules = (deps: BoardSchedulesDeps): BoardSchedulesShap
     );
     return {
       tasks: managed,
-      handMade: handMadeOf(tasks, new Set<string>(all.map((row) => row.taskId)), undefined),
+      handMade: handMadeOf(
+        tasks,
+        new Set<string>(all.filter((row) => !row.exportLinked).map((row) => row.taskId)),
+        undefined,
+      ),
     };
   });
 
@@ -579,7 +589,30 @@ export const makeBoardSchedules = (deps: BoardSchedulesDeps): BoardSchedulesShap
     });
     for (const definition of schedules) {
       const existing = byFile.get(definition.id);
-      if (existing !== undefined && !existing.tombstone) {
+      const exportedTask =
+        existing?.exportLinked === true && !existing.tombstone
+          ? (byId.get(existing.taskId) ?? null)
+          : null;
+      if (existing !== undefined && exportedTask !== null) {
+        // An export linked this task; only importing it hands its runs to the board.
+        adopted.add(exportedTask.id);
+        entries.push({
+          row: {
+            ...base(definition),
+            kind: "adopt",
+            ...(exportedTask.prompt === definition.prompt
+              ? {}
+              : { previousPrompt: exportedTask.prompt }),
+            currentEnvironmentId: deps.serverEnvironmentId,
+            changes: adoptChanges(exportedTask, definition),
+          },
+          definition,
+          existing,
+          adoptTask: exportedTask,
+        });
+        continue;
+      }
+      if (existing !== undefined && !existing.tombstone && !existing.exportLinked) {
         if (sameDefinition(existing.definition, definition)) continue;
         const live = byId.get(existing.taskId) ?? null;
         const current =
@@ -641,7 +674,8 @@ export const makeBoardSchedules = (deps: BoardSchedulesDeps): BoardSchedulesShap
     }
     const fileIds = new Set(schedules.map((schedule) => schedule.id));
     for (const row of rows) {
-      if (row.tombstone || fileIds.has(row.fileId)) continue;
+      // An export-linked row is still a hand-made task, which a file never deletes.
+      if (row.tombstone || row.exportLinked || fileIds.has(row.fileId)) continue;
       entries.push({
         row: {
           fileId: row.fileId,
@@ -691,7 +725,8 @@ export const makeBoardSchedules = (deps: BoardSchedulesDeps): BoardSchedulesShap
         projectId,
         Effect.gen(function* () {
           const reassert = new Set<string>();
-          const placementOf = (fileId: string) => placements[fileId] ?? null;
+          const placementOf = (fileId: string) =>
+            Object.hasOwn(placements, fileId) ? (placements[fileId] ?? null) : null;
           for (const entry of preview.entries) {
             const { row, definition, existing } = entry;
             const placement = placementOf(row.fileId);
@@ -727,7 +762,9 @@ export const makeBoardSchedules = (deps: BoardSchedulesDeps): BoardSchedulesShap
               environmentId: placement,
               ...(existing === null
                 ? {}
-                : { applied: existing.tombstone ? null : existing.applied }),
+                : {
+                    applied: existing.tombstone || existing.exportLinked ? null : existing.applied,
+                  }),
             });
           }
           const outcomes = yield* reconcileUnlocked(projectId, reassert);

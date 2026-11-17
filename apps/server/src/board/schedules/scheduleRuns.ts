@@ -38,7 +38,8 @@ export const registerBoardScheduleRunner = (runner: BoardScheduleRunner) =>
 const NOT_RUNNING = "Board is not running on this server.";
 
 /**
- * The run of a task a board schedule links, else `threadRun` unchanged. A linked task
+ * The run of a task a board schedule links, else `threadRun` unchanged. A task only an
+ * export linked stays hand-made until an import adopts it. A linked task
  * with no runner fails rather than launch locally, and so does one whose link can't be read.
  */
 export const orThread = Effect.fn("BoardScheduleRuns.orThread")(function* (
@@ -47,7 +48,8 @@ export const orThread = Effect.fn("BoardScheduleRuns.orThread")(function* (
   threadRun: Effect.Effect<Exit.Exit<ThreadId, unknown>>,
 ): Effect.fn.Return<Exit.Exit<ThreadId | null, unknown>> {
   const linked = yield* sql<{ readonly task_id: string }>`
-    SELECT task_id FROM boards.project_schedules WHERE task_id = ${task.id}
+    SELECT task_id FROM boards.project_schedules
+    WHERE task_id = ${task.id} AND export_linked = 0
   `.pipe(
     Effect.map((rows) => rows.length > 0),
     Effect.catchCause((cause) =>

@@ -126,8 +126,9 @@ A `t3o.json` can also declare recurring runs. Each entry needs an `id` (letters,
   are marked **From t3o.json** on the **Scheduled tasks** page; you can edit or pause them there,
   but to change one for good, edit `t3o.json`, commit and import.
 - **A hand-made scheduled task with the same title is adopted** instead of a second one being made.
-  **Export** brings the project's hand-made interval and time-of-day tasks into the file; after
-  that the file manages them. **Export again without them** undoes that before you commit.
+  **Export** brings the project's hand-made interval and time-of-day tasks into the file. They
+  keep running as hand-made tasks until you import the file and pick where each one runs; after
+  that the file manages them. **Export again without them** takes out the ones not yet imported.
 - `once` and webhook schedules can't be declared in the file.
 
 ## Permissions

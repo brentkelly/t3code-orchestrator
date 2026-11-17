@@ -137,7 +137,10 @@ export function scheduleThreadPolicy(input: {
     case "board_update_card": {
       const card = ownCard(board, caller, params.cardId);
       if (isDecision(card)) return card;
-      const added = Array.isArray(params.addDependsOn) ? params.addDependsOn : [];
+      const added = [
+        ...(Array.isArray(params.addDependsOn) ? params.addDependsOn : []),
+        ...(Array.isArray(params.dependsOn) ? params.dependsOn : []),
+      ];
       for (const ref of added) {
         const dependency = ownCard(board, caller, ref);
         if (isDecision(dependency)) return dependency;

@@ -121,6 +121,7 @@ describe("deriveLastResult", () => {
   const base = {
     lastError: null,
     scheduled: true,
+    rowUpdatedAt: "2026-02-01T00:00:00.000Z",
     latestRun: undefined,
     latestState: null,
     now: now(),
@@ -137,7 +138,7 @@ describe("deriveLastResult", () => {
     assert.strictEqual(result.at, "2026-03-02T02:00:00.000Z");
   });
 
-  it("isn't missed inside upstream's grace, nor for a task made after the due time", () => {
+  it("isn't missed inside upstream's grace, nor for a task made or a schedule changed after the due time", () => {
     const justDue = deriveLastResult({
       ...base,
       task: task(),
@@ -149,6 +150,14 @@ describe("deriveLastResult", () => {
       task: task({ createdAt: "2026-03-02T03:00:00.000Z" }),
     });
     assert.strictEqual(newer.kind, "never");
+    // Changed, resumed or placed after the due time: upstream's own reschedule bumps the
+    // task's updatedAt too, so only the board row's time tells the two apart.
+    const changed = deriveLastResult({
+      ...base,
+      rowUpdatedAt: "2026-03-02T03:00:00.000Z",
+      task: task(),
+    });
+    assert.strictEqual(changed.kind, "never");
   });
 
   it.each([

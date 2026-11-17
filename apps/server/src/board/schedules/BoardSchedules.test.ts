@@ -518,11 +518,13 @@ describe("BoardSchedules", () => {
       const linked = yield* rowOf(ctx, "weekly-changelog-draft-2");
       assert.strictEqual(linked.environmentId, server);
       assert.isTrue(linked.exportLinked);
+      // Still hand-made on upstream's page until an import adopts them.
       const managed = yield* ctx.schedules.managedTasks();
-      assert.deepStrictEqual(managed.tasks.map((task) => task.taskId).toSorted(), [
-        "hand-1",
-        "hand-2",
-      ]);
+      assert.deepStrictEqual(managed.tasks, []);
+      assert.includeMembers(
+        managed.handMade.map((task) => task.taskId),
+        ["hand-1", "hand-2"],
+      );
       const again = yield* ctx.schedules.exportSchedules(projectId, { excludeHandMade: true });
       assert.deepStrictEqual(
         again.schedules?.map((schedule) => schedule.id),
@@ -531,6 +533,59 @@ describe("BoardSchedules", () => {
       assert.isNull(yield* ctx.store.row(projectId, "weekly-changelog-draft-2"));
       assert.isTrue(ctx.world.tasks.has("hand-1"));
       assert.deepStrictEqual(ctx.world.deletedTasks, []);
+    }));
+});
+
+describe("BoardSchedules placements", () => {
+  test("a schedule id naming an Object member isn't placed by the prototype", () =>
+    Effect.gen(function* () {
+      const ctx = yield* setup;
+      yield* importFile(ctx, [{ ...nightly, id: "constructor" }], {});
+      assert.isNull((yield* rowOf(ctx, "constructor")).environmentId);
+    }));
+});
+
+describe("BoardSchedules export-linked tasks", () => {
+  const upstream = Effect.succeed(Exit.succeed(ThreadId.make("thread-upstream")));
+
+  test("stay hand-made until an import adopts them, and only those leave on Export again", () =>
+    Effect.gen(function* () {
+      const ctx = yield* setup;
+      const sql = yield* SqlClient.SqlClient;
+      ctx.world.tasks.set("hand-1", handMade("hand-1", "First"));
+      ctx.world.tasks.set("hand-2", handMade("hand-2", "Second"));
+      const exported = yield* ctx.schedules.exportSchedules(projectId, { excludeHandMade: false });
+      const first = exported.schedules!.find((schedule) => schedule.title === "First")!;
+
+      // Exported only: its runs are still its own, and nothing rewrites or deletes it.
+      const hand1 = ctx.world.tasks.get("hand-1")!;
+      assert.deepStrictEqual(yield* orThread(sql, hand1, upstream), yield* upstream);
+      yield* ctx.schedules.setMachine({ projectId, fileId: first.id, environmentId: null });
+      yield* ctx.schedules.reconcile(projectId, new Set([first.id]));
+      assert.strictEqual(ctx.world.upserts.length, 0);
+      assert.deepStrictEqual(ctx.world.deletedTasks, []);
+      const preview = yield* ctx.schedules.previewImport(projectId, exported.schedules!);
+      assert.deepStrictEqual(
+        preview.entries.map((entry) => [entry.row.kind, entry.adoptTask?.id as string]),
+        [
+          ["adopt", "hand-1"],
+          ["adopt", "hand-2"],
+        ],
+      );
+
+      // Importing a file with only the first adopts it and leaves the second hand-made.
+      yield* importFile(ctx, [first], { [first.id]: server });
+      assert.isFalse((yield* rowOf(ctx, first.id)).exportLinked);
+      assert.isTrue(Exit.isFailure(yield* orThread(sql, hand1, upstream)));
+      assert.deepStrictEqual(ctx.world.deletedTasks, []);
+
+      const again = yield* ctx.schedules.exportSchedules(projectId, { excludeHandMade: true });
+      assert.deepStrictEqual(
+        again.schedules?.map((schedule) => schedule.id),
+        [first.id],
+      );
+      assert.isNotNull(yield* ctx.store.row(projectId, first.id));
+      assert.isTrue(ctx.world.tasks.has("hand-2"));
     }));
 });
 

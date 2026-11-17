@@ -266,10 +266,16 @@ export const make = Effect.gen(function* () {
     );
     // Placements apply only to the rows the import changes; omitted is Don't schedule.
     const placements = Object.fromEntries(
-      preview.entries.map((entry) => [
-        entry.row.fileId,
-        input.schedulePlacements?.[entry.row.fileId] ?? null,
-      ]),
+      preview.entries.map((entry) => {
+        const chosen = input.schedulePlacements;
+        // Own keys only: a schedule id such as "constructor" must not read the prototype.
+        return [
+          entry.row.fileId,
+          chosen !== undefined && Object.hasOwn(chosen, entry.row.fileId)
+            ? (chosen[entry.row.fileId] ?? null)
+            : null,
+        ];
+      }),
     );
     for (const placement of Object.values(placements)) {
       const refusal = schedules?.placementRefusal(placement) ?? null;
