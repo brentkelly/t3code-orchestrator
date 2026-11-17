@@ -90,7 +90,6 @@ export function scheduleThreadPolicy(input: {
 }): ScheduleToolDecision {
   const { board, caller, tool, params } = input;
   if (CARD_SCOPED_TOOLS.has(tool)) {
-    if (tool === "board_get_plan") return { kind: "allow" };
     return {
       kind: "refuse",
       code: "thread-not-linked",

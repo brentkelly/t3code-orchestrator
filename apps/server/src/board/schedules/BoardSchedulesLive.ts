@@ -16,6 +16,7 @@ import * as GitVcsDriver from "../../vcs/GitVcsDriver.ts";
 import { boardFallbackModelSelection } from "../boardFallbackModel.ts";
 import { ThreadGateway, UNKNOWN_THREAD_STATE } from "../ThreadGateway.ts";
 import { BoardWorkspaces } from "../workspace/BoardWorkspace.ts";
+import { parseWorktreePathForBranch } from "../worktree.ts";
 import { WorktreeRetirer } from "../worktreeRetire.ts";
 import { BoardSchedules, makeBoardSchedules } from "./BoardSchedules.ts";
 import { BoardScheduleLauncher } from "./BoardScheduleLauncher.ts";
@@ -70,17 +71,28 @@ const make = Effect.gen(function* () {
           (cause) => new BoardScheduleError({ message: "Couldn't delete the run thread.", cause }),
         ),
       ),
-    threadWorkspace: (threadId) =>
+    threadWorktree: (threadId) =>
       threadManagement.getThreadShell(threadId).pipe(
-        Effect.map((shell) => ({
-          worktreePath: shell?.worktreePath ?? null,
-          branch: shell?.branch ?? null,
-        })),
-        Effect.orElseSucceed(() => ({ worktreePath: null, branch: null })),
+        Effect.map((shell) => shell?.worktreePath ?? null),
+        Effect.mapError(
+          (cause) => new BoardScheduleError({ message: "Couldn't read the run thread.", cause }),
+        ),
       ),
     // Deleting a thread leaves its worktree, and every run makes a new branch.
     removeRunWorktree: Effect.fn("BoardSchedules.removeRunWorktree")(
-      function* ({ project, worktreePath, branch }) {
+      function* ({ project, worktreePath: knownPath, branch }) {
+        const runGit = (operation: string, args: ReadonlyArray<string>) =>
+          git.execute({ operation, cwd: project.workspaceRoot, args, allowNonZeroExit: true });
+        let worktreePath = knownPath;
+        if (worktreePath === null && branch !== null) {
+          const listed = yield* runGit("board.schedule.runWorktrees", [
+            "worktree",
+            "list",
+            "--porcelain",
+          ]);
+          if (listed.exitCode !== 0) return false;
+          worktreePath = parseWorktreePathForBranch(listed.stdout, branch);
+        }
         if (worktreePath !== null && worktreePath !== project.workspaceRoot) {
           const retired = yield* retirer.retire({
             projectCwd: project.workspaceRoot,
@@ -92,13 +104,16 @@ const make = Effect.gen(function* () {
           });
           if (retired === null || retired.outcome !== "removed") return false;
         }
+        // Only the branch recorded at launch: the thread's own may since name another.
         if (branch !== null) {
-          yield* git.execute({
-            operation: "board.schedule.pruneRunBranch",
-            cwd: project.workspaceRoot,
-            args: ["branch", "-D", branch],
-            allowNonZeroExit: true,
-          });
+          yield* runGit("board.schedule.pruneRunBranch", ["branch", "-D", branch]);
+          const left = yield* runGit("board.schedule.runBranchGone", [
+            "show-ref",
+            "--verify",
+            "--quiet",
+            `refs/heads/${branch}`,
+          ]);
+          if (left.exitCode !== 1) return false;
         }
         return true;
       },

@@ -83,11 +83,9 @@ export interface BoardSchedulesDeps {
     threadId: ThreadId,
   ) => Effect.Effect<BoardThreadState | UnknownThreadState | null>;
   readonly deleteThread: (threadId: ThreadId) => Effect.Effect<void, BoardScheduleError>;
-  /** The run thread's worktree and branch, read before it is deleted. */
-  readonly threadWorkspace: (
-    threadId: ThreadId,
-  ) => Effect.Effect<{ readonly worktreePath: string | null; readonly branch: string | null }>;
-  /** Remove a pruned run's worktree, then its branch; false when it couldn't be. */
+  /** The run thread's worktree path, null when it has none or the thread is gone. */
+  readonly threadWorktree: (threadId: ThreadId) => Effect.Effect<string | null, BoardScheduleError>;
+  /** Remove a pruned run's worktree, then its branch; true only once both are confirmed gone. */
   readonly removeRunWorktree: (input: {
     readonly project: BoardProject;
     readonly worktreePath: string | null;
@@ -106,6 +104,7 @@ export interface BoardSchedulesDeps {
     readonly taskId: ScheduledTaskId;
     readonly modelSelection: ModelSelection;
     readonly baseRef: string;
+    readonly branch: string;
   }) => Effect.Effect<ThreadId, { readonly message: string }>;
   readonly uuid: Effect.Effect<string>;
   readonly utcOffsetMinutes: Effect.Effect<number>;
@@ -354,6 +353,10 @@ export const makeBoardSchedules = (deps: BoardSchedulesDeps): BoardSchedulesShap
   const reconcile: BoardSchedulesShape["reconcile"] = (projectId, reassert = new Set()) =>
     withProjectLock(projectId, reconcileUnlocked(projectId, reassert));
 
+  /** Tasks the board owns: export-linked ones are still the human's. */
+  const boardLinked = (rows: ReadonlyArray<BoardScheduleStoreRow>) =>
+    new Set<string>(rows.filter((row) => !row.exportLinked).map((row) => row.taskId));
+
   const linkedTaskIds = store
     .rows()
     .pipe(Effect.map((rows) => new Set<string>(rows.map((row) => row.taskId))));
@@ -427,6 +430,7 @@ export const makeBoardSchedules = (deps: BoardSchedulesDeps): BoardSchedulesShap
     const gone = rows.filter(
       (row) =>
         !row.tombstone &&
+        !row.exportLinked &&
         row.environmentId !== null &&
         row.applied !== null &&
         !tasks.has(row.taskId),
@@ -446,11 +450,14 @@ export const makeBoardSchedules = (deps: BoardSchedulesDeps): BoardSchedulesShap
     const all = yield* store.rows();
     const tasks = yield* listTasks;
     const byId = new Map(tasks.map((task) => [task.id as string, task]));
+    // An export-linked task is still hand-made until an import adopts it.
     const rows = (yield* settleMissing(all, byId)).filter(
       (row) =>
-        !row.tombstone && (input.projectId === undefined || row.projectId === input.projectId),
+        !row.tombstone &&
+        !row.exportLinked &&
+        (input.projectId === undefined || row.projectId === input.projectId),
     );
-    const linked = new Set<string>(all.map((row) => row.taskId));
+    const linked = boardLinked(all);
     return {
       schedules: yield* Effect.forEach(rows, (row) => toListRow(row, byId.get(row.taskId) ?? null)),
       handMade: handMadeOf(tasks, linked, input.projectId),
@@ -464,6 +471,13 @@ export const makeBoardSchedules = (deps: BoardSchedulesDeps): BoardSchedulesShap
       Effect.filterOrFail(
         (row): row is BoardScheduleStoreRow => row !== null && !row.tombstone,
         () => scheduleError(`No schedule '${fileId}' in this project.`),
+      ),
+      Effect.filterOrFail(
+        (row) => !row.exportLinked,
+        () =>
+          scheduleError(
+            `'${fileId}' is still a hand-made task; import t3o.json to schedule it from the board.`,
+          ),
       ),
     );
 
@@ -560,11 +574,7 @@ export const makeBoardSchedules = (deps: BoardSchedulesDeps): BoardSchedulesShap
     );
     return {
       tasks: managed,
-      handMade: handMadeOf(
-        tasks,
-        new Set<string>(all.filter((row) => !row.exportLinked).map((row) => row.taskId)),
-        undefined,
-      ),
+      handMade: handMadeOf(tasks, boardLinked(all), undefined),
     };
   });
 
@@ -574,7 +584,12 @@ export const makeBoardSchedules = (deps: BoardSchedulesDeps): BoardSchedulesShap
     if (schedules === null) return { entries: [], warnings: [] };
     const rows = yield* store.rows(projectId);
     const byFile = new Map(rows.map((row) => [row.fileId, row]));
-    const linked = yield* linkedTaskIds;
+    const fileIds = new Set(schedules.map((schedule) => schedule.id));
+    // An export-linked task is open to a title match unless its exported id is still in the file.
+    const linked = boardLinked(yield* store.rows());
+    for (const row of rows) {
+      if (row.exportLinked && fileIds.has(row.fileId)) linked.add(row.taskId);
+    }
     const tasks = yield* listTasks;
     const byId = new Map(tasks.map((task) => [task.id as string, task]));
     const adopted = new Set<string>();
@@ -672,7 +687,6 @@ export const makeBoardSchedules = (deps: BoardSchedulesDeps): BoardSchedulesShap
         adoptTask: null,
       });
     }
-    const fileIds = new Set(schedules.map((schedule) => schedule.id));
     for (const row of rows) {
       // An export-linked row is still a hand-made task, which a file never deletes.
       if (row.tombstone || row.exportLinked || fileIds.has(row.fileId)) continue;
@@ -738,6 +752,12 @@ export const makeBoardSchedules = (deps: BoardSchedulesDeps): BoardSchedulesShap
             const def = definition!;
             if (row.kind === "adopt") {
               const task = entry.adoptTask!;
+              // Exported under an id the file since renamed: that link gives way to this one.
+              for (const stale of yield* store.rows(projectId)) {
+                if (stale.exportLinked && stale.taskId === task.id && stale.fileId !== def.id) {
+                  yield* store.remove(projectId, stale.fileId);
+                }
+              }
               yield* save(blankRow(projectId, def, task.id), {
                 environmentId: placement,
                 applied: appliedFromTask(task),
@@ -876,17 +896,23 @@ export const makeBoardSchedules = (deps: BoardSchedulesDeps): BoardSchedulesShap
       for (const run of candidates) {
         const state = yield* deps.threadState(run.threadId);
         if (retentionKeeps(state, yield* store.threadTouchedCard(run.threadId))) continue;
-        const workspace = yield* deps.threadWorkspace(run.threadId);
+        let worktreePath = run.worktreePath;
+        if (worktreePath === null && run.launchError === null) {
+          // Kept on the run before the thread goes, so a retry after a refused removal has it.
+          const read = yield* Effect.result(deps.threadWorktree(run.threadId));
+          if (read._tag === "Failure") continue;
+          worktreePath =
+            read.success ?? (state !== null && state !== "unknown" ? state.worktreePath : null);
+          if (worktreePath !== null) yield* store.setRunWorktree(run.threadId, worktreePath);
+        }
         if (state !== null && state !== "unknown" && !state.deleted) {
           const deleted = yield* Effect.result(deps.deleteThread(run.threadId));
           if (deleted._tag === "Failure") continue;
         }
         const removed = yield* deps.removeRunWorktree({
           project,
-          worktreePath:
-            workspace.worktreePath ??
-            (state !== null && state !== "unknown" ? state.worktreePath : null),
-          branch: workspace.branch,
+          worktreePath,
+          branch: run.branch,
         });
         if (!removed) continue;
         yield* store.deleteRun(run.threadId);
@@ -929,6 +955,8 @@ export const makeBoardSchedules = (deps: BoardSchedulesDeps): BoardSchedulesShap
     }
     const uuid = yield* deps.uuid;
     const threadId = ThreadId.make(`thread-schedule-${uuid}`);
+    // A name of the board's own, so retention deletes exactly this branch and nothing renames it.
+    const branch = `t3o/schedule-run-${uuid}`;
     // Recorded before anything launches, so a crash mid-launch still leaves the run.
     yield* store
       .recordRun({
@@ -938,6 +966,7 @@ export const makeBoardSchedules = (deps: BoardSchedulesDeps): BoardSchedulesShap
         environmentId: row.environmentId,
         startedAt: yield* nowIso,
         launchError: null,
+        branch,
       })
       .pipe(Effect.mapError((error) => skip(error.message)));
     const failLaunch = (message: string) =>
@@ -959,6 +988,7 @@ export const makeBoardSchedules = (deps: BoardSchedulesDeps): BoardSchedulesShap
         taskId: row.taskId,
         modelSelection: yield* deps.modelFor(row.projectId),
         baseRef,
+        branch,
       })
       .pipe(Effect.catch((error) => failLaunch(error.message)));
     const retention = retain(row.projectId, row.fileId);

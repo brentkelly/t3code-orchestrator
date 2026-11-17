@@ -89,6 +89,7 @@ const seed = Effect.gen(function* () {
       environmentId: EnvironmentId.make("env-board"),
       startedAt: t0,
       launchError: null,
+      branch: null,
     });
   }
 });
@@ -173,6 +174,11 @@ describe("a schedule run's board tools", () => {
       }
       const context = yield* Effect.flip(boardHandlers.board_get_card_context().pipe(as(firstRun)));
       assert.strictEqual(context.code, "thread-not-linked");
+      const plan = yield* Effect.flip(
+        boardHandlers.board_get_plan({ planId: "plan-x" } as never).pipe(as(firstRun)),
+      );
+      assert.strictEqual(plan.code, "thread-not-linked");
+      assert.include(plan.message, "scheduled run");
       const labels = yield* Effect.flip(
         boardHandlers.board_manage_labels({ create: [{ name: "x" }] } as never).pipe(as(firstRun)),
       );

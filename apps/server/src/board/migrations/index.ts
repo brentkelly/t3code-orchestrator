@@ -91,6 +91,7 @@ import Migration077 from "./077_BoardPlanReviewRound.ts";
 import Migration078 from "./078_BoardPendingSplitApproval.ts";
 import Migration079 from "./079_BoardCardsParentIndex.ts";
 import Migration080 from "./080_BoardProjectSchedules.ts";
+import Migration081 from "./081_BoardScheduleRunWorkspace.ts";
 
 /** Ledger table for the board migration lineage, independent of upstream. */
 export const BOARD_MIGRATION_TABLE = "t3o_sql_migrations";
@@ -192,6 +193,7 @@ export const BOARD_MIGRATIONS = [
   [78, "BoardPendingSplitApproval", Migration078],
   [79, "BoardCardsParentIndex", Migration079],
   [80, "BoardProjectSchedules", Migration080],
+  [81, "BoardScheduleRunWorkspace", Migration081],
 ] as const;
 
 const boardLoader = Migrator.fromRecord(

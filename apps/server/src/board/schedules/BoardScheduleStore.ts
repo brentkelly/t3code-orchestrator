@@ -50,6 +50,10 @@ export interface BoardScheduleRun {
   readonly environmentId: EnvironmentId;
   readonly startedAt: string;
   readonly launchError: string | null;
+  /** The branch the run was launched on; null only for runs recorded before 081. */
+  readonly branch: string | null;
+  /** The run's worktree, recorded the first time retention reads it from the thread. */
+  readonly worktreePath: string | null;
 }
 
 export interface BoardScheduleStoreShape {
@@ -70,7 +74,13 @@ export interface BoardScheduleStoreShape {
     projectId: ProjectId,
     fileId: string,
   ) => Effect.Effect<void, BoardScheduleError>;
-  readonly recordRun: (run: BoardScheduleRun) => Effect.Effect<void, BoardScheduleError>;
+  readonly recordRun: (
+    run: Omit<BoardScheduleRun, "worktreePath">,
+  ) => Effect.Effect<void, BoardScheduleError>;
+  readonly setRunWorktree: (
+    threadId: ThreadId,
+    worktreePath: string,
+  ) => Effect.Effect<void, BoardScheduleError>;
   readonly setLaunchError: (
     threadId: ThreadId,
     error: string,
@@ -134,6 +144,8 @@ interface RunRecord {
   readonly environment_id: string;
   readonly started_at: string;
   readonly launch_error: string | null;
+  readonly branch: string | null;
+  readonly worktree_path: string | null;
 }
 
 const parseApplied = (json: string | null): BoardScheduleApplied | null => {
@@ -153,6 +165,8 @@ const toRun = (record: RunRecord): BoardScheduleRun => ({
   environmentId: record.environment_id as EnvironmentId,
   startedAt: record.started_at,
   launchError: record.launch_error,
+  branch: record.branch,
+  worktreePath: record.worktree_path,
 });
 
 export const BoardScheduleStoreLive = Layer.effect(
@@ -208,10 +222,10 @@ export const BoardScheduleStoreLive = Layer.effect(
       `.pipe(Effect.mapError(failed("read the schedule")), Effect.flatMap(firstRow));
 
     const rowByTask: BoardScheduleStoreShape["rowByTask"] = (taskId) =>
-      sql<RowRecord>`SELECT * FROM boards.project_schedules WHERE task_id = ${taskId}`.pipe(
-        Effect.mapError(failed("read the schedule")),
-        Effect.flatMap(firstRow),
-      );
+      sql<RowRecord>`
+        SELECT * FROM boards.project_schedules WHERE task_id = ${taskId}
+        ORDER BY export_linked
+      `.pipe(Effect.mapError(failed("read the schedule")), Effect.flatMap(firstRow));
 
     const put: BoardScheduleStoreShape["put"] = (value) =>
       sql`
@@ -246,12 +260,18 @@ export const BoardScheduleStoreLive = Layer.effect(
     const recordRun: BoardScheduleStoreShape["recordRun"] = (run) =>
       sql`
         INSERT INTO boards.schedule_run_threads (
-          thread_id, project_id, file_id, environment_id, started_at, launch_error
+          thread_id, project_id, file_id, environment_id, started_at, launch_error, branch
         ) VALUES (
           ${run.threadId}, ${run.projectId}, ${run.fileId}, ${run.environmentId},
-          ${run.startedAt}, ${run.launchError}
+          ${run.startedAt}, ${run.launchError}, ${run.branch}
         )
       `.pipe(Effect.asVoid, Effect.mapError(failed("record the run")));
+
+    const setRunWorktree: BoardScheduleStoreShape["setRunWorktree"] = (threadId, worktreePath) =>
+      sql`
+        UPDATE boards.schedule_run_threads SET worktree_path = ${worktreePath}
+        WHERE thread_id = ${threadId}
+      `.pipe(Effect.asVoid, Effect.mapError(failed("record the run's worktree")));
 
     const setLaunchError: BoardScheduleStoreShape["setLaunchError"] = (threadId, error) =>
       sql`
@@ -321,6 +341,7 @@ export const BoardScheduleStoreLive = Layer.effect(
       put,
       remove,
       recordRun,
+      setRunWorktree,
       setLaunchError,
       runs,
       runByThread,

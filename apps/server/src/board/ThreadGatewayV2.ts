@@ -1376,7 +1376,12 @@ export const BoardScheduleLauncherLive = Layer.effect(
             modelSelection: input.modelSelection,
             runtimeMode: "full-access",
             interactionMode: "default",
-            workspaceStrategy: { type: "worktree", baseRef: input.baseRef, startFromOrigin: true },
+            workspaceStrategy: {
+              type: "worktree",
+              baseRef: input.baseRef,
+              branch: input.branch,
+              startFromOrigin: true,
+            },
             initialMessage: { scheduledTaskId: input.taskId, text: input.prompt, attachments: [] },
             createdBy: "system",
             creationSource: "server",

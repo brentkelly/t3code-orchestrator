@@ -35,6 +35,8 @@ const run = (startedAt: number, launchError: string | null = null): BoardSchedul
   environmentId: EnvironmentId.make("env-board"),
   startedAt: iso(startedAt),
   launchError,
+  branch: null,
+  worktreePath: null,
 });
 
 const state = (over: Partial<BoardThreadState> = {}): BoardThreadState => ({

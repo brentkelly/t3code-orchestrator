@@ -22,6 +22,8 @@ export interface BoardScheduleLaunchInput {
   readonly taskId: ScheduledTaskId;
   readonly modelSelection: ModelSelection;
   readonly baseRef: string;
+  /** Created off the base for this run alone. */
+  readonly branch: string;
 }
 
 export class BoardScheduleLauncher extends Context.Service<

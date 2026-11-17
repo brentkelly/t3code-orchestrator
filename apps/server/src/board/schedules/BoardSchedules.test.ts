@@ -3,6 +3,7 @@
  * retention, against the real store on SQLite and fakes for upstream's services.
  */
 import {
+  BoardScheduleError,
   EnvironmentId,
   ProjectId,
   ProviderInstanceId,
@@ -89,7 +90,7 @@ const makeWorld = () => {
   const states = new Map<string, BoardThreadState | UnknownThreadState>();
   const deletedThreads: string[] = [];
   const removed: Array<{ worktreePath: string | null; branch: string | null }> = [];
-  const launches: Array<{ threadId: ThreadId; recordedFirst: boolean }> = [];
+  const launches: Array<{ threadId: ThreadId; branch: string; recordedFirst: boolean }> = [];
   const world = {
     tasks,
     upserts,
@@ -100,6 +101,10 @@ const makeWorld = () => {
     launches,
     failUpsert: null as string | null,
     failLaunch: null as string | null,
+    /** The thread shell's worktree read fails while set. */
+    failWorktreeRead: false,
+    /** Worktree removal is refused while set. */
+    refuseRemoval: false,
     /** One stale `list`, as a page that hasn't seen a hand deletion yet. */
     staleList: null as ReadonlyArray<ScheduledTask> | null,
     uuids: 0,
@@ -156,10 +161,19 @@ const makeWorld = () => {
         deletedThreads.push(threadId);
         states.set(threadId, deletedThreadState(threadId, projectId));
       }),
-    threadWorkspace: (threadId) =>
-      Effect.succeed({ worktreePath: `/worktrees/${threadId}`, branch: `t3code/${threadId}` }),
+    threadWorktree: (threadId) =>
+      world.failWorktreeRead
+        ? Effect.fail(new BoardScheduleError({ message: "shell read failed" }))
+        : Effect.sync(() => {
+            const state = states.get(threadId);
+            // A deleted thread's shell no longer names its worktree.
+            return state === undefined || (state !== "unknown" && state.deleted)
+              ? null
+              : `/worktrees/${threadId}`;
+          }),
     removeRunWorktree: ({ worktreePath, branch }) =>
       Effect.sync(() => {
+        if (world.refuseRemoval) return false;
         removed.push({ worktreePath, branch });
         return true;
       }),
@@ -168,7 +182,11 @@ const makeWorld = () => {
     launch: (input) =>
       Effect.gen(function* () {
         const recorded = yield* store.runByThread(input.threadId).pipe(Effect.orDie);
-        launches.push({ threadId: input.threadId, recordedFirst: recorded !== null });
+        launches.push({
+          threadId: input.threadId,
+          branch: input.branch,
+          recordedFirst: recorded !== null && recorded.branch === input.branch,
+        });
         if (world.failLaunch !== null) return yield* Effect.fail({ message: world.failLaunch });
         states.set(input.threadId, thread(input.threadId, { activeTurnRef: "turn-1" }));
         return input.threadId;
@@ -560,7 +578,16 @@ describe("BoardSchedules export-linked tasks", () => {
       // Exported only: its runs are still its own, and nothing rewrites or deletes it.
       const hand1 = ctx.world.tasks.get("hand-1")!;
       assert.deepStrictEqual(yield* orThread(sql, hand1, upstream), yield* upstream);
-      yield* ctx.schedules.setMachine({ projectId, fileId: first.id, environmentId: null });
+      const listed = yield* ctx.schedules.list({ projectId });
+      assert.deepStrictEqual(listed.schedules, []);
+      assert.deepStrictEqual(
+        listed.handMade.map((task) => task.taskId),
+        ["hand-1", "hand-2"],
+      );
+      const refused = yield* Effect.flip(
+        ctx.schedules.setMachine({ projectId, fileId: first.id, environmentId: null }),
+      );
+      assert.include(refused.message, "still a hand-made task");
       yield* ctx.schedules.reconcile(projectId, new Set([first.id]));
       assert.strictEqual(ctx.world.upserts.length, 0);
       assert.deepStrictEqual(ctx.world.deletedTasks, []);
@@ -587,6 +614,29 @@ describe("BoardSchedules export-linked tasks", () => {
       assert.isNotNull(yield* ctx.store.row(projectId, first.id));
       assert.isTrue(ctx.world.tasks.has("hand-2"));
     }));
+
+  test("an exported schedule whose id the file renamed adopts its task by title", () =>
+    Effect.gen(function* () {
+      const ctx = yield* setup;
+      ctx.world.tasks.set("hand-1", handMade("hand-1", "First"));
+      const exported = yield* ctx.schedules.exportSchedules(projectId, { excludeHandMade: false });
+      const renamed = { ...exported.schedules![0]!, id: "renamed" };
+      const { preview } = yield* importFile(ctx, [renamed], { renamed: server });
+      assert.deepStrictEqual(
+        preview.entries.map((entry) => [entry.row.kind, entry.adoptTask?.id as string]),
+        [["adopt", "hand-1"]],
+      );
+      assert.deepStrictEqual(
+        (yield* ctx.store.rows(projectId)).map((row) => [row.fileId, row.taskId, row.exportLinked]),
+        [["renamed", "hand-1", false]],
+      );
+      assert.strictEqual(ctx.world.tasks.size, 1);
+      const listed = yield* ctx.schedules.list({ projectId });
+      assert.deepStrictEqual(
+        listed.schedules.map((row) => row.fileId),
+        ["renamed"],
+      );
+    }));
 });
 
 describe("BoardSchedules runs", () => {
@@ -601,7 +651,9 @@ describe("BoardSchedules runs", () => {
     Effect.gen(function* () {
       const ctx = yield* scheduled;
       const threadId = yield* ctx.schedules.run(ctx.task);
-      assert.deepStrictEqual(ctx.world.launches, [{ threadId: threadId!, recordedFirst: true }]);
+      assert.deepStrictEqual(ctx.world.launches, [
+        { threadId: threadId!, branch: "t3o/schedule-run-uuid-2", recordedFirst: true },
+      ]);
       const [run] = yield* ctx.store.runs(projectId, nightly.id);
       assert.strictEqual(run?.threadId, threadId);
       assert.strictEqual(run?.launchError, null);
@@ -661,6 +713,7 @@ describe("BoardSchedules runs", () => {
           environmentId: server,
           startedAt: DateTime.formatIso(DateTime.makeUnsafe(NOW - age * day)),
           launchError: null,
+          branch: `t3o/schedule-run-${index}`,
         });
         ctx.world.states.set(threadId, thread(threadId));
       }
@@ -677,8 +730,8 @@ describe("BoardSchedules runs", () => {
       yield* ctx.schedules.retain(projectId, nightly.id);
       assert.deepStrictEqual(ctx.world.deletedThreads, ["run-8", "run-9"]);
       assert.deepStrictEqual(ctx.world.removed, [
-        { worktreePath: "/worktrees/run-8", branch: "t3code/run-8" },
-        { worktreePath: "/worktrees/run-9", branch: "t3code/run-9" },
+        { worktreePath: "/worktrees/run-8", branch: "t3o/schedule-run-8" },
+        { worktreePath: "/worktrees/run-9", branch: "t3o/schedule-run-9" },
       ]);
       const kept = (yield* ctx.store.runs(projectId, nightly.id)).map((run) => run.threadId);
       assert.deepStrictEqual(kept, [
@@ -691,6 +744,58 @@ describe("BoardSchedules runs", () => {
         "run-6",
         "run-7",
       ]);
+    }));
+
+  test("retention forgets a run only once its worktree and launch branch are removed", () =>
+    Effect.gen(function* () {
+      const ctx = yield* scheduled;
+      const old = ThreadId.make("run-old");
+      yield* ctx.store.recordRun({
+        threadId: old,
+        projectId,
+        fileId: nightly.id,
+        environmentId: server,
+        startedAt: DateTime.formatIso(DateTime.makeUnsafe(NOW - 30 * 24 * 60 * 60 * 1000)),
+        launchError: null,
+        branch: "t3o/schedule-run-old",
+      });
+      for (const index of [1, 2, 3]) {
+        yield* ctx.store.recordRun({
+          threadId: ThreadId.make(`run-new-${index}`),
+          projectId,
+          fileId: nightly.id,
+          environmentId: server,
+          startedAt: DateTime.formatIso(DateTime.makeUnsafe(NOW - index * 1000)),
+          launchError: null,
+          branch: null,
+        });
+      }
+      ctx.world.states.set(old, thread(old));
+      const runIds = () =>
+        ctx.store
+          .runs(projectId, nightly.id)
+          .pipe(Effect.map((runs) => runs.map((r) => r.threadId)));
+
+      // An unreadable thread shell keeps the run and its thread.
+      ctx.world.failWorktreeRead = true;
+      yield* ctx.schedules.retain(projectId, nightly.id);
+      assert.include(yield* runIds(), old);
+      assert.deepStrictEqual(ctx.world.deletedThreads, []);
+
+      // The thread goes but the removal is refused: the run stays, its worktree kept on it.
+      ctx.world.failWorktreeRead = false;
+      ctx.world.refuseRemoval = true;
+      yield* ctx.schedules.retain(projectId, nightly.id);
+      assert.deepStrictEqual(ctx.world.deletedThreads, [old]);
+      assert.strictEqual((yield* ctx.store.runByThread(old))?.worktreePath, `/worktrees/${old}`);
+
+      // Retried with the thread deleted: the recorded worktree and launch branch are removed.
+      ctx.world.refuseRemoval = false;
+      yield* ctx.schedules.retain(projectId, nightly.id);
+      assert.deepStrictEqual(ctx.world.removed, [
+        { worktreePath: `/worktrees/${old}`, branch: "t3o/schedule-run-old" },
+      ]);
+      assert.notInclude(yield* runIds(), old);
     }));
 });
 
