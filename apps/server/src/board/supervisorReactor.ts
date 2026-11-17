@@ -8459,8 +8459,9 @@ const make = Effect.gen(function* () {
   const checksFixSpent = new Set<string>();
 
   /**
-   * Unarmed cards whose merge waits on the checks their own CI fix or branch update re-ran: the human asked for that
-   * merge, so it rides the retry ladder for this one wait instead of refusing on pending CI.
+   * Unarmed cards whose merge waits on the checks their own CI fix or branch update re-ran: the
+   * human asked for that merge, so it rides the retry ladder for this one wait instead of refusing
+   * on pending CI.
    * Dropped on leaving the merge stage or a new Merge click; in memory, so a restart waits a click.
    */
   const mergeAwaitingChecks = new Set<string>();

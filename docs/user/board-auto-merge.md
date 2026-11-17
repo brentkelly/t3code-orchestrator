@@ -112,8 +112,9 @@ branch moved — drops its hold on the way out.
   merges once it is back.
 - Pushing a new commit resets the attempts, because new commits mean new CI. That includes a card
   whose attempts ran out: push a fix to its pull request and Auto-merge starts again by itself.
-- A pull request merged outside the board (on GitHub, say) moves its card from Ready for merge to
-  Done within a few minutes.
+- With Auto-merge on, a pull request merged outside the board (on GitHub, say) moves its card from
+  Ready for merge to Done within a few minutes. Without Auto-merge the board does not watch the pull
+  request, so the card moves when you next click **Merge** on it.
 - Reading the _reason_ a merge was refused needs GitHub or Forgejo. On other providers the board
   still retries on the same schedule; it just cannot tell a failing check from a passing one, so it
   uses all eight attempts before handing the card back to you.
