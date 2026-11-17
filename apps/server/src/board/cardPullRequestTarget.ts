@@ -1,7 +1,8 @@
 /**
  * Pure: turns an agent's or a person's PR reference into a number on the card's
- * own repository. The forge gateway addresses only that repository, so anything
- * else is refused here, before any forge call.
+ * own repository. The forge gateway addresses only that repository. Anything else
+ * is refused here, except another repository's name, which may be this one's since
+ * a rename: the caller confirms that refusal with the forge by number.
  */
 import type { BoardCardPullRequestTarget } from "@t3tools/contracts";
 

@@ -7457,8 +7457,9 @@ const make = Effect.gen(function* () {
 
   /**
    * Resolve a pull request to link to a card in `projectId`, forced. Refuses one not on the
-   * project's repository or unknown to the forge, in words fit to show. Records nothing, so a
-   * caller can check it before the card exists.
+   * project's repository or unknown to the forge, in words fit to show; another repository's
+   * name is read by number and linked only if the forge returns it under that name (a rename).
+   * Records nothing, so a caller can check it before the card exists.
    */
   const resolvePullRequestLink = Effect.fn("board-supervisor-resolvePullRequestLink")(function* (
     workspace: BoardCardWorkspace,
@@ -7488,7 +7489,10 @@ const make = Effect.gen(function* () {
       ),
     );
     if ("refused" in resolved) {
-      if ("failure" in found || !confirmsRenamedRepositoryTarget(resolved, found.summary.url)) {
+      if ("failure" in found) {
+        return { outcome: "refused", detail: `${resolved.refused} ${found.failure}` } as const;
+      }
+      if (!confirmsRenamedRepositoryTarget(resolved, found.summary.url)) {
         return { outcome: "refused", detail: resolved.refused } as const;
       }
     }

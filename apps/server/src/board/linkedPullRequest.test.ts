@@ -203,10 +203,9 @@ describe("linking a pull request to a card", () => {
             url: "https://github.com/acme/renamed/pull/75",
           });
           assert.equal(outcome.outcome, "refused");
-          assert.include(
-            outcome.outcome === "refused" ? outcome.detail : "",
-            "is not in this card's repository",
-          );
+          const detail = outcome.outcome === "refused" ? outcome.detail : "";
+          assert.include(detail, "is not in this card's repository");
+          assert.include(detail, "Could not resolve to a PullRequest.");
         }),
     ),
   );

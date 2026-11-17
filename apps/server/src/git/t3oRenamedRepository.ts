@@ -42,7 +42,9 @@ export function isRenameCandidate(
 
 /**
  * Accepts a rename candidate only once the forge confirms the expected repository's current
- * name is the pull request's. Only near-misses reach the forge; failures read as "no match".
+ * name is the pull request's. Only near-misses reach the forge. A failed lookup fails the match,
+ * like a failed PR listing, so the caller keeps its last-known PR and retries rather than
+ * reading "no pull request".
  */
 export const makeRenamedRepositoryMatcher = Effect.fn("makeRenamedRepositoryMatcher")(function* (
   resolveProvider: (
@@ -52,6 +54,8 @@ export const makeRenamedRepositoryMatcher = Effect.fn("makeRenamedRepositoryMatc
     SourceControlProviderError
   >,
 ) {
+  // A plain TTL, not a re-read when a cached name explains no near-miss: an unrelated
+  // same-branch PR would then reach the forge on every lookup. A second rename waits out the TTL.
   const currentNames = yield* Cache.makeWith(
     Effect.fnUntraced(function* (key: string) {
       const separatorIndex = key.lastIndexOf(KEY_SEPARATOR);
@@ -74,9 +78,7 @@ export const makeRenamedRepositoryMatcher = Effect.fn("makeRenamedRepositoryMatc
   ) {
     if (!isRenameCandidate(pr, headContext)) return false;
     const expected = normalizeName(headContext.headRepositoryNameWithOwner)!;
-    const currentName = yield* Cache.get(currentNames, `${cwd}${KEY_SEPARATOR}${expected}`).pipe(
-      Effect.orElseSucceed(() => null),
-    );
+    const currentName = yield* Cache.get(currentNames, `${cwd}${KEY_SEPARATOR}${expected}`);
     return currentName !== null && currentName === normalizeName(pr.headRepositoryNameWithOwner);
   });
 

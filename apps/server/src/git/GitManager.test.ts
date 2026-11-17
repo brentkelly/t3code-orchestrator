@@ -1922,12 +1922,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
           found: false,
         },
         {
-          name: "forge lookup fails",
-          pr: renamedRepositoryPr(branch, 4),
-          forge: {},
-          found: false,
-        },
-        {
           name: "transferred to another owner",
           pr: renamedRepositoryPr(branch, 5, {
             url: "https://github.com/mesh/t3o/pull/5",
@@ -1951,7 +1945,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
-  it.effect("rename tolerance caches the forge's answer but never its failure", () =>
+  it.effect("rename tolerance caches the forge's answer and fails on its failure", () =>
     Effect.gen(function* () {
       const branch = "board/rename-cache";
       const repoDir = yield* renamedRepositoryCheckout(branch);
@@ -1980,8 +1974,13 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       const { manager: failingManager, providerCalls: failingCalls } = yield* makeManager({
         providerScenario: failing,
       });
-      expect(yield* failingManager.branchPullRequest({ cwd: repoDir, branch })).toBeNull();
-      yield* failingManager.branchPullRequest({ cwd: repoDir, branch }, { refresh: true });
+      // A failed confirmation fails the lookup, like a failed listing, instead of reading "no PR".
+      const firstFailure = yield* failingManager
+        .branchPullRequest({ cwd: repoDir, branch })
+        .pipe(Effect.flip);
+      expect(firstFailure._tag).toBe("SourceControlProviderError");
+      yield* failingManager.invalidateStatus(repoDir);
+      yield* failingManager.branchPullRequest({ cwd: repoDir, branch }).pipe(Effect.flip);
       expect(cloneUrlLookups(failingCalls)).toHaveLength(2);
     }),
   );
