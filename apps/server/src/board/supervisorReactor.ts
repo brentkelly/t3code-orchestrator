@@ -10801,7 +10801,8 @@ const make = Effect.gen(function* () {
     }
     // T3o: an edit can make a gate due, such as dropping the last blocking edge (T3O-115). A toggle
     // change is re-evaluated below first, which fires the gates itself once a reopen is settled.
-    if (event.payload.automationChanged === undefined) {
+    // The sweep's own bookkeeping write never re-fires the gate that wrote it.
+    if (event.payload.automationChanged === undefined && event.payload.gateStateOnly !== true) {
       yield* fireDueGates([event.payload.cardId]);
     }
     // A toggle change owns the step's stance and its one message, so the generic stance arm below

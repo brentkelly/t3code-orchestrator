@@ -2115,7 +2115,7 @@ export function boardCardCiSteps(
   }));
 }
 
-/** T3o: the automation gates (T3O-115), in pipeline order: `boardGateDue`: `boardGateDue` returns the first one due. */
+/** T3o: the automation gates (T3O-115), roughly in pipeline order; `boardGateDue` decides which is due. */
 export const BOARD_GATES = [
   "plan",
   "answer",
@@ -6881,6 +6881,9 @@ export const BoardCardUpdatedPayload = Schema.Struct({
   mergeStrategyEdited: Schema.optional(Schema.Literal(true)),
   /** Present when this update marked the card for auto-planning. */
   autoPlanMarked: Schema.optional(Schema.Literal(true)),
+  /** T3o: present when the update only wrote the supervisor's gate bookkeeping (gate block,
+      merge-stay counts), so it does not re-fire the gate that wrote it (T3O-113). */
+  gateStateOnly: Schema.optional(Schema.Literal(true)),
   /** Rides the shell delta so an override edit updates the card face live. Absent when the
       edit cannot touch review; the SQL cache is refreshed either way. */
   reviewSummary: Schema.optionalKey(BoardCardReviewSummary),

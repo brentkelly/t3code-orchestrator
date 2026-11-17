@@ -1758,6 +1758,7 @@ it.effect("a refused approval after an unattended review leaves a note on the ca
     planReview: unattendedReview,
     autoSignOffSetting: true,
   });
+  let moveAttempts = 0;
   return withGovernor(
     {
       board: {
@@ -1768,11 +1769,15 @@ it.effect("a refused approval after an unattended review leaves a note on the ca
       settings,
       onDispatch: (command) =>
         command.type === "board.card.move" && command.cardId === card.id
-          ? (Effect.fail(
-              new BoardCommandInvariantError({
-                commandType: command.type,
-                detail: "Ready is full.",
-              }),
+          ? (Effect.sync(() => moveAttempts++).pipe(
+              Effect.andThen(
+                Effect.fail(
+                  new BoardCommandInvariantError({
+                    commandType: command.type,
+                    detail: "Ready is full.",
+                  }),
+                ),
+              ),
             ) as unknown as Effect.Effect<void>)
           : Effect.void,
     },
@@ -1788,6 +1793,15 @@ it.effect("a refused approval after an unattended review leaves a note on the ca
           reason: "move-refused",
           detail: "Ready is full.",
         });
+        // Recording the block is the supervisor's own write: its event must not re-fire the gate.
+        const recorded = (yield* h.decided).findLast(
+          (event) =>
+            event.type === "board.card-updated" && event.payload.card.gateBlock !== undefined,
+        );
+        assert.isDefined(recorded);
+        const before = moveAttempts;
+        if (recorded !== undefined) yield* h.pumpDomain(recorded);
+        assert.strictEqual(moveAttempts, before);
         yield* h.reactor.startArmed;
         yield* h.reactor.startArmed;
         const blocks = (yield* h.commands).filter(

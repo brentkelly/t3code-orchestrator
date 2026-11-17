@@ -2909,7 +2909,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
 
     case "board.card.update": {
       const card = yield* requireActiveBoardCard({ board, command });
-      if (
+      const gateStateOnly =
         command.title === undefined &&
         command.brief === undefined &&
         command.labels === undefined &&
@@ -2929,10 +2929,8 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         command.removeDependsOn === undefined &&
         command.addLabels === undefined &&
         command.removeLabels === undefined &&
-        command.size === undefined &&
-        command.gateBlock === undefined &&
-        command.mergeStay === undefined
-      ) {
+        command.size === undefined;
+      if (gateStateOnly && command.gateBlock === undefined && command.mergeStay === undefined) {
         return yield* invariant(command, `Update for card '${command.cardId}' carries no changes.`);
       }
 
@@ -3160,6 +3158,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
                 return summary === null ? {} : { reviewSummary: summary };
               })()),
           ...(edits.edit === undefined ? {} : { edit: edits.edit }),
+          ...(gateStateOnly ? { gateStateOnly: true as const } : {}),
         },
       };
       const stopped: ReadonlyArray<PlannedBoardEvent> =
