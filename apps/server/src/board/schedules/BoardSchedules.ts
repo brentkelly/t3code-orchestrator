@@ -49,6 +49,7 @@ import {
   scheduleRunBranch,
   scheduleRunThreadId,
   SKIPPED_NOT_SCHEDULED,
+  SKIPPED_PROJECT_DELETED,
   SKIPPED_STILL_GOING,
   adoptChanges,
   appliedFromTask,
@@ -405,9 +406,12 @@ export const makeBoardSchedules = (deps: BoardSchedulesDeps): BoardSchedulesShap
     const projects = yield* deps.projects();
     const project = projects.find((candidate) => candidate.id === projectId);
     if (project === undefined || project.deleted) {
-      // A deleted project clears its rows, and the tasks they link.
+      // A deleted project clears its rows, and the tasks the board owns; an export-linked
+      // task is still the human's.
       for (const row of rows) {
-        if (tasks.has(row.taskId)) yield* Effect.ignore(deleteTask(row.taskId));
+        if (!row.exportLinked && tasks.has(row.taskId)) {
+          yield* Effect.ignore(deleteTask(row.taskId));
+        }
         yield* store.remove(row.projectId, row.fileId);
         outcomes.set(row.fileId, { kind: "deleted" });
       }
@@ -870,12 +874,11 @@ export const makeBoardSchedules = (deps: BoardSchedulesDeps): BoardSchedulesShap
               (row) => row.kind !== "delete" && outcomes.get(row.fileId)?.kind === "set-up",
             ).length,
             stopped: rows.filter(
-              (row) =>
-                (row.kind === "update" || row.kind === "adopt") &&
-                row.currentEnvironmentId != null &&
-                placementOf(row.fileId) === null,
+              (row) => row.kind !== "delete" && outcomes.get(row.fileId)?.kind === "stopped",
             ).length,
-            deleted: rows.filter((row) => row.kind === "delete").length,
+            deleted: rows.filter(
+              (row) => row.kind === "delete" && outcomes.get(row.fileId)?.kind === "deleted",
+            ).length,
             failures: failuresOf(
               outcomes,
               storeRows.filter((stored) => rows.some((row) => row.fileId === stored.fileId)),
@@ -1166,6 +1169,13 @@ export const makeBoardSchedules = (deps: BoardSchedulesDeps): BoardSchedulesShap
       .pipe(Effect.mapError((error) => skip(error.message)));
     if (row === null || row.tombstone || row.environmentId === null || row.missing) {
       return yield* skip(SKIPPED_NOT_SCHEDULED);
+    }
+    const projects = yield* deps.projects().pipe(Effect.mapError((error) => skip(error.message)));
+    const project = projects.find((candidate) => candidate.id === row.projectId);
+    if (project === undefined || project.deleted) {
+      // The timer firing is what notices a deleted project; reconcile clears its schedules.
+      yield* Effect.ignore(reconcile(row.projectId));
+      return yield* skip(SKIPPED_PROJECT_DELETED);
     }
     const { latestRun, latestState } = yield* latestOf(row).pipe(
       Effect.mapError((error) => skip(error.message)),

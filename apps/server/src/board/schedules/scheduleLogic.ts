@@ -45,6 +45,7 @@ export const scheduleRunBranchOf = (threadId: ThreadId): string | null =>
 
 export const SKIPPED_NOT_SCHEDULED = "Skipped: not scheduled";
 export const SKIPPED_STILL_GOING = "Skipped: previous run still going";
+export const SKIPPED_PROJECT_DELETED = "Skipped: the project was deleted";
 
 /** The task fields the file owns, as the board would write them. */
 export const desiredFields = (definition: T3oFileSchedule): BoardScheduleApplied => ({

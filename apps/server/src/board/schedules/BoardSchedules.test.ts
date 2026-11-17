@@ -43,7 +43,11 @@ import {
 import { scheduleWorkerTarget } from "./boardScheduleWorkers.ts";
 import { BoardScheduleStore, BoardScheduleStoreLive } from "./BoardScheduleStore.ts";
 import { orThread, registerBoardScheduleRunner } from "./scheduleRuns.ts";
-import { SKIPPED_NOT_SCHEDULED, SKIPPED_STILL_GOING } from "./scheduleLogic.ts";
+import {
+  SKIPPED_NOT_SCHEDULED,
+  SKIPPED_PROJECT_DELETED,
+  SKIPPED_STILL_GOING,
+} from "./scheduleLogic.ts";
 
 const NOW = Date.parse("2026-03-02T12:00:00.000Z");
 const T0 = "2026-03-01T00:00:00.000Z";
@@ -192,6 +196,8 @@ const makeWorld = () => {
     removed,
     launches,
     failUpsert: null as string | null,
+    failDelete: null as string | null,
+    projectDeleted: false,
     failLaunch: null as string | null,
     /** The thread shell's worktree read fails while set. */
     failWorktreeRead: false,
@@ -248,7 +254,8 @@ const makeWorld = () => {
           return { task };
         }),
       delete: (id) =>
-        Effect.sync(() => {
+        Effect.gen(function* () {
+          if (world.failDelete !== null) return yield* fail(world.failDelete);
           deletedTasks.push(id);
           tasks.delete(id);
         }),
@@ -256,9 +263,18 @@ const makeWorld = () => {
     },
     serverEnvironmentId: server,
     projects: () =>
-      Effect.succeed([
-        { id: projectId, title: "mesh.relay", workspaceRoot: "/repo", deleted: false, scripts: [] },
-      ] satisfies ReadonlyArray<BoardProject>),
+      Effect.sync(
+        () =>
+          [
+            {
+              id: projectId,
+              title: "mesh.relay",
+              workspaceRoot: "/repo",
+              deleted: world.projectDeleted,
+              scripts: [],
+            },
+          ] satisfies ReadonlyArray<BoardProject>,
+      ),
     threadState: (threadId) => Effect.sync(() => states.get(threadId) ?? null),
     deleteThread: (threadId) =>
       Effect.sync(() => {
@@ -477,6 +493,23 @@ describe("BoardSchedules", () => {
       const { outcome } = yield* importFile(ctx, [nightly]);
       assert.strictEqual(outcome.stopped, 1);
       assert.deepStrictEqual(ctx.world.deletedTasks, ["hand-1"]);
+    }));
+
+  test("a stop or delete whose task delete fails is counted as a failure only", () =>
+    Effect.gen(function* () {
+      const ctx = yield* setup;
+      ctx.world.tasks.set("hand-1", handMade("hand-1", nightly.title));
+      ctx.world.failDelete = "The task is locked.";
+      const stopped = yield* importFile(ctx, [nightly]);
+      assert.strictEqual(stopped.outcome.stopped, 0);
+      assert.strictEqual(stopped.outcome.failures.length, 1);
+
+      ctx.world.failDelete = null;
+      yield* importFile(ctx, [nightly], { [nightly.id]: server });
+      ctx.world.failDelete = "The task is locked.";
+      const deleted = yield* importFile(ctx, []);
+      assert.strictEqual(deleted.outcome.deleted, 0);
+      assert.strictEqual(deleted.outcome.failures.length, 1);
     }));
 
   test("deletes a schedule that left the file, and only when the key is present", () =>
@@ -838,6 +871,20 @@ describe("BoardSchedules runs", () => {
       const off = yield* Effect.flip(ctx.schedules.run(ctx.task));
       assert.strictEqual(off.message, SKIPPED_NOT_SCHEDULED);
       assert.strictEqual(ctx.world.launches.length, 1);
+    }));
+
+  test("a fire for a deleted project clears its schedules, leaving export-linked tasks", () =>
+    Effect.gen(function* () {
+      const ctx = yield* scheduled;
+      ctx.world.tasks.set("hand-1", handMade("hand-1", "Weekly changelog draft"));
+      yield* ctx.schedules.exportSchedules(projectId, { excludeHandMade: false });
+      ctx.world.projectDeleted = true;
+      const skipped = yield* Effect.flip(ctx.schedules.run(ctx.task));
+      assert.strictEqual(skipped.message, SKIPPED_PROJECT_DELETED);
+      assert.deepStrictEqual(ctx.world.launches, []);
+      assert.deepStrictEqual(ctx.world.deletedTasks, [ctx.task.id]);
+      assert.isTrue(ctx.world.tasks.has("hand-1"));
+      assert.deepStrictEqual(yield* ctx.store.rows(projectId), []);
     }));
 
   test("a run awaiting a human doesn't hold the next one back", () =>
