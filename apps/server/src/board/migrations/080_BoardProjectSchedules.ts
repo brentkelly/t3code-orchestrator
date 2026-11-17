@@ -17,6 +17,7 @@ export default Effect.gen(function* () {
       last_error TEXT,
       missing INTEGER NOT NULL DEFAULT 0,
       tombstone INTEGER NOT NULL DEFAULT 0,
+      export_linked INTEGER NOT NULL DEFAULT 0,
       updated_at TEXT NOT NULL,
       PRIMARY KEY (project_id, file_id)
     )
@@ -42,6 +43,14 @@ export default Effect.gen(function* () {
       file_id TEXT NOT NULL,
       thread_id TEXT NOT NULL,
       created_at TEXT NOT NULL
+    )
+  `;
+  // Cards a run thread updated, so retention keeps that thread.
+  yield* sql`
+    CREATE TABLE IF NOT EXISTS boards.schedule_touched_cards (
+      thread_id TEXT NOT NULL,
+      card_id TEXT NOT NULL,
+      PRIMARY KEY (thread_id, card_id)
     )
   `;
 });

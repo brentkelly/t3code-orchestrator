@@ -77,9 +77,9 @@ export function describeScheduleWhen(schedule: BoardScheduleWhen): string {
     return `Every ${minutes} min`;
   }
   const at = padTime(schedule.timeOfDay);
-  const days = [...new Set(schedule.weekdays ?? [0, 1, 2, 3, 4, 5, 6])];
-  if (days.length === 7) return `Daily at ${at}`;
-  if (days.length === 0) return `Never (no days) at ${at}`;
+  // Upstream runs an empty list every day, like an absent one.
+  const days = [...new Set(schedule.weekdays ?? [])];
+  if (days.length === 7 || days.length === 0) return `Daily at ${at}`;
   const sorted = WEEKDAY_ORDER.filter((day) => days.includes(day));
   if (sorted.length === 5 && sorted.every((day) => day >= 1 && day <= 5)) {
     return `Weekdays at ${at}`;

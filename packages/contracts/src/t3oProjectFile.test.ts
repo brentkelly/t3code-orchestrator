@@ -822,6 +822,7 @@ describe("describeScheduleWhen", () => {
     [{ type: "interval", everyMs: 90 * 60_000 }, "Every 1 h 30 min"],
     [{ type: "interval", everyMs: 2 * 24 * 60 * 60_000 }, "Every 2 days"],
     [{ type: "fixed_time", timeOfDay: "2:00" }, "Daily at 02:00"],
+    [{ type: "fixed_time", timeOfDay: "02:00", weekdays: [] }, "Daily at 02:00"],
     [{ type: "fixed_time", timeOfDay: "04:00", weekdays: [5, 4, 3, 2, 1] }, "Weekdays at 04:00"],
     [{ type: "fixed_time", timeOfDay: "09:15", weekdays: [6, 0] }, "Weekends at 09:15"],
     [{ type: "fixed_time", timeOfDay: "03:00", weekdays: [0] }, "Sun at 03:00"],

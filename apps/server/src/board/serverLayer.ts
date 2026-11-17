@@ -20,6 +20,7 @@ import { ThreadGatewayRouterLive } from "./ThreadGatewayRouter.ts";
 import { LocalThreadGatewayV2Live } from "./ThreadGatewayV2.ts";
 import { WorktreeRetirerLive } from "./worktreeRetire.ts";
 import { BoardWebhookActionsLive } from "./webhookActions.ts";
+import { BoardSchedulesLive } from "./schedules/BoardSchedulesLive.ts";
 import { BoardSetupScriptRunnerLive } from "./ports/BoardSetupScriptRunner.live.ts";
 import { BoardTerminalsLive } from "./ports/BoardTerminals.live.ts";
 import { BoardGitStatusLive } from "./ports/BoardGitStatus.live.ts";
@@ -88,6 +89,8 @@ export const BoardServerLive = BoardMcpRelayClientLive.pipe(
   Layer.provideMerge(BoardActualsRecorderLive),
   // Webhook scheduled tasks reach the board through the runner this registers.
   Layer.provideMerge(BoardWebhookActionsLive),
+  // T3o: t3o.json schedules: their timers' runs and the Schedules tab (T3O-117).
+  Layer.provideMerge(BoardSchedulesLive),
   // Moving a card to another worker, for the Move dialog's RPCs.
   Layer.provideMerge(BoardCardMoverLive),
   // T3o: the board's side of worker-owned capacity, which replaced its concurrency slots

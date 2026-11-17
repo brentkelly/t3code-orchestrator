@@ -103,7 +103,6 @@ import {
   BOARD_SUBMIT_STEP_LABEL,
   DEFAULT_BOARD_BUILD_STAGE_EXECUTION,
   DEFAULT_BOARD_SETTINGS,
-  DEFAULT_SERVER_SETTINGS,
   EMPTY_BOARD_STATE,
   effectiveBoardStageRole,
   isBoardCardPullRequestTerminal,
@@ -118,7 +117,6 @@ import {
   effectiveBoardRuntimeMode,
   isLiveBoardCardThreadLink,
   resolveBoardStageExecution,
-  resolveBoardDefaultModelSelection,
   resolveBoardStageModelSelection,
   resolveBoardCardMergeStrategy,
   resolveBoardCardStageModelOverride,
@@ -196,7 +194,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { BoardSetupScriptRunner } from "./ports/BoardSetupScriptRunner.ts";
 import * as ServerConfig from "../config.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
-import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import { boardFallbackModelSelection } from "./boardFallbackModel.ts";
 import { forkParked, ServerActivation } from "../serverActivation.ts";
 import { BoardCapacityClient } from "./capacity/BoardCapacityClient.ts";
 import { BoardWorkerCapacity } from "./capacity/BoardWorkerCapacity.ts";
@@ -972,33 +970,8 @@ const make = Effect.gen(function* () {
     Effect.catchCause(() => Effect.succeed(DEFAULT_BOARD_SETTINGS)),
   );
 
-  /**
-   * A stage with no model runs on the board's default, else the project's default override, else
-   * the project-resolved text-generation selection. No compiled-in pair (it may not be installed),
-   * and not the environment-wide chat default, which would move every unset stage onto it.
-   */
   const fallbackModelSelectionFor = (projectId: ProjectId) =>
-    serverSettings.getSettings.pipe(
-      Effect.map((settings) => {
-        const resolved = resolveProjectSettings(settings, projectId);
-        const projectDefault =
-          resolved.sources.defaultModelSelection === "project"
-            ? resolved.settings.defaultModelSelection
-            : null;
-        const selection = projectDefault ?? resolved.settings.textGenerationModelSelection;
-        return resolveBoardDefaultModelSelection(settings.board ?? DEFAULT_BOARD_SETTINGS, {
-          instanceId: selection.instanceId,
-          model: selection.model,
-          ...(selection.options === undefined ? {} : { options: selection.options }),
-        });
-      }),
-      Effect.catchCause(() =>
-        Effect.succeed({
-          instanceId: DEFAULT_SERVER_SETTINGS.textGenerationModelSelection.instanceId,
-          model: DEFAULT_SERVER_SETTINGS.textGenerationModelSelection.model,
-        }),
-      ),
-    );
+    boardFallbackModelSelection(serverSettings, projectId);
 
   // Threads spawned for a step whose admit was then rejected. An interrupt fired right after
   // spawn races provider session startup and no-ops, so `session.started` for an orphan
