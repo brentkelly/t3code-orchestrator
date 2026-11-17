@@ -624,6 +624,7 @@ function decodeSchedules(
     }
     const drop = (warning: string) => {
       warnings.push(warning);
+      ids.add(id);
       kept.push(id);
     };
     const title = typeof entry.title === "string" ? entry.title.trim() : "";

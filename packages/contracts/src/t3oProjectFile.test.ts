@@ -792,8 +792,9 @@ describe("schedules (T3O-117)", () => {
         nightly,
       ],
     });
-    expect(resolved.schedules?.map((schedule) => schedule.id)).toEqual(["nightly-tests"]);
+    expect(resolved.schedules).toEqual([]);
     expect(resolved.keptScheduleIds).toEqual(["typo", "nightly-tests"]);
+    expect(resolved.delta.warnings.join("\n")).toContain("the id is used twice");
   });
 
   it("warns about a block that is not a list", () => {
