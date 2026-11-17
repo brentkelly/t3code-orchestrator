@@ -7477,26 +7477,28 @@ const make = Effect.gen(function* () {
     }
     const found = yield* workspace.getPullRequest({ number: resolved.number, force: true }).pipe(
       Effect.map((summary) => ({ summary }) as const),
-      Effect.catch((error) =>
-        Effect.succeed({
-          failure: `Could not find pull request #${resolved.number}: ${error.detail}`,
-        } as const),
-      ),
+      Effect.catch((error) => Effect.succeed({ failure: error.detail } as const)),
       Effect.catchCause(() =>
-        Effect.succeed({
-          failure: `Could not find pull request #${resolved.number}: the lookup failed unexpectedly.`,
-        } as const),
+        Effect.succeed({ failure: "the lookup failed unexpectedly." } as const),
       ),
     );
     if ("refused" in resolved) {
       if ("failure" in found) {
-        return { outcome: "refused", detail: `${resolved.refused} ${found.failure}` } as const;
+        return {
+          outcome: "refused",
+          detail: `${resolved.refused} Could not check whether this card's repository was renamed to it: ${found.failure}`,
+        } as const;
       }
       if (!confirmsRenamedRepositoryTarget(resolved, found.summary.url)) {
         return { outcome: "refused", detail: resolved.refused } as const;
       }
     }
-    if ("failure" in found) return { outcome: "refused", detail: found.failure } as const;
+    if ("failure" in found) {
+      return {
+        outcome: "refused",
+        detail: `Could not find pull request #${resolved.number}: ${found.failure}`,
+      } as const;
+    }
     const summary = found.summary;
     const pullRequest = {
       number: summary.number,

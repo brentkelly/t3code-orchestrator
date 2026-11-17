@@ -205,7 +205,9 @@ describe("linking a pull request to a card", () => {
           assert.equal(outcome.outcome, "refused");
           const detail = outcome.outcome === "refused" ? outcome.detail : "";
           assert.include(detail, "is not in this card's repository");
+          assert.include(detail, "Could not check whether this card's repository was renamed");
           assert.include(detail, "Could not resolve to a PullRequest.");
+          assert.notInclude(detail, "Could not find pull request");
         }),
     ),
   );
