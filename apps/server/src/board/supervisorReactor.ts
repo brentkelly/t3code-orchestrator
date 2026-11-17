@@ -9,7 +9,6 @@ import {
   BOARD_LOCAL_WORKER_ID,
   BOARD_SEED_STAGE_IDS,
   DEFAULT_BOARD_CI_MAX_FIX_ATTEMPTS,
-  areBoardStagesAdjacent,
   isBoardCiActive,
   isBoardCiSwitchedOn,
   boardCiFixIssues,
@@ -47,6 +46,7 @@ import {
   boardCardStepThisStay,
   BOARD_AUTO_ANSWER_LIMIT,
   BOARD_AUTO_ANSWER_TEXT,
+  boardCardAutoMergeOn,
   boardGateDue,
   boardGateFacts,
   boardSplitRecommendationOf,
@@ -96,7 +96,9 @@ import {
   boardTextEndsWithQuestion,
   applyBoardRetryJitter,
   boardCardAutoMergeArmed,
+  boardCardMergeStayCounts,
   type BoardCardAutoMergeHold,
+  type BoardCardAutoMergeStop,
   BOARD_AUTO_MERGE_RETRY_DELAYS_MS,
   boardRetryDelayMs,
   type BoardCardStepStalledReason,
@@ -306,7 +308,13 @@ import {
   runningPlanReviewStep,
 } from "./planReview.ts";
 // T3o: the automation gate sweep (T3O-115).
-import { gateActed, gateBlocked, gateNotDue, makeBoardGateSweep } from "./gateSweep.ts";
+import {
+  gateActed,
+  gateBlocked,
+  gateNotDue,
+  makeBoardGateSweep,
+  type BoardFireDueGates,
+} from "./gateSweep.ts";
 
 /** Why a gate action's dispatch did not land. */
 type GateDispatchFailure =
@@ -2961,7 +2969,7 @@ const make = Effect.gen(function* () {
       });
       // Same reason as the recovery escalation: a spawn failure parks the step
       // for a human without settling it, so disarm here too.
-      disarmPendingMerge(input.card.id);
+      yield* disarmFailedMergeFix(input.card);
       yield* dispatch({
         type: "board.card.recover-step",
         commandId: yield* commandId("spawn-failed"),
@@ -4268,6 +4276,20 @@ const make = Effect.gen(function* () {
         return;
       if (existing !== null && !isBoardTerminalStepStatus(existing.status)) return;
     }
+    // Re-entry (a recorded completion for this stage's step) runs nothing and opens a clean
+    // human-in-the-loop conversation. The merge role is stricter: it runs unattended only when
+    // armed by the board (a Merge click that hit a conflict or failed checks), on any visit; an
+    // unarmed merge stage is always a conversation, even on the card's first visit.
+    const armedFix = mergeRole ? (mergeAwaitingConflictFix.get(String(card.id)) ?? null) : null;
+    const armedConflictFix = armedFix !== null;
+    // An armed card's merge stage is never a conversation: the merge gates own it, on any arrival
+    // and on the boot pass, before the merge stage's forced-off `autoExecute` could return past
+    // them (T3O-116). Gated on `!armedConflictFix` so the fix step this call starts does not
+    // re-enter here and merge in a loop.
+    if (mergeRole && !armedConflictFix) {
+      const fired = yield* fireDueGates([card.id]);
+      if (fired.length > 0 || (yield* cardAutoMergeArmed(card))) return;
+    }
     // Auto-kickoff fires only for an auto-executing stage; on-demand runs any stage that
     // has work. An auto-plan run is always a fresh, unattended planning run, even when Planning
     // does not auto-execute, so the card's earlier planning step is set aside.
@@ -4277,20 +4299,6 @@ const make = Effect.gen(function* () {
     const completions = boardCardStepCompletions(board, card.id).filter(
       (completion) => !autoPlanRun || completion.stepId !== card.stage,
     );
-    // Re-entry (a recorded completion for this stage's step) runs nothing and opens a clean
-    // human-in-the-loop conversation. The merge role is stricter: it runs unattended only when
-    // armed by the board (a Merge click that hit a conflict or failed checks), on any visit; an
-    // unarmed merge stage is always a conversation, even on the card's first visit.
-    const armedFix = mergeRole ? (mergeAwaitingConflictFix.get(String(card.id)) ?? null) : null;
-    const armedConflictFix = armedFix !== null;
-    // An armed card's merge stage is never a conversation. Re-attempt the merge rather than
-    // assume a conflict: a lost arm (escalation or restart) and a policy refusal look alike,
-    // and only the forge can tell them apart. Gated on `!armedConflictFix` so the conflict step
-    // this call starts does not re-enter here and merge in a loop.
-    if (mergeRole && !armedConflictFix && (yield* cardAutoMergeArmed(card))) {
-      yield* autoMergeCard(card);
-      return;
-    }
     const firstEntry =
       armedConflictFix ||
       (!mergeRole && !completions.some((completion) => completion.stepId === card.stage));
@@ -6291,28 +6299,79 @@ const make = Effect.gen(function* () {
     card.autoMergeHold === null ? Effect.void : recordAutoMergeHold(card.id, null);
 
   /**
-   * Merge an ARMED card on arrival at the merge-role stage or on a retry rung. An armed card's
-   * merge was initiated by a human (Begin build, a per-card arm, or board policy); an unarmed
-   * card still waits for a click. A refusal is classified against a structured probe, never the
-   * forge's prose, and either climbs the retry ladder or stops with the reason on the card.
+   * Merge an ARMED card: the merge gate's action, or an arm switched on. A refusal is classified
+   * against a structured probe, never the forge's prose, and either climbs the retry ladder or
+   * stops with the reason on the card.
    */
-  /**
-   * Armed cards skipped because they were BLOCKED when their turn came, so the sweep can retry
-   * them once unblocked without merging every armed card parked here. In-memory: after a
-   * restart the card waits for a click, never a merge nobody asked for.
-   */
-  const autoMergeDeferredUntilUnblocked = new Set<string>();
-
   const autoMergeCard = Effect.fn("board-supervisor-autoMergeCard")(function* (card: BoardCard) {
-    // A blocked card already shows the callout naming its dependency, so no hold and no rung
-    // are recorded. The skip is remembered so the sweep revisits it once the dependency lands.
-    if (card.blocked) {
-      autoMergeDeferredUntilUnblocked.add(String(card.id));
-      return;
-    }
-    autoMergeDeferredUntilUnblocked.delete(String(card.id));
+    // A blocked card already shows the callout naming its dependency, so no hold and no rung are
+    // recorded. The merge gate is not due while it is blocked and fires once it is not (T3O-116).
+    if (card.blocked) return;
     const outcome = yield* mergeCardPullRequest(card.id);
     yield* recordAutoMergeOutcome(card.id, outcome, { resetLadder: false });
+  });
+
+  /** T3o: the merge gate's action (T3O-116). The predicate already checked the hold and the stage. */
+  const mergeGate = Effect.fn("board-supervisor-mergeGate")(function* (card: BoardCard) {
+    // In-process dedup: a fix this process started owns the merge until it settles, and its step
+    // row may not have landed yet.
+    if (mergeAwaitingConflictFix.has(String(card.id))) return gateActed;
+    const live = yield* readCard(card.id);
+    if (live === null || live.stage !== card.stage) return gateNotDue;
+    yield* autoMergeCard(live);
+    return gateActed;
+  });
+
+  /**
+   * T3o: the merged-done gate's action (T3O-116): a pull request merged outside the board, or a
+   * merge whose advance never landed, moves the card on through the same `merge-advance` settle.
+   */
+  const settleMergedCard = Effect.fn("board-supervisor-settleMergedCard")(function* (
+    card: BoardCard,
+  ) {
+    const board = yield* readBoard;
+    const live = board.cards.find((candidate) => candidate.id === card.id);
+    if (live === undefined || live.stage !== card.stage) return gateNotDue;
+    const next = boardNextStageId(board, live.stage, live.projectId);
+    if (next === null) return gateNotDue;
+    disarmPendingMerge(live.id);
+    const moved = yield* dispatchOutcome({
+      type: "board.card.move",
+      commandId: yield* commandId("merge-advance"),
+      cardId: live.id,
+      toStage: next,
+      createdAt: yield* nowIso,
+    });
+    return moved.kind === "landed" ? gateActed : gateBlockedBy(moved);
+  });
+
+  /** T3o: spend one of this stay's automatic merge fixes (T3O-116), before the fix starts. */
+  const spendMergeFix = Effect.fn("board-supervisor-spendMergeFix")(function* (
+    card: BoardCard,
+    fix: "conflictFixes" | "branchUpdates",
+  ) {
+    const counts = boardCardMergeStayCounts(card);
+    yield* dispatch({
+      type: "board.card.update",
+      commandId: yield* commandId("merge-stay"),
+      cardId: card.id,
+      mergeStay: { ...counts, [fix]: counts[fix] + 1 },
+      createdAt: yield* nowIso,
+    });
+  });
+
+  /** T3o: a human's Merge click or someone else's push grants the fixes again (T3O-116). */
+  const resetMergeFixes = Effect.fn("board-supervisor-resetMergeFixes")(function* (
+    card: BoardCard,
+  ) {
+    if (card.mergeStay === undefined) return;
+    yield* dispatch({
+      type: "board.card.update",
+      commandId: yield* commandId("merge-stay-reset"),
+      cardId: card.id,
+      mergeStay: null,
+      createdAt: yield* nowIso,
+    });
   });
 
   /**
@@ -6340,15 +6399,19 @@ const make = Effect.gen(function* () {
       case "stale-base":
         yield* clearAutoMergeHold(fresh);
         return;
-      // Not a state this feature governs — the card is not where it thought it
-      // was. No hold recorded and none cleared: a label about a merge that was
-      // never attempted here would be a claim the user cannot act on.
+      // Not where it thought it was: no merge stage to show a hold on.
       case "wrong-stage":
-      case "no-workspace":
       case "unknown-card":
         return;
       default:
         break;
+    }
+    // T3o: merged already, outside the board or by an attempt whose advance never landed
+    // (T3O-116): settle it rather than hold it.
+    if (outcome.outcome === "not-open" && outcome.state === "merged") {
+      yield* clearAutoMergeHold(fresh);
+      yield* settleMergedCard(fresh);
+      return;
     }
 
     // Structural outcomes skip the probe: retrying cannot succeed. A refusal the gateway
@@ -6357,10 +6420,18 @@ const make = Effect.gen(function* () {
       outcome.outcome === "not-open"
         ? `Its pull request is ${outcome.state}, so there was nothing to merge.`
         : outcome.outcome === "no-pull-request"
-          ? "It has no pull request to merge."
-          : outcome.outcome === "refused" && outcome.permanent === true
-            ? outcome.detail
-            : null;
+          ? "It has no pull request to merge. Auto-merge tries again once one is linked."
+          : outcome.outcome === "no-workspace"
+            ? "Its project has no checkout on this machine to merge from."
+            : outcome.outcome === "refused" && outcome.permanent === true
+              ? outcome.detail
+              : null;
+    const stop: BoardCardAutoMergeStop | undefined =
+      outcome.outcome === "no-pull-request"
+        ? "no-pull-request"
+        : outcome.outcome === "no-workspace"
+          ? "no-workspace"
+          : undefined;
 
     const previous = fresh.autoMergeHold;
     const verdict =
@@ -6393,6 +6464,7 @@ const make = Effect.gen(function* () {
       retryAt:
         step.retryDelayMs === null ? null : isoAfter(nowMs, yield* jittered(step.retryDelayMs)),
       headSha: verdict.headSha ?? previous?.headSha ?? null,
+      ...(stop === undefined ? {} : { stop }),
     };
     yield* recordAutoMergeHold(fresh.id, hold);
 
@@ -6421,6 +6493,9 @@ const make = Effect.gen(function* () {
       // fresh decision: an unarmed card's wait on its last fix's checks ends.
       checksFixSpent.delete(String(cardId));
       mergeAwaitingChecks.delete(String(cardId));
+      // T3o: and the stay's conflict fix and branch update (T3O-116).
+      const clicked = yield* readCard(cardId);
+      if (clicked !== null) yield* resetMergeFixes(clicked);
       // A pull request readied within the ladder's first rung has CI that may
       // not have registered its checks yet, so the click waits on the ladder
       // just as the arrival and merge-path readies do.
@@ -6918,7 +6993,9 @@ const make = Effect.gen(function* () {
   }) {
     // A fix that did not succeed must not leave the card armed (the success path consumes
     // the arm itself), or a later merge-stage step would turn it into a merge nobody asked for.
-    if (input.outcome !== "succeeded") {
+    if (input.outcome === "failed") {
+      yield* disarmFailedMergeFix(input.card);
+    } else if (input.outcome !== "succeeded") {
       disarmPendingMerge(input.card.id);
     }
     yield* dispatch({
@@ -7053,7 +7130,7 @@ const make = Effect.gen(function* () {
   }) {
     // Escalation lands `stalled`, which never reaches `settleStep`'s disarm. The human's next
     // move must be an explicit Merge click, so disarm here.
-    disarmPendingMerge(input.card.id);
+    yield* disarmFailedMergeFix(input.card);
     yield* dispatch({
       type: "board.card.recover-step",
       commandId: yield* commandId("recover-step"),
@@ -8163,6 +8240,81 @@ const make = Effect.gen(function* () {
     });
 
   /**
+   * T3o: keep the cached pull request of every Auto-merge card in Ready for merge current, so the
+   * merged-done gate sees a PR merged outside the board, and revive a hard hold when someone else
+   * pushed to the PR while it was held (T3O-116). The board pushes nothing to a held card, and
+   * every hold records its head from a live read taken after the board's own pushes, so a
+   * different head is someone else's. Off the reactor's worker and outside the tick: it reads the
+   * forge. Records state only; the gates act on it from their own pass.
+   */
+  const refreshMergeStageCards = Effect.fn("board-supervisor-refreshMergeStageCards")(function* () {
+    const board = yield* readBoard;
+    const mergeStage = boardStageWithRole(board, "merge");
+    if (mergeStage === null) return;
+    const settings = yield* boardSettings;
+    for (const card of board.cards) {
+      if (card.archivedAt !== null || card.group !== null || card.stage !== mergeStage.stageId) {
+        continue;
+      }
+      if (!boardCardAutoMergeOn({ board, card, settings })) continue;
+      // Through the lookup cache, so a card costs at most one forge read per cache lifetime.
+      if (card.pullRequest?.state === "open") yield* refreshCardPullRequestLink(card);
+      const hold = card.autoMergeHold;
+      if (
+        hold === null ||
+        hold.retryAt !== null ||
+        hold.headSha === null ||
+        hold.stop === "no-pull-request" ||
+        card.pullRequest?.state !== "open"
+      ) {
+        continue;
+      }
+      const live = (yield* probeMergeState(card)).state?.headSha ?? null;
+      if (live === null || live === hold.headSha) continue;
+      const fresh = (yield* readCard(card.id)) ?? card;
+      yield* clearAutoMergeHold(fresh);
+      yield* resetMergeFixes(fresh);
+    }
+  });
+
+  /** The PR poll cadence for the merge-stage refresh: the pull request lookup cache's lifetime,
+      so each pass costs at most one forge read per card, plus a head read per hard hold. */
+  const MERGE_STAGE_REFRESH_MS = 2 * 60_000;
+  let mergeStageRefreshedAt: number | null = null;
+  let mergeStageRefreshQueued = false;
+  const mergeStageRefreshWorker = yield* makeDrainableWorker(() =>
+    Effect.suspend(() => {
+      mergeStageRefreshQueued = false;
+      return refreshMergeStageCards();
+    }).pipe(
+      Effect.catchCauseIf(
+        (cause) => !Cause.hasInterruptsOnly(cause),
+        (cause) =>
+          Effect.logWarning("board supervisor: merge-stage pull request refresh failed", {
+            cause: Cause.pretty(cause),
+          }),
+      ),
+    ),
+  );
+  /** Single-flight; `force` (boot) ignores the cadence. */
+  const requestMergeStageRefresh = Effect.fn("board-supervisor-requestMergeStageRefresh")(
+    function* (options?: { readonly force?: boolean }) {
+      const nowMs = yield* clockNowMs;
+      if (
+        options?.force !== true &&
+        mergeStageRefreshedAt !== null &&
+        nowMs - mergeStageRefreshedAt < MERGE_STAGE_REFRESH_MS
+      ) {
+        return;
+      }
+      mergeStageRefreshedAt = nowMs;
+      if (mergeStageRefreshQueued) return;
+      mergeStageRefreshQueued = true;
+      yield* mergeStageRefreshWorker.enqueue(undefined);
+    },
+  );
+
+  /**
    * A human's "Remove worktree": removes a kept worktree past the safety rule but keeps the branch.
    * Refused unless the card is archived or in the done-role stage, since an active card's checkout
    * is where its agent writes.
@@ -8273,6 +8425,39 @@ const make = Effect.gen(function* () {
   const disarmPendingMerge = (cardId: BoardCardId): void => {
     mergeAwaitingConflictFix.delete(String(cardId));
   };
+
+  /**
+   * T3o: disarm a merge fix that failed, and on a card that merges by itself say so with a hard
+   * hold rather than leave it parked with nothing shown (T3O-116). The hold's head is read live,
+   * after anything the agent pushed, so only someone else's later push revives it.
+   */
+  const disarmFailedMergeFix = Effect.fn("board-supervisor-disarmFailedMergeFix")(function* (
+    card: BoardCard,
+  ) {
+    const kind = mergeAwaitingConflictFix.get(String(card.id));
+    disarmPendingMerge(card.id);
+    if (kind === undefined) return;
+    const fresh = yield* readCard(card.id);
+    if (fresh === null || fresh.archivedAt !== null) return;
+    const board = yield* readBoard;
+    if (boardStageWithRole(board, "merge")?.stageId !== fresh.stage) return;
+    if (!mergeAwaitingChecks.has(String(fresh.id)) && !(yield* cardAutoMergeArmed(fresh))) return;
+    const probe = yield* probeMergeState(fresh);
+    const previous = fresh.autoMergeHold;
+    yield* recordAutoMergeHold(fresh.id, {
+      reason:
+        kind === "checks"
+          ? "The agent fixing the failing checks did not finish, so the merge waits for you."
+          : "The agent bringing the branch up to date with its base did not finish, so the merge waits for you.",
+      classification: "other",
+      detail: null,
+      attempt: previous?.attempt ?? 1,
+      heldSince: previous?.heldSince ?? (yield* nowIso),
+      retryAt: null,
+      headSha: probe.state?.headSha ?? previous?.headSha ?? null,
+      stop: "fix-failed",
+    });
+  });
 
   /**
    * Ready a draft pull request, only when the forge says live it is an open draft (so retries ready
@@ -8516,6 +8701,16 @@ const make = Effect.gen(function* () {
           mergeState: state,
         };
       }
+      // T3o: one automatic conflict fix and one branch update per stay, counted on the card so
+      // neither the fix's own push (which resets the ladder) nor a restart grants another (T3O-116).
+      const spent = boardCardMergeStayCounts(fresh);
+      if (state?.blockedReason === "conflict" && !viaConflictFix && spent.conflictFixes > 0) {
+        return {
+          outcome: "refused" as const,
+          detail: `${detail} The board already resolved conflicts once while this card waited here, so these wait for you.`,
+          mergeState: state,
+        };
+      }
       if (state?.blockedReason === "conflict" && !viaConflictFix) {
         // `viaConflictFix` bounds this to one automatic fix per click; re-conflicting falls through
         // to `refused`. Report `conflict` (which disables Merge) only when a fix will run:
@@ -8532,6 +8727,7 @@ const make = Effect.gen(function* () {
           };
         }
         mergeAwaitingConflictFix.set(String(fresh.id), "conflict");
+        yield* spendMergeFix(fresh, "conflictFixes");
         const started = yield* dispatchLanded({
           type: "board.card.start-stage-thread",
           commandId: yield* commandId("merge-conflict"),
@@ -8543,6 +8739,36 @@ const make = Effect.gen(function* () {
           return { outcome: "refused" as const, detail };
         }
         return { outcome: "conflict" as const, detail };
+      }
+      // T3o: a branch behind its base is brought up to date once per stay, through the same fix
+      // step as a conflict (the stage's prompt merges the base in), then the merge retries
+      // (T3O-116). Behind again after that is a hold: a busy base must not loop it.
+      if (
+        state?.blockedReason === "behind" &&
+        spent.branchUpdates === 0 &&
+        pullRequest.headBranch === fresh.worktree?.branch
+      ) {
+        const liveStep = boardCardStepState(stages, fresh.id);
+        const stageBusy =
+          hasLiveStageThread(fresh, fresh.stage) ||
+          (liveStep !== null && !isBoardTerminalStepStatus(liveStep.status));
+        if (!stageBusy) {
+          mergeAwaitingConflictFix.set(String(fresh.id), "conflict");
+          yield* spendMergeFix(fresh, "branchUpdates");
+          const started = yield* dispatchLanded({
+            type: "board.card.start-stage-thread",
+            commandId: yield* commandId("merge-branch-update"),
+            cardId: fresh.id,
+            createdAt: yield* nowIso,
+          });
+          if (started) {
+            return {
+              outcome: "conflict" as const,
+              detail: `${detail} The branch is behind its base, so the board is merging the base in.`,
+            };
+          }
+          disarmPendingMerge(fresh.id);
+        }
       }
       // Failing CI gets one automatic fix until the next Merge click (`checksFixSpent`); conflicts
       // outrank it. Unread checks and refusals the forge pinned on something else (a draft, a
@@ -9572,13 +9798,15 @@ const make = Effect.gen(function* () {
 
   // T3o: the gate sweep (T3O-115). Events call it for the cards they touched, the 30s tick and the
   // boot pass for every card; both ask the same predicate.
-  const { fireDueGates } = makeBoardGateSweep({
+  // Typed, not inferred: an action reaches `beginStageRun`, which fires the merge gates (T3O-116).
+  const gateSweep: { readonly fireDueGates: BoardFireDueGates } = makeBoardGateSweep({
     readBoard,
     readSettings: boardSettings,
     workerUnreachable: Effect.map(
       workerPausedNow,
       (paused) => (workerId: string) => paused(workerId as BoardWorkerId),
     ),
+    nowMs: clockNowMs,
     actions: {
       plan: startPlanningGate,
       answer: answerPlanningQuestion,
@@ -9587,6 +9815,8 @@ const make = Effect.gen(function* () {
       "split-sign-off": autoApproveSplit,
       split: (card) => fireDeferredSplitApproval(card.id),
       build: startAutoBuildCard,
+      "merged-done": settleMergedCard,
+      merge: mergeGate,
     },
     recordBlock: Effect.fn("board-supervisor-recordGateBlock")(function* (cardId, gateBlock) {
       yield* dispatchOptional({
@@ -9598,6 +9828,7 @@ const make = Effect.gen(function* () {
       });
     }),
   });
+  const fireDueGates: BoardFireDueGates = (cardIds) => gateSweep.fireDueGates(cardIds);
 
   /**
    * Stamp an unattended planning run: a leaf arriving in, or starting
@@ -10410,57 +10641,39 @@ const make = Effect.gen(function* () {
   );
 
   /**
-   * Attempt every armed card whose retry rung has arrived, on the 30s sweep tick. Total, so a
-   * hold that survived a restart is picked up at boot. A hard hold (null `retryAt`) never comes
-   * due. Also re-checks a card deferred as blocked, and clears the hold of a card no longer
-   * armed: the board-wide setting disarms cards without touching them, so nothing else would.
+   * The holds the merge gate does not own, on the 30s sweep tick. Armed cards are the merge gate's
+   * (T3O-116). Here: an unarmed card whose own CI fix's checks it waits on rides its rung, and a
+   * hold on a card no longer armed is cleared, since the board-wide setting disarms cards without
+   * touching them and nothing else would.
    */
   const fireDueAutoMerges = Effect.fn("board-supervisor-fireDueAutoMerges")(function* () {
     const board = yield* readBoard;
     const mergeStage = boardStageWithRole(board, "merge");
     if (mergeStage === null) return;
-    // Read once for the whole pass rather than per card: the arm is the same
-    // question for every card here, and the sweep runs every 30s.
+    // Read once for the whole pass rather than per card: the sweep runs every 30s.
     const settings = yield* boardSettings;
     const nowMs = yield* clockNowMs;
     for (const card of board.cards) {
-      const exec = resolveBoardStageExecution(
-        settings,
-        mergeStage.stageId,
-        boardProjectStageConfig(board, card.projectId),
-      );
-      const boardWide = isBoardMergeStageExecution(exec) ? exec.autoMerge : false;
-      const deferred = autoMergeDeferredUntilUnblocked.has(String(card.id));
       const hold = card.autoMergeHold;
-      if (hold === null && !deferred) continue;
+      const awaitingChecks = mergeAwaitingChecks.has(String(card.id));
+      if (hold === null && !awaitingChecks) continue;
       if (card.archivedAt !== null || card.stage !== mergeStage.stageId) {
-        autoMergeDeferredUntilUnblocked.delete(String(card.id));
         mergeAwaitingChecks.delete(String(card.id));
         continue;
       }
-      // A hold on a card no longer armed claims a retry that will not happen. The board-wide
-      // setting is not a card command, so its clear lands here; checked before the rung is due so
-      // the stale pill does not linger. An unarmed card waiting on its CI fix's checks still rides.
-      if (
-        !boardCardAutoMergeArmed({ board, card, boardWide }) &&
-        !mergeAwaitingChecks.has(String(card.id))
-      ) {
-        autoMergeDeferredUntilUnblocked.delete(String(card.id));
+      if (boardCardAutoMergeOn({ board, card, settings })) continue;
+      if (!awaitingChecks) {
         yield* clearAutoMergeHold(card);
         continue;
       }
-      // A HARD hold is never polled: its `retryAt` is null, so it simply
-      // never comes due. A deferred card with no hold has no rung to wait for
-      // — its wait is the dependency, and `autoMergeCard` re-checks that.
+      // A HARD hold is never polled: its `retryAt` is null, so it simply never comes due.
       const dueMs = hold?.retryAt == null ? null : Date.parse(hold.retryAt);
-      const rungDue = dueMs !== null && Number.isFinite(dueMs) && nowMs >= dueMs;
-      if (!rungDue && !(deferred && hold === null)) continue;
-      // A live conflict fix owns the merge; a second attempt would race the branch it rewrites. The
-      // pull request is not pre-checked: `mergeCardPullRequest` re-resolves it, so a missing link
-      // records a hard hold rather than retrying silently.
+      if (dueMs === null || !Number.isFinite(dueMs) || nowMs < dueMs) continue;
+      // A live fix owns the merge; a second attempt would race the branch it rewrites.
       const liveStep = boardCardStepState(board, card.id);
       if (liveStep !== null && !isBoardTerminalStepStatus(liveStep.status)) continue;
       if (hasLiveStageThread(card, card.stage)) continue;
+      if (card.blocked) continue;
       yield* autoMergeCard(card);
     }
   });
@@ -10910,7 +11123,6 @@ const make = Effect.gen(function* () {
     // Per-card in-memory bookkeeping outlives the card unless it is reaped
     // here — each entry is a leak the process never gets back.
     settledAtDone.delete(String(card.id));
-    autoMergeDeferredUntilUnblocked.delete(String(card.id));
     transientProvisionFailures.delete(card.id);
     disarmPendingMerge(card.id);
     // Not `board.card.settle-step`: that needs the card to exist. The slot count is in-memory, so
@@ -11291,8 +11503,6 @@ const make = Effect.gen(function* () {
       // The abandoned step may have held a slot — offer it to the queue.
       yield* schedule();
     }
-    const fromIndex = boardStageIndex(board, event.payload.fromStage);
-    const toIndex = boardStageIndex(board, event.payload.toStage);
     // A stage change may need a current PR state (merge stage) or settle at Done;
     // `refreshCardPullRequest` settles a Done card with a merged PR itself.
     yield* refreshCardPullRequest(card, card.stage, { deferSettle: true });
@@ -11309,6 +11519,14 @@ const make = Effect.gen(function* () {
       readiedOnArrival = yield* markCardPullRequestReady((yield* readCard(card.id)) ?? card, {
         forMerge: false,
       });
+      // A pull request readied a moment ago has CI that has not registered its checks yet: an
+      // armed card starts on the ladder's first rung, which the merge gate waits out, rather than
+      // merging into checks that only look green.
+      if (readiedOnArrival && card.pullRequest !== null && (yield* cardAutoMergeArmed(card))) {
+        yield* recordAutoMergeOutcome(card.id, justReadiedRefusal(card.pullRequest.number), {
+          resetLadder: false,
+        });
+      }
     }
 
     kickoffCard = yield* markAutoPlanIfOn(kickoffCard);
@@ -11318,35 +11536,8 @@ const make = Effect.gen(function* () {
     // thread is already the card's current work and is left alone.
     yield* releaseFinishedThreads;
 
-    // An armed card arriving at merge merges before the cascade below, so one arrival resolves the
-    // chain. Only an adjacent forward step: a backward move is an undo and a jump is a human
-    // override, and merging is irreversible. Adjacency, not "came from review", so boards without
-    // a review stage still auto-merge. Arming a card already here bypasses this.
-    if (
-      boardStageWithRole(board, "merge")?.stageId === event.payload.toStage &&
-      fromIndex >= 0 &&
-      toIndex > fromIndex &&
-      // Adjacent in the card's own pipeline: the CI seed sits
-      // between review and merge globally, but only in a CI project's list.
-      areBoardStagesAdjacent(
-        board,
-        event.payload.fromStage,
-        event.payload.toStage,
-        card.projectId,
-      ) &&
-      (yield* cardAutoMergeArmed(card))
-    ) {
-      // A pull request readied a moment ago has CI that has not registered
-      // its checks yet: start the card on the ladder's first rung
-      // rather than merging into checks that only look green.
-      if (readiedOnArrival && card.pullRequest !== null) {
-        yield* recordAutoMergeOutcome(card.id, justReadiedRefusal(card.pullRequest.number), {
-          resetLadder: false,
-        });
-      } else {
-        yield* autoMergeCard(card);
-      }
-    }
+    // T3o: an armed card arriving at merge was merged by the kickoff above, through the merge gate,
+    // however it arrived (T3O-116): the contract merges every card that reaches Ready for merge.
     // A card that left the merge stage drops its hold, or it would show "Merge held" elsewhere.
     // Read off the moved card, since the merge above may have taken it to Done.
     if (
@@ -11460,7 +11651,7 @@ const make = Effect.gen(function* () {
     // Same reason escalation disarms (see `recoverStep`): a conflict fix that
     // never ran must not leave the card armed, or some later merge-stage step
     // succeeding turns into a merge nobody asked for.
-    disarmPendingMerge(card.id);
+    yield* disarmFailedMergeFix(card);
     yield* dispatch({
       type: "board.card.recover-step",
       commandId: yield* commandId("fail-step-at-spawn"),
@@ -11842,6 +12033,8 @@ const make = Effect.gen(function* () {
     // Re-evaluate every finished card's worktree and the board's orphans on boot, refreshing Done
     // cards whose cached PR is still open. Off the worker: it fetches from remotes.
     yield* requestWorktreeSweep({ refreshOpenPullRequests: true });
+    // T3o: and Ready-for-merge cards' pull requests, which may have merged while down (T3O-116).
+    yield* requestMergeStageRefresh({ force: true });
     // Settle threads the board finished with while down. A predicate over state, so no backlog
     // replay; a settle that cannot land is retried by the 30s sweep.
     yield* releaseFinishedThreads;
@@ -12157,7 +12350,16 @@ const make = Effect.gen(function* () {
             event,
             threads,
             unlinkCommandId: commandId("pr-unlink"),
-          }),
+          }).pipe(
+            // T3o: a merged or newly linked pull request makes a merge gate due (T3O-116).
+            Effect.andThen(
+              event.type === "board.card-pull-request-recorded" &&
+                boardStageWithRole(board, "merge")?.stageId ===
+                  board.cards.find((card) => card.id === event.payload.cardId)?.stage
+                ? fireDueGates([event.payload.cardId]).pipe(Effect.asVoid)
+                : Effect.void,
+            ),
+          ),
         );
       default:
         return Effect.void;
@@ -12600,6 +12802,8 @@ const make = Effect.gen(function* () {
       Effect.andThen(sweepGates),
       Effect.andThen(sweepRetries),
       Effect.andThen(sweepAutoMergeHolds),
+      // T3o: queued off the worker at its own cadence; the next tick's gates act on it (T3O-116).
+      Effect.andThen(requestMergeStageRefresh()),
       // Forge-check CI steps poll on the same cadence.
       Effect.andThen(sweepCiForgeSteps),
       // A pass with nothing behind it is held on the second tick.
@@ -12896,6 +13100,7 @@ const make = Effect.gen(function* () {
     drain: worker.drain.pipe(
       Effect.andThen(cardCleanupWorker.drain),
       Effect.andThen(cardRetireWorker.drain),
+      Effect.andThen(mergeStageRefreshWorker.drain),
     ),
     // CI passes run on their own fibers and report through the
     // worker; a pass's end can start the next one, so this loops until none

@@ -1068,6 +1068,38 @@ export function isBoardCardAutoMergeSoft(
   return classification === "soft";
 }
 
+export const BoardCardAutoMergeStop = Schema.Literals([
+  "no-pull-request",
+  "no-workspace",
+  "wrong-stage",
+  "fix-failed",
+]);
+export type BoardCardAutoMergeStop = typeof BoardCardAutoMergeStop.Type;
+
+/**
+ * T3o: the automatic merge fixes spent in one stay in Ready for merge (T3O-116). The ladder resets
+ * its attempt on every new head, and the board's own fix pushes make one, so "one conflict fix" and
+ * "one branch update" are counted per stay instead. Counts apply only while `stageEnteredAt`
+ * equals the card's; a new stay, a human Merge click or someone else's push starts them again.
+ */
+export const BoardCardMergeStay = Schema.Struct({
+  stageEnteredAt: Schema.NullOr(IsoDateTime),
+  conflictFixes: NonNegativeInt,
+  branchUpdates: NonNegativeInt,
+});
+export type BoardCardMergeStay = typeof BoardCardMergeStay.Type;
+
+/** The merge fixes this card has spent in its current stay. */
+export function boardCardMergeStayCounts(
+  card: Pick<BoardCard, "stageEnteredAt" | "mergeStay">,
+): BoardCardMergeStay {
+  const stay = card.mergeStay;
+  const stageEnteredAt = card.stageEnteredAt ?? null;
+  return stay !== undefined && stay.stageEnteredAt === stageEnteredAt
+    ? stay
+    : { stageEnteredAt, conflictFixes: 0, branchUpdates: 0 };
+}
+
 /**
  * On the card aggregate so it survives a restart. Not on step state: a fake step row with no
  * thread would corrupt slot accounting, recovery and boot reconciliation.
@@ -1093,6 +1125,10 @@ export const BoardCardAutoMergeHold = Schema.Struct({
   /** The head commit the probe described. A DIFFERENT sha means new commits
       and therefore new CI, which resets the ladder. */
   headSha: Schema.NullOr(TrimmedNonEmptyString),
+  /** T3o: why the board itself stopped, when it was not the forge's refusal (T3O-116): no pull
+      request (cleared once one is linked), no project checkout, or a fix agent that failed.
+      Absent on forge refusals and older holds. */
+  stop: Schema.optionalKey(BoardCardAutoMergeStop),
 });
 export type BoardCardAutoMergeHold = typeof BoardCardAutoMergeHold.Type;
 
@@ -1109,7 +1145,8 @@ export function boardCardAutoMergeHoldsEqual(
     left.attempt === right.attempt &&
     left.heldSince === right.heldSince &&
     left.retryAt === right.retryAt &&
-    left.headSha === right.headSha
+    left.headSha === right.headSha &&
+    left.stop === right.stop
   );
 }
 
@@ -2080,6 +2117,9 @@ export const BOARD_GATES = [
   "split-sign-off",
   "split",
   "build",
+  // T3o: the merge gates, last (T3O-116).
+  "merged-done",
+  "merge",
 ] as const;
 export type BoardGate = (typeof BOARD_GATES)[number];
 
@@ -2271,6 +2311,8 @@ export const BoardCard = Schema.Struct({
   stageEnteredAt: Schema.optionalKey(IsoDateTime),
   /** T3o: the last automation gate attempt that could not act (T3O-115). Absent when none. */
   gateBlock: Schema.optionalKey(BoardCardGateBlock),
+  /** T3o: merge fixes spent this stay in Ready for merge (T3O-116). Absent when none. */
+  mergeStay: Schema.optionalKey(BoardCardMergeStay),
   /** Derived from unmet dependencies at Ready and beyond, recorded by
       the decider at each move / dependency edit / unarchive. */
   blocked: Schema.Boolean,
@@ -5326,6 +5368,8 @@ export const BoardCardUpdateCommand = Schema.Struct({
   sizeEditor: Schema.optional(BoardCardSizeEditor),
   /** T3o: the supervisor's gate-attempt record (T3O-115). Absent leaves it; null clears it. */
   gateBlock: Schema.optional(Schema.NullOr(BoardCardGateBlock)),
+  /** T3o: the supervisor's per-stay merge fix counts (T3O-116). Absent leaves it; null clears it. */
+  mergeStay: Schema.optional(Schema.NullOr(BoardCardMergeStay)),
   createdAt: IsoDateTime,
 });
 export type BoardCardUpdateCommand = typeof BoardCardUpdateCommand.Type;

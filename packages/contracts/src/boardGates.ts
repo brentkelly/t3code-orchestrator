@@ -5,15 +5,21 @@
  * gate already acted on is never due again. No I/O.
  */
 import {
+  boardCardAutoMergeArmed,
   boardCardInheritedDependsOn,
   boardCardStepThisStay,
   boardNextStageId,
   boardProjectStageConfig,
   boardStageBeforeBuild,
   boardStageById,
+  boardStageWithRole,
   boardStages,
   effectiveBoardStageRole,
+  isBoardCardPullRequestTerminal,
+  isBoardMergeStageExecution,
   isBoardPlanReviewRunning,
+  isBoardTerminalStepStatus,
+  isLiveBoardCardThreadLink,
   resolveBoardCardAutomation,
   resolveBoardCardPlanReview,
   resolveBoardStageExecution,
@@ -73,6 +79,8 @@ export interface BoardGateInput {
   readonly workerUnreachable?: ((workerId: string) => boolean) | undefined;
   /** Prebuilt lookups for a whole-board pass; built on demand otherwise. */
   readonly index?: BoardGateIndex | undefined;
+  /** The current time, for the merge gate's retry rung. Omitted, a pending rung is never due. */
+  readonly nowMs?: number | undefined;
 }
 
 /** The facts every gate reads, resolved once per card. */
@@ -130,6 +138,7 @@ export function boardGateDue(input: BoardGateInput): BoardGateDue {
   const stage = boardStageById(board, card.stage);
   if (stage === null) return null;
   const role = effectiveBoardStageRole(stage);
+  if (role === "merge") return boardMergeGateDue(input, index);
   const before = boardStageBeforeBuild(board);
   if (role !== "plan" && card.stage !== before?.stageId) return null;
   const facts = boardGateFacts({ ...input, index });
@@ -193,4 +202,62 @@ export function boardGateDue(input: BoardGateInput): BoardGateDue {
     cards: board.cards,
   });
   return unmet.length === 0 ? { gate: "build" } : null;
+}
+
+/** Whether this card's merge runs itself: its own toggle, its group's, or the board-wide setting. */
+export function boardCardAutoMergeOn(input: {
+  readonly board: BoardState;
+  readonly card: BoardCard;
+  readonly settings: BoardSettings;
+}): boolean {
+  const { board, card, settings } = input;
+  const mergeStage = boardStageWithRole(board, "merge");
+  if (mergeStage === null) return false;
+  const exec = resolveBoardStageExecution(
+    settings,
+    mergeStage.stageId,
+    boardProjectStageConfig(board, card.projectId),
+  );
+  return boardCardAutoMergeArmed({
+    board,
+    card,
+    boardWide: isBoardMergeStageExecution(exec) ? exec.autoMerge : false,
+  });
+}
+
+/**
+ * The merge gates (T3O-116), on a card in Ready for merge. merged-done first: a pull request
+ * already merged (cached state, kept current by the merge-stage refresh) moves the card on and is
+ * never merged again. Then merge: Auto-merge on, not blocked, nothing running on the stage, and no
+ * hold that still applies. A hard hold applies until a human or someone else's push revives it,
+ * except a no-pull-request stop, which a linked pull request clears. A soft hold waits its rung.
+ */
+function boardMergeGateDue(input: BoardGateInput, index: BoardGateIndex): BoardGateDue {
+  const { board, card } = input;
+  const pullRequest = card.pullRequest;
+  if (isBoardCardPullRequestTerminal(pullRequest)) {
+    return boardNextStageId(board, card.stage, card.projectId) === null
+      ? null
+      : { gate: "merged-done" };
+  }
+  if (card.blocked) return null;
+  if ((index.liveChildCount.get(String(card.id)) ?? 0) > 0) return null;
+  if (!boardCardAutoMergeOn(input)) return null;
+  const step = index.stepByCard.get(String(card.id)) ?? null;
+  if (step !== null && !isBoardTerminalStepStatus(step.status)) return null;
+  if (card.threadLinks.some((link) => link.role === card.stage && isLiveBoardCardThreadLink(link))) {
+    return null;
+  }
+  const hold = card.autoMergeHold;
+  if (hold !== null) {
+    if (hold.retryAt === null) {
+      const cleared = hold.stop === "no-pull-request" && pullRequest !== null;
+      if (!cleared) return null;
+    } else {
+      const dueMs = Date.parse(hold.retryAt);
+      if (input.nowMs === undefined || !Number.isFinite(dueMs) || input.nowMs < dueMs) return null;
+    }
+  }
+  // A card with no pull request is attempted too: the attempt records the hold that says so.
+  return { gate: "merge" };
 }
