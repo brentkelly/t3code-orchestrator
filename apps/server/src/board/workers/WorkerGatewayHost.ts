@@ -310,7 +310,7 @@ export const makeWorkerGatewayHost = Effect.gen(function* () {
   const ownWorktree = (operation: string, caller: GatewayCaller, worktreePath: string) =>
     capacityOf(operation, caller).pipe(
       Effect.flatMap(({ service, boardId }) =>
-        service.boardHoldsWorktree(boardId, worktreePath).pipe(
+        service.boardOwnsWorktree(boardId, worktreePath).pipe(
           Effect.flatMap((holds) =>
             holds
               ? Effect.succeed(service)
@@ -361,7 +361,7 @@ export const makeWorkerGatewayHost = Effect.gen(function* () {
   const holdsWorktree = (caller: GatewayCaller, worktreePath: string) =>
     caller.boardId === null || Option.isNone(capacity)
       ? Effect.succeed(false)
-      : capacity.value.boardHoldsWorktree(caller.boardId, worktreePath);
+      : capacity.value.boardOwnsWorktree(caller.boardId, worktreePath);
   /** The CI runs each board started here, so only that board reads or ends their actuals. */
   const ciRunBoards = new Map<string, string>();
   const MAX_CI_RUNS = 500;

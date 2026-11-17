@@ -34,6 +34,8 @@ interface Fakes {
   availableBytes: number;
   stored: Map<string, string>;
   threadReads: number;
+  /** Worktrees whose marker names a board, as `${boardId} ${path}`. */
+  marked: Set<string>;
 }
 
 const makeFakes = (): Fakes => ({
@@ -46,6 +48,7 @@ const makeFakes = (): Fakes => ({
   availableBytes: 500 * GiB,
   stored: new Map(),
   threadReads: 0,
+  marked: new Set(),
 });
 
 const portsOver = (
@@ -61,6 +64,8 @@ const portsOver = (
   refreshProviderUsage: (instanceId) => Effect.sync(() => void fakes.refreshed.push(instanceId)),
   notReady: () => Effect.succeed(null),
   readiness: () => Effect.succeed([]),
+  worktreeMarkedFor: (boardId, worktreePath) =>
+    Effect.sync(() => fakes.marked.has(`${boardId} ${worktreePath}`)),
   worktreePresence: () => Effect.succeed("owned"),
   worktreeVolume: "/w",
   unownedWorktrees: () => Effect.succeed([]),
@@ -332,6 +337,13 @@ it.effect("a board's snapshot carries nothing about another board's cards", () =
     const reads = fakes.threadReads;
     yield* service.snapshot("board-b");
     assert.strictEqual(fakes.threadReads, reads);
+    // A worktree is a board's by its card record, or (a group card's, which takes no claim)
+    // by its marker; never another board's.
+    fakes.marked.add("board-a /w/group-1");
+    assert.isTrue(yield* service.boardOwnsWorktree("board-a", "/w/a-1"));
+    assert.isTrue(yield* service.boardOwnsWorktree("board-a", "/w/group-1"));
+    assert.isFalse(yield* service.boardOwnsWorktree("board-a", "/w/b-1"));
+    assert.isFalse(yield* service.boardOwnsWorktree("board-b", "/w/group-1"));
   }).pipe(withMachine(fakes), Effect.provide(TestClock.layer()));
 });
 
