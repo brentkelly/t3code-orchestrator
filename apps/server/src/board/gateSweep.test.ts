@@ -251,6 +251,28 @@ it.effect("sign-off: a refused move is recorded once however many ticks retry it
   ),
 );
 
+it.effect("a recorded block is cleared once its gate is no longer due", () =>
+  withGovernor(
+    {
+      board: signOffBoard("unblocked", {
+        autoSignOffSetting: false,
+        gateBlock: { gate: "sign-off", reason: "fault", detail: null },
+      }),
+      settings,
+    },
+    (h) =>
+      Effect.gen(function* () {
+        yield* h.reactor.tick;
+        assert.isUndefined((yield* cardOf(h, "unblocked"))?.gateBlock);
+        yield* h.reactor.tick;
+        const clears = ofType(yield* h.commands, "board.card.update").filter(
+          (command) => command.type === "board.card.update" && command.gateBlock === null,
+        );
+        assert.lengthOf(clears, 1);
+      }),
+  ),
+);
+
 it.effect("split: an approval recorded during review fires on the tick once planning is done", () =>
   withGovernor(
     {

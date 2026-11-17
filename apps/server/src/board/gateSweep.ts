@@ -63,7 +63,8 @@ function sameGateBlock(
   return left.gate === right.gate && left.reason === right.reason;
 }
 
-/** The cards a pass never evaluates: archived, groups and Done. No gate is due in Backlog. */
+/** The cards a pass never evaluates: archived, groups and Done. Backlog is evaluated; no gate is
+    due there. */
 function sweepable(board: BoardState, card: BoardCard): boolean {
   if (card.archivedAt !== null || card.group !== null) return false;
   const stage = boardStageById(board, card.stage);
@@ -114,16 +115,22 @@ export function makeBoardGateSweep<E>(deps: BoardGateSweepDeps<E>) {
     const settings = yield* deps.readSettings;
     const workerUnreachable = yield* deps.workerUnreachable;
     const index = boardGateIndex(board);
-    const wanted = cardIds === "all" ? null : new Set(cardIds.map(String));
+    const cards =
+      cardIds === "all"
+        ? board.cards
+        : cardIds.flatMap((id) => index.cardsById.get(String(id)) ?? []);
     const fired: Array<
       { readonly cardId: BoardCardId; readonly gate: BoardGate } & {
         readonly outcome: BoardGateOutcome;
       }
     > = [];
-    for (const card of board.cards) {
-      if (wanted !== null && !wanted.has(String(card.id))) continue;
+    for (const card of cards) {
       if (!sweepable(board, card)) continue;
       const due = boardGateDue({ board, card, settings, workerUnreachable, index });
+      // A block belongs to its gate being due: once that gate is not, nothing retries it.
+      if (card.gateBlock !== undefined && due?.gate !== card.gateBlock.gate) {
+        yield* deps.recordBlock(card.id, null);
+      }
       if (due === null) continue;
       const outcome = yield* act(due.gate, card);
       fired.push({ cardId: card.id, gate: due.gate, outcome });
