@@ -599,6 +599,8 @@ export const makeWorkerGatewayHost = Effect.gen(function* () {
     yield* relay
       .claim(centralEnvironmentId, caller.sessionId)
       .pipe(Effect.mapError(refused("launchScheduleRun", threadId)));
+    // Pruned before reserving: a slow prune would spend the agent slot's reservation window.
+    const pruned = yield* pruneRuns(input, caller);
     yield* refuseOverAgentCap("launchScheduleRun", threadId, input.modelSelection.instanceId);
     return yield* Effect.gen(function* () {
       const recordFailed = (cause: { readonly cause?: unknown }) =>
@@ -618,7 +620,6 @@ export const makeWorkerGatewayHost = Effect.gen(function* () {
       yield* store
         .recordRelayedThread(threadId, centralEnvironmentId)
         .pipe(Effect.mapError(recordFailed));
-      const pruned = yield* pruneRuns(input, caller);
       yield* runs
         .launch({
           commandId: input.commandId,
