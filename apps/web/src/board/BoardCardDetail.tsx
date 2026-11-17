@@ -840,7 +840,7 @@ export function BoardCardDetail({
       })
     : undefined;
   const reviewPhaseRuntimeMode = isBoardReviewStageExecution(reviewExecution)
-    ? effectiveBoardRuntimeMode(reviewExecution.phases.review.runtimeMode, "build")
+    ? effectiveBoardRuntimeMode(reviewExecution.phases.review.runtimeMode)
     : undefined;
   const doneStageId = boardStageWithRole(stageState, "done")?.stageId ?? null;
   const unmetDependencyKeys = dependencies

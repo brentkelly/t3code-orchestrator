@@ -99,6 +99,8 @@ const expectedCard = {
   pullRequestFloor: null,
   blocked: false,
   archivedAt: null,
+  // T3o: a card enters its first stage when it is created (T3O-115).
+  stageEnteredAt: createdAt,
   createdAt,
   updatedAt: createdAt,
 } as const;

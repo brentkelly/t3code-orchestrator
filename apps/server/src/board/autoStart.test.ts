@@ -435,43 +435,48 @@ const armEdit = (card: BoardCard, sequence: number) =>
     payload: { cardId: card.id, card, automationChanged: { autoBuild: true } },
   }) as never;
 
-it.effect("a child's own Auto-build starts it without beginning its unstarted group", () => {
-  const group: BoardCard = {
-    ...makeBoardCard({ id: "group", stage: READY, orderKey: "a" }),
-    group: {
-      target: "inherit",
-      autoBuild: true,
-      autoMerge: false,
-      autoPlan: false,
-      autoSignOff: false,
-      started: false,
-      placed: BOARD_SEED_STAGE_IDS.ready,
-      prevStage: null,
-      heading: true,
-      integrated: false,
-    },
-  };
-  const own = armedCard({ dependsOn: [], parentCardId: "group" });
-  const sibling = makeBoardCard({
-    id: "sibling",
-    stage: READY,
-    orderKey: "n",
-    parentCardId: "group",
-  });
-  return withGovernor(setup([group, own, sibling]), (h) =>
-    Effect.gen(function* () {
-      yield* h.pumpDomain(armEdit(own, 1));
-      assert.strictEqual(stageOf(yield* h.board, "waiter"), BUILDING);
-      yield* deliverAutoStart(h, "waiter", 2);
+it.effect(
+  "a child's own Auto-build starts it alone; an inheriting sibling builds too (T3O-115)",
+  () => {
+    const group: BoardCard = {
+      ...makeBoardCard({ id: "group", stage: READY, orderKey: "a" }),
+      group: {
+        target: "inherit",
+        autoBuild: true,
+        autoMerge: false,
+        autoPlan: false,
+        autoSignOff: false,
+        started: false,
+        placed: BOARD_SEED_STAGE_IDS.ready,
+        prevStage: null,
+        heading: true,
+        integrated: false,
+      },
+    };
+    const own = armedCard({ dependsOn: [], parentCardId: "group" });
+    const sibling = makeBoardCard({
+      id: "sibling",
+      stage: READY,
+      orderKey: "n",
+      parentCardId: "group",
+    });
+    return withGovernor(setup([group, own, sibling]), (h) =>
+      Effect.gen(function* () {
+        yield* h.pumpDomain(armEdit(own, 1));
+        assert.strictEqual(stageOf(yield* h.board, "waiter"), BUILDING);
+        yield* deliverAutoStart(h, "waiter", 2);
 
-      const after = yield* h.board;
-      assert.strictEqual(stageOf(after, "sibling"), READY, "the group's cascade did not run");
-      assert.isFalse(
-        after.cards.find((card) => card.id === BoardCardId.make("group"))?.group?.started,
-      );
-    }),
-  );
-});
+        // The own start is an `auto-build` move, which begins no group; the inheriting sibling
+        // builds anyway, since an inherited Auto-build no longer waits for the group to start.
+        const ownMove = (yield* h.commands).find(
+          (command) => command.type === "board.card.move" && command.cardId === own.id,
+        );
+        assert.deepInclude(ownMove, { cause: "auto-build" });
+        assert.strictEqual(stageOf(yield* h.board, "sibling"), BUILDING);
+      }),
+    );
+  },
+);
 
 it.effect("Auto-build runs the build unattended even when the card asks for a human", () => {
   const card: BoardCard = { ...armedCard({ dependsOn: [] }), humanInLoop: true };

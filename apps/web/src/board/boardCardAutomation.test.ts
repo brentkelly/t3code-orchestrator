@@ -87,7 +87,6 @@ function toggle(overrides: Partial<BoardResolvedAutomationToggle>): BoardResolve
     own: null,
     source: null,
     inheritedFrom: { id: "g-1", key: "T3O-9" },
-    waitingForGroupStart: false,
     locked: false,
     lockReason: null,
     ...overrides,
@@ -106,9 +105,9 @@ describe("the header's gate tags", () => {
   const read = (value: ReturnType<typeof strip>) =>
     value.tags.map((tag) => `${tag.gate} · ${tag.auto ? "auto" : "you"}`);
 
-  it("shows Sign-off only while planning is automated", () => {
+  it("shows Sign-off whoever plans, since it approves attended planning too (T3O-115)", () => {
     const manual = strip(shell("c-1", "backlog"));
-    expect(read(manual)).toEqual(["Plan · you", "Build · you", "Merge · you"]);
+    expect(read(manual)).toEqual(["Plan · you", "Sign-off · you", "Build · you", "Merge · you"]);
     expect(manual.handsOff).toBe(false);
     const auto = strip(shell("c-2", "backlog", { autoPlanSetting: true, autoBuildSetting: true }));
     expect(read(auto)).toEqual(["Plan · auto", "Sign-off · you", "Build · auto", "Merge · you"]);
@@ -130,7 +129,6 @@ describe("the header's gate tags", () => {
     const rows = boardCardAutomationRows({
       resolved: resolve([card], card),
       inPlanning: true,
-      planReviewUnattended: true,
     });
     const value = boardAutomationStrip({ rows, pastPlanning: false, planReviewUnattended: true });
     expect(value.tags.slice(0, 2)).toEqual([
@@ -208,10 +206,10 @@ describe("Make hands-off", () => {
     ).toBeNull();
   });
 
-  it("leaves an Auto-build waiting for its group to start with the group", () => {
+  it("reads an inherited Auto-build as on before the group starts (T3O-115)", () => {
     const g = shell("g-1", "ready", { group: group({ autoBuild: true, autoMerge: true }) });
     const ready = child("c-1", "ready");
-    expect(resolve([g, ready], ready).autoBuild.waitingForGroupStart).toBe(true);
+    expect(resolve([g, ready], ready).autoBuild.value).toBe(true);
     expect(patch(ready, [g, ready])).toBeNull();
     const value = boardAutomationStrip({
       rows: boardCardAutomationRows({ resolved: resolve([g, ready], ready), inPlanning: false }),
@@ -238,12 +236,6 @@ describe("the source tag", () => {
         toggle({ own: true, value: true, source: "own", inheritedFrom: null }),
       ),
     ).toBeNull();
-  });
-
-  it("says when an inherited Auto-build waits for the group to start", () => {
-    expect(
-      boardAutomationSourceTag(toggle({ source: "inherited", waitingForGroupStart: true })),
-    ).toBe("from T3O-9 · when group starts");
   });
 
   it("names the board for the board-wide merge", () => {
@@ -304,27 +296,28 @@ describe("a leaf's rows", () => {
     expect(build).toMatchObject({ on: false, locked: true, switchDisabled: true });
   });
 
-  it("shows Auto sign-off, indented, only while Auto-plan is on", () => {
+  it("shows Auto sign-off, indented, whoever plans (T3O-115)", () => {
     const manual = shell("c-1", "backlog");
-    expect(
-      boardCardAutomationRows({ resolved: resolve([manual], manual), inPlanning: false }).map(
-        (r) => r.id,
-      ),
-    ).toEqual(["autoPlan", "autoBuild", "autoMerge"]);
-    const solo = shell("c-2", "backlog", { autoPlanSetting: true });
-    const waits = boardCardAutomationRows({ resolved: resolve([solo], solo), inPlanning: false });
-    expect(waits[1]).toMatchObject({
+    const rows = boardCardAutomationRows({
+      resolved: resolve([manual], manual),
+      inPlanning: false,
+    });
+    expect(rows.map((r) => r.id)).toEqual(["autoPlan", "autoSignOff", "autoBuild", "autoMerge"]);
+    expect(rows[1]).toMatchObject({
       id: "autoSignOff",
       on: false,
       indent: true,
-      note: "Off: the agent's plan waits for you.",
+      note: "Off: the finished plan waits for you.",
     });
     const signed = shell("c-3", "backlog", { autoPlanSetting: true, autoSignOffSetting: true });
     const approves = boardCardAutomationRows({
       resolved: resolve([signed], signed),
       inPlanning: false,
     });
-    expect(approves[1]).toMatchObject({ on: true, note: "Approve the agent's plan without you." });
+    expect(approves[1]).toMatchObject({
+      on: true,
+      note: "Approve the finished plan without you, a split included.",
+    });
   });
 
   it("locks Auto-merge on, from the board, under the board-wide setting", () => {
@@ -332,7 +325,7 @@ describe("a leaf's rows", () => {
     const merge = boardCardAutomationRows({
       resolved: resolve([card], card, true),
       inPlanning: false,
-    })[2]!;
+    }).find((r) => r.id === "autoMerge")!;
     expect(merge).toMatchObject({
       on: true,
       locked: true,
@@ -408,7 +401,7 @@ describe("what a group flip does to its children", () => {
     ]);
   });
 
-  it("starts ready children only once the group has started, and never approves a plan", () => {
+  it("starts ready children whether or not the group has started, and never approves a plan", () => {
     const shells = (started: boolean) => [
       shell("g-1", "building", { group: group({ started }) }),
       child("c-1", "planning", { autoPlanPending: true, planCount: 1 }),
@@ -417,16 +410,18 @@ describe("what a group flip does to its children", () => {
     expect(effects(shells(true), "autoBuild", true)).toEqual([
       "1 ready child will start building once its dependencies are done.",
     ]);
-    expect(effects(shells(false), "autoBuild", true)).toEqual([]);
+    expect(effects(shells(false), "autoBuild", true)).toEqual([
+      "1 ready child will start building once its dependencies are done.",
+    ]);
   });
 
-  it("approves waiting single plans when sign-off turns on, never a split", () => {
+  it("approves waiting plans and splits when sign-off turns on (T3O-115)", () => {
     const shells = [
       shell("g-1", "planning", { group: group({ autoPlan: true }) }),
       child("c-1", "planning", { autoPlanPending: true, planCount: 1 }),
       child("c-2", "planning", { autoPlanPending: true, planCount: 2 }),
     ];
-    expect(effects(shells, "autoSignOff", true)).toEqual(["1 waiting plan will be approved."]);
+    expect(effects(shells, "autoSignOff", true)).toEqual(["2 waiting plans will be approved."]);
     expect(effects(shells, "autoSignOff", false)).toEqual([]);
   });
 

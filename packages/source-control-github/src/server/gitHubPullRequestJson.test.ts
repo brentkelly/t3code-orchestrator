@@ -458,6 +458,14 @@ describe("pull request detail decoding", () => {
     },
   );
 
+  it.each([
+    ["BEHIND", true],
+    ["BLOCKED", false],
+  ])("reads whether a stale base is the whole refusal: %s", (mergeStateStatus, required) => {
+    const detail = detailOf([], { mergeStateStatus, baseRef: { compare: { behindBy: 2 } } });
+    expect(detail.comparison?.updateRequired).toBe(required);
+  });
+
   const detailJson = JSON.stringify({
     comments: [{ id: "c1", body: "second", createdAt: "2026-07-04T00:00:00Z" }],
     reviews: [

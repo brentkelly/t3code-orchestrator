@@ -849,6 +849,30 @@ it.layer(makeTestLayer("t3o-card-auto-merge-"))(
         assert.strictEqual(delta.autoMergeSetting, hard?.autoMergeSetting);
         assert.strictEqual(delta.autoPlanPending, hard?.autoPlanPending);
 
+        // T3o: a held automation gate rides both producers, and clears (T3O-115).
+        const block = { gate: "build", reason: "move-refused", detail: "Not now." } as const;
+        yield* engine.dispatch({
+          type: "board.card.update",
+          commandId: CommandId.make("cmd-gate-block"),
+          cardId,
+          gateBlock: block,
+          createdAt,
+        });
+        const held = yield* shellCard;
+        assert.deepStrictEqual(held?.gateBlock, block);
+        const heldModel = yield* snapshotQuery.getCommandReadModel();
+        const heldAggregate = heldModel.board?.cards.find((entry) => entry.id === cardId);
+        assert.deepStrictEqual(boardCardShellFromCard(heldAggregate!).gateBlock, block);
+        yield* engine.dispatch({
+          type: "board.card.update",
+          commandId: CommandId.make("cmd-gate-unblock"),
+          cardId,
+          gateBlock: null,
+          createdAt,
+        });
+        const unblocked = yield* shellCard;
+        assert.isFalse(unblocked !== undefined && "gateBlock" in unblocked);
+
         // Disarming clears the hold and, with it, both hold keys — the
         // reverse state a one-way door would have missed.
         yield* engine.dispatch({

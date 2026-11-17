@@ -375,7 +375,6 @@ export function BoardCardAutomation(props: {
     resolved,
     inPlanning: props.inPlanning,
     planningFinished: props.planningFinished,
-    planReviewUnattended,
   });
   const strip = boardAutomationStrip({
     rows,

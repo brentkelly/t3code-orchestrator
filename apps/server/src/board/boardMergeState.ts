@@ -59,6 +59,9 @@ export interface BoardMergeState {
       above are "could not look". Nothing may then be concluded from a green
       rollup, least of all a missing approval. */
   readonly checksUnread: boolean;
+  /** True when the forge says the stale base is the whole refusal, so a branch update unblocks
+      the merge. Absent when it cannot say, or from older workers. */
+  readonly updateRequired?: boolean;
 }
 
 /** How many failing/running check names a detail line will ever show. Bounded
@@ -185,7 +188,11 @@ export function boardMergeStateOf(detail: PullRequestDetail): BoardMergeState {
 
   if (detail.mergeability === "conflicting") return blocked("conflict");
   if (detail.isDraft) return blocked("draft");
-  if (detail.baseComparison === "behind") return blocked("behind");
+  if (detail.baseComparison === "behind") {
+    return detail.baseUpdateRequired === undefined
+      ? blocked("behind")
+      : { ...blocked("behind"), updateRequired: detail.baseUpdateRequired };
+  }
   if (detail.mergeability === "unknown") {
     return { mergeable: "unknown", blockedReason: null, checks, headSha, checksUnread };
   }

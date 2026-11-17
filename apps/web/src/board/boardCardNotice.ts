@@ -8,7 +8,9 @@ import { BOARD_ATTENTION_SETTLE_MS } from "@t3tools/contracts";
 import type {
   BoardCardAttentionReason,
   BoardCardAttentionTone,
+  BoardCardGateBlock,
   BoardCardStepStalledReason,
+  BoardGate,
 } from "@t3tools/contracts";
 
 import type { BoardAutoMergePill } from "./boardAutoMergeHold";
@@ -47,6 +49,8 @@ export type BoardCardNotice =
   /** T3o: parked at the merge role with nothing to merge. */
   | { readonly kind: "no-pull-request" }
   | { readonly kind: "blocked"; readonly dependencyCount: number }
+  /** T3o: an automation gate was due but its last attempt could not act (T3O-115). */
+  | { readonly kind: "gate-block"; readonly block: BoardCardGateBlock }
   /** A finished card still holding its worktree, and why. */
   | { readonly kind: "worktree-kept"; readonly reason: string }
   /** The card's project no longer uses the stage it sits in. */
@@ -82,6 +86,8 @@ export function boardCardNotice(input: {
   /** The attention chip is a provider stall (`boardCardProviderStalled`),
       which ranks with the worker notices rather than among the generic chips. */
   readonly providerMissing?: boolean | undefined;
+  /** T3o: the card's last blocked gate attempt (T3O-115). */
+  readonly gateBlock?: BoardCardGateBlock | null | undefined;
 }): BoardCardNotice | null {
   const attention = input.attention;
   // The card's worker comes first: removed, then offline — one
@@ -107,6 +113,7 @@ export function boardCardNotice(input: {
   if (input.noPullRequestAtMerge) return { kind: "no-pull-request" };
   if (attention !== null) return { kind: "attention", attention };
   if (input.blocked) return { kind: "blocked", dependencyCount: input.dependencyCount };
+  if (input.gateBlock != null) return { kind: "gate-block", block: input.gateBlock };
   if (input.stageGone != null) return { kind: "stage-gone", note: input.stageGone };
   if (input.worktreeKeptReason != null) {
     return { kind: "worktree-kept", reason: input.worktreeKeptReason };
@@ -141,4 +148,26 @@ export function boardCardNoPullRequest(input: {
     Number.isFinite(idleSince) &&
     input.now - idleSince < BOARD_ATTENTION_SETTLE_MS;
   return !settling;
+}
+
+const GATE_LABELS: Readonly<Record<BoardGate, string>> = {
+  plan: "Auto-plan",
+  answer: "Auto-plan",
+  "review-start": "Plan review",
+  "sign-off": "Auto sign-off",
+  "split-sign-off": "Auto sign-off",
+  split: "The approved split",
+  build: "Auto-build",
+  // T3o: the merge gates hold through `autoMergeHold`; only a refused move to Done lands here (T3O-116).
+  "merged-done": "Moving the merged card to Done",
+  merge: "Auto-merge",
+};
+
+/** T3o: why an automation gate is held, in the card's words (T3O-115). */
+export function boardGateBlockTooltip(block: BoardCardGateBlock): string {
+  const who = GATE_LABELS[block.gate];
+  const why = (
+    block.detail ?? (block.reason === "fault" ? "something went wrong" : "it was refused")
+  ).replace(/\.$/, "");
+  return `${who} could not act: ${why}. The board tries again every 30 seconds.`;
 }

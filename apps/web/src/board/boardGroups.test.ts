@@ -208,7 +208,8 @@ describe("boardGroupCardVm", () => {
       { shells: [own, child("c-9", "ready", "g-2")], stages: STAGES, attentionFor: noAttention },
       own,
     )!;
-    expect(ownVm.meta).toBe("→ board/g-2 · auto-build armed");
+    // T3o: on whether or not the group has started (T3O-115).
+    expect(ownVm.meta).toBe("→ board/g-2 · auto-build on");
   });
 
   it("is never complete while deferred children are left", () => {
@@ -377,12 +378,12 @@ describe("targets and settings", () => {
     expect(uses(false, "merge")).toBe(false);
   });
 
-  it("changes the auto-build note between armed, on and off", () => {
+  it("changes the auto-build note between on and off, started or not (T3O-115)", () => {
     const note = (settings: Partial<BoardCardGroup>) => {
       const g = shell("g-9", "planning", { group: group(settings) });
       return boardGroupSettingsVm([g], STAGES, g)!.autoBuild.note;
     };
-    expect(note({ autoBuild: true })).toContain("Armed");
+    expect(note({ autoBuild: true })).toContain("on their own");
     expect(note({ autoBuild: true, started: true })).toContain("on their own");
     expect(note({ autoBuild: false })).toContain("wait for you");
   });

@@ -1387,7 +1387,7 @@ function CiStageBody(props: {
                 : { instanceId: exec.model.instanceId, model: exec.model.model, options },
           });
         }}
-        runtimeMode={effectiveBoardRuntimeMode(exec.runtimeMode, exec.mode)}
+        runtimeMode={effectiveBoardRuntimeMode(exec.runtimeMode)}
         onRuntimeModeChange={(runtimeMode) => set({ runtimeMode })}
       />
     </>
@@ -1488,7 +1488,7 @@ function MergeStageBody(props: {
                 : { instanceId: exec.model.instanceId, model: exec.model.model, options },
           });
         }}
-        runtimeMode={effectiveBoardRuntimeMode(exec.runtimeMode, exec.mode)}
+        runtimeMode={effectiveBoardRuntimeMode(exec.runtimeMode)}
         onRuntimeModeChange={(runtimeMode) => set({ runtimeMode })}
       />
     </>
@@ -1575,7 +1575,7 @@ function SimpleStageBody(props: {
                     : { instanceId: exec.model.instanceId, model: exec.model.model, options },
               });
             }}
-            runtimeMode={effectiveBoardRuntimeMode(exec.runtimeMode, exec.mode)}
+            runtimeMode={effectiveBoardRuntimeMode(exec.runtimeMode)}
             onRuntimeModeChange={(runtimeMode) => set({ runtimeMode })}
           />
           {role === "plan" && exec.kind === "simple" ? (
@@ -1858,7 +1858,7 @@ function SubmitStepBlock(props: {
                 : { instanceId: submit.model.instanceId, model: submit.model.model, options },
           });
         }}
-        runtimeMode={effectiveBoardRuntimeMode(submit.runtimeMode, "build")}
+        runtimeMode={effectiveBoardRuntimeMode(submit.runtimeMode)}
         onRuntimeModeChange={(runtimeMode) => props.onChange({ runtimeMode })}
       />
       <NumberRow
@@ -1981,7 +1981,6 @@ function LaterReviewModelRows(props: {
             }}
             runtimeMode={effectiveBoardRuntimeMode(
               later?.runtimeMode ?? exec.phases.review.runtimeMode,
-              "build",
             )}
             onRuntimeModeChange={(runtimeMode) => {
               if (later !== null) set({ laterReviewModel: { ...later, runtimeMode } });
@@ -2220,7 +2219,7 @@ function ReviewStageBody(props: {
                             },
                     });
                   }}
-                  runtimeMode={effectiveBoardRuntimeMode(phase.runtimeMode, "build")}
+                  runtimeMode={effectiveBoardRuntimeMode(phase.runtimeMode)}
                   onRuntimeModeChange={(runtimeMode) => setPhase(phaseId, { runtimeMode })}
                 />
                 {phaseId === "review" ? (
