@@ -33,6 +33,7 @@ import {
   type BoardWorkerRemovalClassification,
   boardCardHoldsWorktree,
   type BoardWorkerThreadAccess,
+  type BoardWorkersThreadTitles,
   type BoardWorkerView,
   type EnvironmentId,
   type ProjectCloneSnapshot,
@@ -60,6 +61,7 @@ import { ProjectService } from "../../project/ProjectService.ts";
 import { GitVcsDriver } from "../../vcs/GitVcsDriver.ts";
 import { BoardWorkspaces, type BoardCardWorkspace } from "../workspace/BoardWorkspace.ts";
 import { BoardEngine } from "../BoardEngine.ts";
+import { ThreadGateway } from "../ThreadGateway.ts";
 import { isBoardCommandInvariantError } from "../errors.ts";
 import { classifyCloneFailure, cloneDestination, cloneFailureMessage } from "./setupFailure.ts";
 import { WorkerConnections, workerSecretName } from "./WorkerConnections.ts";
@@ -87,6 +89,11 @@ export interface BoardWorkersShape {
       readonly deviceLabel: string;
     },
   ) => Effect.Effect<BoardWorkerThreadAccess, BoardWorkerActionError>;
+  /** T3o: the titles of the card's threads on workers, which this server's shell never holds
+      (T3O-121). Fails when no worker holding them answered, so a client keeps what it had. */
+  readonly threadTitles: (
+    cardId: BoardCardId,
+  ) => Effect.Effect<BoardWorkersThreadTitles, BoardWorkerActionError>;
   readonly remove: (
     workerId: EnvironmentId,
   ) => Effect.Effect<{ readonly revoked: boolean }, BoardWorkerActionError>;
@@ -187,6 +194,7 @@ export const classifyRemovalWorktree = Effect.fn("BoardWorkers.classifyRemovalWo
 
 export const makeBoardWorkers = Effect.gen(function* () {
   const engine = yield* BoardEngine;
+  const threads = yield* ThreadGateway;
   const connections = yield* WorkerConnections;
   const secrets = yield* ServerSecretStore;
   const environment = yield* ServerEnvironment;
@@ -338,6 +346,31 @@ export const makeBoardWorkers = Effect.gen(function* () {
 
   const readBoard = engine.getReadModel.pipe(
     Effect.map((model) => model.board ?? EMPTY_BOARD_STATE),
+  );
+
+  const threadTitles: BoardWorkersShape["threadTitles"] = Effect.fn("BoardWorkers.threadTitles")(
+    function* (cardId) {
+      const card = (yield* readBoard).cards.find((candidate) => candidate.id === cardId);
+      if (card === undefined) return yield* actionError("not-found", "That card isn't on this board.");
+      const threadIds = card.threadLinks.flatMap((link) =>
+        link.tombstonedAt === null && boardThreadLinkWorkerId(link) !== BOARD_LOCAL_WORKER_ID
+          ? [link.threadId]
+          : [],
+      );
+      if (threadIds.length === 0) return {};
+      const records = yield* threads
+        .threadRecords(threadIds)
+        .pipe(
+          Effect.mapError(() =>
+            actionError("not-online", "No worker holding this card's threads answered."),
+          ),
+        );
+      const titles: Record<ThreadId, string> = {};
+      for (const record of records.values()) {
+        if (!record.deleted && record.title !== undefined) titles[record.threadId] = record.title;
+      }
+      return titles;
+    },
   );
 
   /** The registered worker removal is about. The default worker is retired (T3O-87). */
@@ -929,6 +962,7 @@ export const makeBoardWorkers = Effect.gen(function* () {
     cancelJoinCode,
     rename,
     threadAccess,
+    threadTitles,
     remove,
     removePreview,
     setDefault,

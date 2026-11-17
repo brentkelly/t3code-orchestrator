@@ -160,6 +160,8 @@ export interface BoardThreadRecord {
   readonly deleted: boolean;
   readonly archived: boolean;
   readonly settlementDecided: boolean;
+  /** The card detail's label for a worker thread; absent when deleted or untitled. */
+  readonly title?: string;
 }
 
 /** Whether the release sweep still has anything to ask a thread about. */
