@@ -32,7 +32,9 @@ export interface BoardScheduleProjectFacts {
   readonly projectName: string;
 }
 
-/** Whether a worker could take a schedule run of the project now, as the runner checks it. */
+/** Whether a worker could take a schedule run of the project now, up to its readiness. The
+    run's provider comes from the server's model settings, which this page doesn't hold, so a
+    missing or signed-out provider shows only on the run, skipped with that reason. */
 export function boardScheduleWorkerStatus(
   worker: BoardWorkerView,
   project: BoardScheduleProjectFacts,

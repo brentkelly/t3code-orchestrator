@@ -26,6 +26,8 @@ const MISSED_GRACE_MS = 10 * MINUTE_MS;
 const RETENTION_KEEP_RECENT = 3;
 const RETENTION_WINDOW_MS = 7 * DAY_MS;
 const OVERLAP_CAP_MS = 6 * HOUR_MS;
+/** How long a run with no thread yet and no launch error counts as still launching. */
+const LAUNCH_GRACE_MS = 5 * MINUTE_MS;
 
 /** Every schedule run's branch starts so; a worker prunes no other branch for a board. */
 export const SCHEDULE_RUN_BRANCH_PREFIX = "t3o/schedule-run-";
@@ -260,8 +262,9 @@ const overlapCapMs = (schedule: unknown): number =>
     ? 2 * schedule.everyMs
     : OVERLAP_CAP_MS;
 
-/** Whether the previous run is still actively turning. A run awaiting a human, one whose
-    state is unknown, and one past the cap all count as settled, so none can skip every tick. */
+/** Whether the previous run is still actively turning, or still launching (recorded with no
+    thread yet). A run awaiting a human, one whose state is unknown, and one past the cap all
+    count as settled, so none can skip every tick. */
 export function previousRunStillGoing(input: {
   readonly run: BoardScheduleRun | undefined;
   readonly state: RunState;
@@ -269,9 +272,12 @@ export function previousRunStillGoing(input: {
   readonly nowMs: number;
 }): boolean {
   const { run, state } = input;
-  if (run === undefined || run.launchError !== null || !isLiveState(state)) return false;
+  if (run === undefined || run.launchError !== null) return false;
+  const age = input.nowMs - Date.parse(run.startedAt);
+  if (state === null) return age < LAUNCH_GRACE_MS;
+  if (!isLiveState(state)) return false;
   if (state.activeTurnRef === null || awaitingHuman(state)) return false;
-  return input.nowMs - Date.parse(run.startedAt) < overlapCapMs(input.schedule);
+  return age < overlapCapMs(input.schedule);
 }
 
 /** Runs past the newest three and older than seven days, the ones retention may drop. */

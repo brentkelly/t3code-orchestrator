@@ -30,7 +30,8 @@ import { ProviderInstanceId } from "./providerInstance.ts";
 /**
  * Bump when the central server relies on a `boardWorker.*` call an older worker lacks. 2:
  * `closePullRequest`. 3: `usage-recorded` signals. 4: worker-owned capacity (T3O-86). 5: holds
- * and `pushCardBranch` (T3O-87). 6: `launchScheduleRun` (T3O-118).
+ * and `pushCardBranch` (T3O-87). 6: `launchScheduleRun`
+ * and `pruneScheduleRuns` (T3O-118).
  */
 export const BOARD_WORKER_PROTOCOL_VERSION = 6;
 

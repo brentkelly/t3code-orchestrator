@@ -39,7 +39,11 @@ import * as Effect from "effect/Effect";
 import * as Semaphore from "effect/Semaphore";
 
 import type { BoardProject, BoardThreadState, UnknownThreadState } from "../ThreadGateway.ts";
-import type { BoardScheduleStoreRow, BoardScheduleStoreShape } from "./BoardScheduleStore.ts";
+import type {
+  BoardScheduleRun,
+  BoardScheduleStoreRow,
+  BoardScheduleStoreShape,
+} from "./BoardScheduleStore.ts";
 import { BoardScheduleRunError } from "./scheduleRuns.ts";
 import {
   SCHEDULE_RUN_BRANCH_PREFIX,
@@ -128,11 +132,13 @@ export interface BoardScheduleWorkerLaunchInput {
   readonly prompt: string;
   readonly modelSelection: ModelSelection;
   readonly branch: string;
-  readonly previousRuns: ReadonlyArray<{
-    readonly threadId: ThreadId;
-    readonly branch: string | null;
-    readonly touchedCard: boolean;
-  }>;
+  readonly previousRuns: ReadonlyArray<BoardSchedulePreviousRun>;
+}
+
+export interface BoardSchedulePreviousRun {
+  readonly threadId: ThreadId;
+  readonly branch: string | null;
+  readonly touchedCard: boolean;
 }
 
 export interface BoardScheduleWorkers {
@@ -143,14 +149,21 @@ export interface BoardScheduleWorkers {
     readonly projectId: ProjectId;
     readonly modelSelection: ModelSelection;
   }) => Effect.Effect<BoardScheduleWorkerTarget>;
-  /** Launch on the worker; answers which previous runs it pruned. */
+  /** Launch on the worker; answers which previous runs it pruned. `answered` is false when
+      the call went out but its answer was lost, so the worker may have launched. */
   readonly launch: (
     workerId: EnvironmentId,
     input: BoardScheduleWorkerLaunchInput,
   ) => Effect.Effect<
     ReadonlyArray<ThreadId>,
-    { readonly message: string; readonly agentCap: boolean }
+    { readonly message: string; readonly agentCap: boolean; readonly answered: boolean }
   >;
+  /** Prune settled previous runs on the worker without launching; answers which it removed. */
+  readonly prune: (
+    workerId: EnvironmentId,
+    projectId: ProjectId,
+    previousRuns: ReadonlyArray<BoardSchedulePreviousRun>,
+  ) => Effect.Effect<ReadonlyArray<ThreadId>, { readonly message: string }>;
 }
 
 /** One import entry the service applies: the previewed row and what it rests on. */
@@ -211,8 +224,13 @@ export interface BoardSchedulesShape {
   >;
   /** The runner `ScheduledTaskService` hands a linked task's run to. */
   readonly run: (task: ScheduledTask) => Effect.Effect<ThreadId | null, BoardScheduleRunError>;
-  /** Prune a schedule's old settled run threads. */
-  readonly retain: (projectId: ProjectId, fileId: string) => Effect.Effect<void>;
+  /** Prune a schedule's old settled run threads, here and on every worker but `except`,
+      whose runs the launch on it just pruned. */
+  readonly retain: (
+    projectId: ProjectId,
+    fileId: string,
+    except?: EnvironmentId,
+  ) => Effect.Effect<void>;
 }
 
 export class BoardSchedules extends Context.Service<BoardSchedules, BoardSchedulesShape>()(
@@ -951,12 +969,20 @@ export const makeBoardSchedules = (deps: BoardSchedulesDeps): BoardSchedulesShap
   });
 
   const retain: BoardSchedulesShape["retain"] = Effect.fn("BoardSchedules.retain")(
-    function* (projectId, fileId) {
+    function* (projectId, fileId, except) {
       const runs = yield* store.runs(projectId, fileId);
-      const candidates = retentionCandidates(runs, yield* Clock.currentTimeMillis).filter(
-        // A worker prunes its own runs.
-        (run) => run.environmentId === deps.serverEnvironmentId,
+      const all = retentionCandidates(runs, yield* Clock.currentTimeMillis);
+      // A worker prunes its own runs, whether or not the schedule still launches there.
+      const onWorkers = Map.groupBy(
+        all.filter(
+          (run) => run.environmentId !== deps.serverEnvironmentId && run.environmentId !== except,
+        ),
+        (run) => run.environmentId,
       );
+      for (const [workerId, workerRuns] of onWorkers) {
+        yield* pruneOnWorker(projectId, workerId, workerRuns);
+      }
+      const candidates = all.filter((run) => run.environmentId === deps.serverEnvironmentId);
       if (candidates.length === 0) return;
       const project = (yield* deps.projects()).find((candidate) => candidate.id === projectId);
       if (project === undefined) return;
@@ -985,7 +1011,7 @@ export const makeBoardSchedules = (deps: BoardSchedulesDeps): BoardSchedulesShap
         yield* store.deleteRun(run.threadId);
       }
     },
-    (effect, projectId, fileId) =>
+    (effect, projectId, fileId, _except) =>
       effect.pipe(
         Effect.catchCause((cause) =>
           Effect.logWarning("Schedule run retention failed", { projectId, fileId, cause }),
@@ -994,6 +1020,48 @@ export const makeBoardSchedules = (deps: BoardSchedulesDeps): BoardSchedulesShap
   );
 
   const skip = (message: string) => new BoardScheduleRunError({ message });
+
+  const previousRunsOf = (runs: ReadonlyArray<BoardScheduleRun>) =>
+    Effect.forEach(runs, (run) =>
+      Effect.map(
+        store.threadTouchedCard(run.threadId),
+        (touchedCard): BoardSchedulePreviousRun => ({
+          threadId: run.threadId,
+          branch: run.branch,
+          touchedCard,
+        }),
+      ),
+    );
+
+  /** Forget the runs the worker confirms removed; only those the board sent. */
+  const forgetPruned = Effect.fn("BoardSchedules.forgetPruned")(function* (
+    sent: ReadonlyArray<BoardScheduleRun>,
+    pruned: ReadonlyArray<ThreadId>,
+  ) {
+    const ids = new Set<string>(sent.map((run) => run.threadId));
+    for (const threadId of pruned) {
+      if (ids.has(threadId)) yield* store.deleteRun(threadId);
+    }
+  });
+
+  /** Retention for runs on a worker the schedule isn't launching on now; retried next fire. */
+  const pruneOnWorker = Effect.fn("BoardSchedules.pruneOnWorker")(function* (
+    projectId: ProjectId,
+    workerId: EnvironmentId,
+    runs: ReadonlyArray<BoardScheduleRun>,
+  ) {
+    if (deps.workers === undefined) return;
+    const pruned = yield* deps.workers.prune(workerId, projectId, yield* previousRunsOf(runs)).pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("Schedule run retention on a worker failed", {
+          projectId,
+          workerId,
+          message: error.message,
+        }).pipe(Effect.as([] as ReadonlyArray<ThreadId>)),
+      ),
+    );
+    yield* forgetPruned(runs, pruned);
+  });
 
   /**
    * A run on a worker (T3O-118): the worker must be online, on protocol 6, ready for the
@@ -1034,13 +1102,7 @@ export const makeBoardSchedules = (deps: BoardSchedulesDeps): BoardSchedulesShap
         yield* store.runs(row.projectId, row.fileId),
         yield* Clock.currentTimeMillis,
       ).filter((run) => run.environmentId === workerId && run.threadId !== threadId);
-      const previousRuns = yield* Effect.forEach(candidates, (run) =>
-        Effect.map(store.threadTouchedCard(run.threadId), (touchedCard) => ({
-          threadId: run.threadId,
-          branch: run.branch,
-          touchedCard,
-        })),
-      );
+      const previousRuns = yield* previousRunsOf(candidates);
       const launched = yield* Effect.result(
         workers.launch(workerId, {
           commandId: CommandId.make(`board-schedule:${uuid}`),
@@ -1054,17 +1116,25 @@ export const makeBoardSchedules = (deps: BoardSchedulesDeps): BoardSchedulesShap
         }),
       );
       if (launched._tag === "Failure") {
-        const { message, agentCap } = launched.failure;
-        yield* store.setLaunchError(
-          threadId,
-          agentCap ? `Skipped: ${target.label} at its agent limit` : message,
-        );
-        return;
+        const { message, agentCap, answered } = launched.failure;
+        if (!answered) {
+          // The worker may have launched: the run's thread state tells, once it shows.
+          yield* Effect.logWarning("Schedule run launch on a worker went unanswered", {
+            projectId: row.projectId,
+            fileId: row.fileId,
+            workerId,
+            message,
+          });
+        } else {
+          yield* store.setLaunchError(
+            threadId,
+            agentCap ? `Skipped: ${target.label} at its agent limit` : message,
+          );
+        }
+      } else {
+        yield* forgetPruned(candidates, launched.success);
       }
-      const sent = new Set<string>(candidates.map((run) => run.threadId));
-      for (const pruned of launched.success) {
-        if (sent.has(pruned)) yield* store.deleteRun(pruned);
-      }
+      yield* retain(row.projectId, row.fileId, workerId);
     }).pipe(
       Effect.catchCause((cause) =>
         Effect.logWarning("Schedule run launch on a worker failed", {

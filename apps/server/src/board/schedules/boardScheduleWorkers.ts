@@ -118,7 +118,12 @@ export const makeBoardScheduleWorkers = Effect.gen(function* () {
     }),
     launch: (workerId, input) =>
       connections.get(workerId).pipe(
-        Effect.mapError((unavailable) => ({ message: unavailable.message, agentCap: false })),
+        // Never sent: the worker can't have launched.
+        Effect.mapError((unavailable) => ({
+          message: unavailable.message,
+          agentCap: false,
+          answered: true,
+        })),
         Effect.flatMap((rpc) =>
           rpc.gateway
             .launchScheduleRun({
@@ -135,12 +140,40 @@ export const makeBoardScheduleWorkers = Effect.gen(function* () {
             .pipe(
               Effect.mapError((error) =>
                 error._tag === "BoardWorkerGatewayError"
-                  ? { message: error.detail, agentCap: error.reason === "agent-cap" }
-                  : { message: error.message, agentCap: false },
+                  ? {
+                      message: error.detail,
+                      agentCap: error.reason === "agent-cap",
+                      answered: true,
+                    }
+                  : { message: error.message, agentCap: false, answered: false },
               ),
             ),
         ),
         Effect.map((result) => result.pruned),
       ),
+    prune: Effect.fn("BoardScheduleWorkers.prune")(
+      function* (workerId, projectId, previousRuns) {
+        const workers = yield* placement.workers;
+        const worker = workers.workers.find((candidate) => candidate.id === workerId);
+        if ((worker?.status.protocolVersion ?? 0) < BOARD_WORKER_SCHEDULE_PROTOCOL) return [];
+        const detail = yield* threads.project(projectId).pipe(Effect.orElseSucceed(() => null));
+        const gate = boardPlacementGate({
+          workerId,
+          workers,
+          projectRepositoryKey:
+            detail === null ? null : boardRepositoryGroupingKey(detail.repositoryIdentity),
+          providerInstanceId: null,
+        });
+        if (gate.kind !== "ready" || gate.workerProjectId === null) return [];
+        const rpc = yield* connections.get(workerId);
+        const result = yield* rpc.gateway.pruneScheduleRuns({
+          projectId: gate.workerProjectId,
+          centralEnvironmentId,
+          previousRuns,
+        });
+        return result.pruned;
+      },
+      Effect.mapError((error) => ({ message: error.message })),
+    ),
   } satisfies BoardScheduleWorkers;
 });

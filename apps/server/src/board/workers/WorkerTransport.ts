@@ -412,5 +412,6 @@ const makeLiveGatewayRpc = (
       call({ _tag: "readinessOutput", repositoryKey, path }),
     actuals: (input) => call({ _tag: "actuals", input }),
     launchScheduleRun: (input) => call({ _tag: "launchScheduleRun", input }),
+    pruneScheduleRuns: (input) => call({ _tag: "pruneScheduleRuns", input }),
   };
 };

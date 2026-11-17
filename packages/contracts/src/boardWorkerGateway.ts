@@ -328,6 +328,18 @@ export const BoardGatewayLaunchScheduleRunResult = Schema.Struct({
 export type BoardGatewayLaunchScheduleRunResult = typeof BoardGatewayLaunchScheduleRunResult.Type;
 
 /**
+ * T3o: retention for a schedule's runs on a worker it no longer launches on (T3O-118): the
+ * schedule moved or the worker can't take a run, so no launch carries the runs to prune.
+ */
+export const BoardGatewayPruneScheduleRunsInput = Schema.Struct({
+  /** The WORKER's project id. */
+  projectId: ProjectId,
+  centralEnvironmentId: EnvironmentId,
+  previousRuns: BoardGatewayLaunchScheduleRunInput.fields.previousRuns,
+});
+export type BoardGatewayPruneScheduleRunsInput = typeof BoardGatewayPruneScheduleRunsInput.Type;
+
+/**
  * A gateway call the worker answered with a failure. `refused` and `failed`
  * mirror the gateway's command errors and `read` its read error, so the
  * central server hands the supervisor exactly what a local gateway would.
@@ -452,6 +464,7 @@ export const BoardGatewayCall = Schema.Union([
   Schema.TaggedStruct("actuals", { input: BoardWorkerActualsInput }),
   // T3o: a t3o.json schedule's run (T3O-118). Below protocol 6 the board never sends it.
   Schema.TaggedStruct("launchScheduleRun", { input: BoardGatewayLaunchScheduleRunInput }),
+  Schema.TaggedStruct("pruneScheduleRuns", { input: BoardGatewayPruneScheduleRunsInput }),
 ]);
 export type BoardGatewayCall = typeof BoardGatewayCall.Type;
 
@@ -489,6 +502,7 @@ export const BOARD_GATEWAY_CALL_RESULTS = {
   readinessOutput: Schema.NullOr(Schema.String),
   actuals: Schema.NullOr(BoardStepReading),
   launchScheduleRun: BoardGatewayLaunchScheduleRunResult,
+  pruneScheduleRuns: BoardGatewayLaunchScheduleRunResult,
 } as const satisfies Record<BoardGatewayCall["_tag"], Schema.Top>;
 
 /**

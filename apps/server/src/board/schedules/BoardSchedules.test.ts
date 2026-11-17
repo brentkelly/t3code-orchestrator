@@ -36,6 +36,7 @@ import {
 } from "../ThreadGateway.ts";
 import {
   makeBoardSchedules,
+  type BoardSchedulePreviousRun,
   type BoardScheduleWorkerLaunchInput,
   type BoardSchedulesDeps,
 } from "./BoardSchedules.ts";
@@ -208,6 +209,9 @@ const makeWorld = () => {
     workerLaunches: [] as Array<BoardScheduleWorkerLaunchInput>,
     /** The worker refuses the launch at its agent cap while set. */
     workerAtAgentCap: false,
+    /** The launch's answer is lost on the wire while set. */
+    workerLaunchUnanswered: false,
+    workerPrunes: [] as Array<ReadonlyArray<BoardSchedulePreviousRun>>,
   };
   const fail = (message: string) => Effect.fail(new ScheduledTaskError({ message }));
   const deps = (store: BoardScheduleStore["Service"]): BoardSchedulesDeps => ({
@@ -311,10 +315,22 @@ const makeWorld = () => {
         Effect.gen(function* () {
           world.workerLaunches.push(input);
           if (world.workerAtAgentCap) {
-            return yield* Effect.fail({ message: "At its agent cap (2).", agentCap: true });
+            return yield* Effect.fail({
+              message: "At its agent cap (2).",
+              agentCap: true,
+              answered: true,
+            });
+          }
+          if (world.workerLaunchUnanswered) {
+            return yield* Effect.fail({ message: "Lost.", agentCap: false, answered: false });
           }
           // The worker prunes every settled run it was sent that touched no card.
           return input.previousRuns.filter((run) => !run.touchedCard).map((run) => run.threadId);
+        }),
+      prune: (_workerId, _projectId, previousRuns) =>
+        Effect.sync(() => {
+          world.workerPrunes.push(previousRuns);
+          return previousRuns.filter((run) => !run.touchedCard).map((run) => run.threadId);
         }),
     },
   });
@@ -988,11 +1004,13 @@ describe("BoardSchedules runs on a worker (T3O-118)", () => {
         { threadId: ThreadId.make("old-3"), branch: "t3o/schedule-run-old-3", touchedCard: false },
         { threadId: ThreadId.make("old-4"), branch: "t3o/schedule-run-old-4", touchedCard: true },
       ]);
+      // The board server's own old run is pruned too: the schedule ran there before.
       const runs = yield* ctx.store.runs(projectId, nightly.id);
       assert.deepStrictEqual(
         runs.map((run) => run.threadId),
-        [sent!.threadId, "old-0", "old-1", "old-2", "old-4", "old-5"],
+        [sent!.threadId, "old-0", "old-1", "old-2", "old-4"],
       );
+      assert.deepStrictEqual(ctx.world.workerPrunes, []);
       assert.strictEqual(runs[0]?.environmentId, worker);
       assert.strictEqual(runs[0]?.launchError, null);
     }));
@@ -1045,6 +1063,61 @@ describe("BoardSchedules runs on a worker (T3O-118)", () => {
       const listed = yield* ctx.schedules.list({ projectId });
       assert.strictEqual(listed.schedules[0]?.lastResult.kind, "skipped");
       assert.strictEqual(listed.schedules[0]?.environmentId, worker);
+    }));
+
+  test("a launch whose answer is lost isn't failed, and holds the next fire while it may start", () =>
+    Effect.gen(function* () {
+      const ctx = yield* onWorker;
+      ctx.world.workerLaunchUnanswered = true;
+      assert.isNull(yield* ctx.schedules.run(ctx.task));
+      const [run] = yield* ctx.store.runs(projectId, nightly.id);
+      assert.strictEqual(run?.launchError, null);
+      const listed = yield* ctx.schedules.list({ projectId });
+      assert.notStrictEqual(listed.schedules[0]?.lastResult.kind, "failed-to-start");
+      const held = yield* Effect.flip(ctx.schedules.run(ctx.task));
+      assert.strictEqual(held.message, SKIPPED_STILL_GOING);
+      yield* TestClock.adjust("10 minutes");
+      assert.isNull(yield* ctx.schedules.run(ctx.task));
+      assert.strictEqual(ctx.world.workerLaunches.length, 2);
+    }));
+
+  test("a schedule moved off a worker still has that worker's old runs pruned", () =>
+    Effect.gen(function* () {
+      const ctx = yield* onWorker;
+      const day = 24 * 60 * 60 * 1000;
+      for (const [index, age] of [1, 2, 3, 9, 10].entries()) {
+        yield* ctx.store.recordRun({
+          threadId: ThreadId.make(`old-${index}`),
+          projectId,
+          fileId: nightly.id,
+          environmentId: worker,
+          startedAt: DateTime.formatIso(DateTime.makeUnsafe(NOW - age * day)),
+          launchError: null,
+          branch: `t3o/schedule-run-old-${index}`,
+        });
+      }
+      yield* ctx.store.recordTouchedCard(ThreadId.make("old-4"), "card-1");
+      yield* ctx.schedules.setMachine({ projectId, fileId: nightly.id, environmentId: server });
+      const row = yield* rowOf(ctx);
+      yield* ctx.schedules.run(ctx.world.tasks.get(row.taskId)!);
+      assert.deepStrictEqual(ctx.world.workerLaunches, []);
+      assert.deepStrictEqual(ctx.world.workerPrunes, [
+        [
+          {
+            threadId: ThreadId.make("old-3"),
+            branch: "t3o/schedule-run-old-3",
+            touchedCard: false,
+          },
+          { threadId: ThreadId.make("old-4"), branch: "t3o/schedule-run-old-4", touchedCard: true },
+        ],
+      ]);
+      const runs = yield* ctx.store.runs(projectId, nightly.id);
+      assert.deepStrictEqual(runs.map((run) => run.threadId).slice(1), [
+        "old-0",
+        "old-1",
+        "old-2",
+        "old-4",
+      ]);
     }));
 });
 

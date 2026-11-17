@@ -529,4 +529,42 @@ describe("a board's schedule run on the worker (T3O-118)", () => {
       }),
     ),
   );
+
+  it.effect("prunes without launching, only for the board's own runs", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { env, launched, removed, run, refusalOf } = yield* workerWithRuns();
+        const settled = ThreadId.make("run-settled");
+        yield* Ref.update(env.threads.states, (states) =>
+          new Map(states).set(
+            settled,
+            fakeThreadState(settled, { worktreePath: "/home/worker/run-settled" }),
+          ),
+        );
+        yield* env.relayStore.store.recordRelayedThread(settled, CENTRAL);
+        const pruneCall = (centralEnvironmentId: EnvironmentId): BoardGatewayCall => ({
+          _tag: "pruneScheduleRuns",
+          input: {
+            projectId: WORKER_PROJECT_ID,
+            centralEnvironmentId,
+            previousRuns: [
+              { threadId: settled, branch: "t3o/schedule-run-run-settled", touchedCard: false },
+            ],
+          },
+        });
+        assert.strictEqual(
+          yield* refusalOf(pruneCall(EnvironmentId.make("env-other-board"))),
+          "refused",
+        );
+        assert.deepStrictEqual(removed, []);
+        const encoded = yield* run(pruneCall(CENTRAL));
+        const { pruned } = yield* decodeGatewayCallResult("pruneScheduleRuns", encoded);
+        assert.deepStrictEqual(pruned, [settled]);
+        assert.deepStrictEqual(launched, []);
+        assert.deepStrictEqual(removed, [
+          { worktreePath: "/home/worker/run-settled", branch: "t3o/schedule-run-run-settled" },
+        ]);
+      }),
+    ),
+  );
 });

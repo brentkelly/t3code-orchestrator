@@ -101,6 +101,8 @@ const runGatewayCall = (
         return host.actuals(call.input, caller);
       case "launchScheduleRun":
         return host.launchScheduleRun(call.input, caller);
+      case "pruneScheduleRuns":
+        return host.pruneScheduleRuns(call.input, caller);
     }
   };
   return answer().pipe(
