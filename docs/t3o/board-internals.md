@@ -53,6 +53,20 @@ Known gap: threads unlinked while still alive are tracked only in the reactor's 
 reactor is a partial backstop; closing the gap needs a durable "board is done with this thread"
 record.
 
+## Schedule runs (T3O-117)
+
+A t3o.json schedule's upstream task is only a timer: `ScheduledTaskService.runTask` hands a linked
+task's run to `board/schedules/` (`scheduleRuns.ts`), which launches it in a fresh worktree or
+fails with a `Skipped: …` reason, so upstream's `lastRunStatus` tells the truth. Its outcome is
+worked out when read, from `schedule_run_threads` and the run thread's state, so nothing is lost
+across a restart. The runner must return fast: upstream runs due tasks one at a time, and a
+fixed-time run delayed past its ten-minute grace is silently skipped.
+
+`scheduleThreadPolicy` limits a run thread's board tools to its project and the cards its
+schedule's runs created (`schedule_created_cards`). Every run has full access to its machine, so
+this is a guardrail against model mistakes and casual prompt injection, not a security boundary:
+anything the run could do through a tool it can also do through the shell.
+
 ## Distributed board
 
 ### MCP relay

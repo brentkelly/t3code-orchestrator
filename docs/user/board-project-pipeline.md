@@ -81,6 +81,55 @@ project's checkout on the board's own server.
 
 A file written for the earlier, read-on-every-change format still imports.
 
+### Schedules
+
+A `t3o.json` can also declare recurring runs. Each entry needs an `id` (letters, digits, `-` or
+`_`), a `title`, a `schedule`, a `prompt`, and optionally `enabled` (default `true`):
+
+```json
+{
+  "version": 2,
+  "schedules": [
+    {
+      "id": "nightly-tests",
+      "title": "Nightly full test run",
+      "schedule": { "type": "fixed_time", "timeOfDay": "02:00", "weekdays": [1, 2, 3, 4, 5] },
+      "prompt": "Run the full test suite. File one card for anything that fails."
+    },
+    {
+      "id": "flaky-sweep",
+      "title": "Flaky test sweep",
+      "schedule": { "type": "interval", "everyMs": 21600000 },
+      "enabled": false,
+      "prompt": "Rerun the tests marked flaky and report which still fail."
+    }
+  ]
+}
+```
+
+- **The machine is picked at import, never written to the file.** Each schedule in the import
+  dialog has a **Run on** picker that starts on **Don't schedule**; nothing runs until you pick a
+  machine. Whoever imports the file picks their own. Change it later on the project's **Schedules**
+  tab, which also has **Run now** and **Unschedule**.
+- **Every run is a new thread in a fresh worktree** off the default branch on origin, and the
+  project's setup script runs first. Write prompts with paths relative to that worktree. Runs are
+  unattended, with full access to the machine; read a schedule's prompt in the import dialog before
+  you pick a machine for it.
+- **`fixed_time` follows the board server's clock**, whatever machine runs it.
+- **A run's board tools are limited to its project.** It can file cards there, and arm, move (up to
+  Planning) or update only the cards that schedule's runs created. It can never turn Auto-merge on.
+- **Import never moves or stops a schedule whose definition didn't change.** Use the Schedules tab
+  for that. An import that changes a schedule, or removes it from the file, shows what stops running
+  before you confirm. Leaving the `schedules` key out leaves the board's schedules alone; an empty
+  list removes them all.
+- **Hand edits are overwritten by the next import** that changes that schedule. Tasks a file manages
+  are marked **From t3o.json** on the **Scheduled tasks** page; you can edit or pause them there,
+  but to change one for good, edit `t3o.json`, commit and import.
+- **A hand-made scheduled task with the same title is adopted** instead of a second one being made.
+  **Export** brings the project's hand-made interval and time-of-day tasks into the file; after
+  that the file manages them. **Export again without them** undoes that before you commit.
+- `once` and webhook schedules can't be declared in the file.
+
 ## Permissions
 
 Changing stages, a project's pipeline or its CI needs permission to change settings, because CI
