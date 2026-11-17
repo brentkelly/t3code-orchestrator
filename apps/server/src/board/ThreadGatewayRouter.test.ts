@@ -130,6 +130,11 @@ describe("the thread gateway router's batch read", () => {
         const records = yield* router.threadRecords([LOCAL_THREAD, WORKER_THREAD, REMOVED_THREAD]);
         assert.deepStrictEqual([...records.keys()].toSorted(), [LOCAL_THREAD, WORKER_THREAD]);
         assert.isTrue(records.get(LOCAL_THREAD)?.settlementDecided);
+        // A worker thread's title crosses the wire for the card's label; a deleted one has none.
+        assert.strictEqual(records.get(WORKER_THREAD)?.title, "CARD-1 · Building");
+        const withDeleted = yield* router.threadRecords([DELETED_WORKER_THREAD]);
+        assert.isTrue(withDeleted.get(DELETED_WORKER_THREAD)?.deleted);
+        assert.notProperty(withDeleted.get(DELETED_WORKER_THREAD), "title");
         // A removed worker's thread is left out, never asked of a gone worker.
         assert.strictEqual((yield* router.threadRecords([REMOVED_THREAD])).size, 0);
 

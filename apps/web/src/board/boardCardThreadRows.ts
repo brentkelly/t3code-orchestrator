@@ -12,6 +12,7 @@ import {
 } from "@t3tools/client-runtime/state/shell";
 import { threadFamilyRead } from "@t3tools/client-runtime/state/threads";
 import type {
+  BoardCardId,
   BoardCardThreadLink,
   EnvironmentId,
   OrchestrationV2ThreadShell,
@@ -20,6 +21,7 @@ import type {
 import * as Option from "effect/Option";
 import { Atom } from "effect/reactivity";
 
+import { boardEnvironment } from "../state/board";
 import { orchestrationEnvironment } from "../state/orchestration";
 import { useEnvironmentQuery } from "../state/query";
 import { environmentShell } from "../state/shell";
@@ -39,6 +41,26 @@ export function cardThreadIdsMissingFromShell(
       ? [link.threadId]
       : [],
   );
+}
+
+/** Whether the card has a live link to a thread on another worker, whose title only the board's
+    worker read can give. */
+export function cardHasWorkerThreads(
+  links: ReadonlyArray<Pick<BoardCardThreadLink, "tombstonedAt" | "workerId">>,
+): boolean {
+  return links.some((link) => link.tombstonedAt === null && link.workerId !== undefined);
+}
+
+/** A card thread's label: its title wherever it was read, then loading, then where it runs. */
+export function boardCardThreadLabel(input: {
+  readonly title: string | undefined;
+  readonly loading: boolean;
+  /** The worker's label for a thread on another worker; null for this server's own. */
+  readonly workerLabel: string | null;
+}): string | null {
+  if (input.title !== undefined) return input.title;
+  if (input.loading) return "Loading thread…";
+  return input.workerLabel === null ? null : `Thread on ${input.workerLabel}`;
 }
 
 export interface BoardCardThreadRows {
@@ -132,9 +154,11 @@ export function useBoardCardShellThreads(
 }
 
 export interface BoardCardOffShellThreads {
-  /** Titles of the threads that exist, archived ones included. */
+  /** Titles of the threads that exist, archived ones included, on this server or a worker. */
   readonly titles: ReadonlyMap<ThreadId, string>;
   readonly loading: boolean;
+  /** The workers' titles are on their first read; a later read keeps the last ones. */
+  readonly workerLoading: boolean;
 }
 
 const NO_OFF_SHELL_TITLES: ReadonlyMap<ThreadId, string> = new Map();
@@ -148,10 +172,12 @@ const shellLoadedAtom = Atom.family((environmentId: EnvironmentId) =>
 );
 
 /** The titles of `threadIds` the shell left out, in one read however many there are, once the
-    shell has loaded; loading until then. */
+    shell has loaded; loading until then. With `workerCardId`, also the titles of that card's
+    threads on workers, which the board reads from each worker. */
 export function useBoardCardOffShellThreads(
   environmentId: EnvironmentId,
   threadIds: ReadonlyArray<ThreadId>,
+  workerCardId: BoardCardId | null = null,
 ): BoardCardOffShellThreads {
   const shellLoaded = useAtomValue(shellLoadedAtom(environmentId));
   const read = useEnvironmentQuery(
@@ -159,9 +185,24 @@ export function useBoardCardOffShellThreads(
       ? null
       : orchestrationEnvironment.threadTitles({ environmentId, input: { threadIds } }),
   );
+  const workerRead = useEnvironmentQuery(
+    workerCardId === null
+      ? null
+      : boardEnvironment.workerThreadTitlesAtom({
+          environmentId,
+          input: { cardId: workerCardId },
+        }),
+  );
   const titles =
-    read.data === null
+    read.data === null && workerRead.data === null
       ? NO_OFF_SHELL_TITLES
-      : new Map(Object.entries(read.data) as Array<[ThreadId, string]>);
-  return { titles, loading: !shellLoaded || read.isPending };
+      : new Map([
+          ...(Object.entries(workerRead.data ?? {}) as Array<[ThreadId, string]>),
+          ...(Object.entries(read.data ?? {}) as Array<[ThreadId, string]>),
+        ]);
+  return {
+    titles,
+    loading: !shellLoaded || read.isPending,
+    workerLoading: workerRead.isPending && workerRead.data === null,
+  };
 }

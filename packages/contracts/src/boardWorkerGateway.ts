@@ -84,6 +84,8 @@ export const BoardGatewayThreadRecord = Schema.Struct({
   deleted: Schema.Boolean,
   archived: Schema.Boolean,
   settlementDecided: Schema.Boolean,
+  /** Absent from a worker that predates T3O-121, and for a deleted or untitled thread. */
+  title: Schema.optionalKey(Schema.String),
 });
 export type BoardGatewayThreadRecord = typeof BoardGatewayThreadRecord.Type;
 

@@ -294,6 +294,7 @@ export const makeFakeThreadGateway = (options: FakeThreadGatewayOptions = {}) =>
               deleted: false,
               archived: false,
               settlementDecided: false,
+              title: input.title,
             }),
           );
         }),
@@ -376,7 +377,11 @@ export const makeFakeThreadGateway = (options: FakeThreadGatewayOptions = {}) =>
             (yield* Ref.get(records)).get(id)?.projectId ??
             (yield* Ref.get(states)).get(id)?.projectId;
           if (projectId === undefined) return;
-          yield* updateRecord(input.threadId, (current) => ({ ...current, deleted: true }));
+          // A deleted thread reads with no title, as `ThreadGatewayV2` answers it.
+          yield* updateRecord(input.threadId, ({ title: _title, ...current }) => ({
+            ...current,
+            deleted: true,
+          }));
           yield* Ref.update(states, (current) =>
             new Map(current).set(id, deletedThreadState(input.threadId, projectId)),
           );

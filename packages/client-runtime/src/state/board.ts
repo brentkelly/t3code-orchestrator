@@ -6,6 +6,7 @@
 import {
   BOARD_SEED_STAGE_IDS,
   BOARD_SCHEDULE_WS_METHODS,
+  BOARD_WORKERS_WS_METHODS,
   BOARD_WS_METHODS,
   boardCardEffectivePriority,
   boardCardPriorityRank,
@@ -928,6 +929,36 @@ export function createBoardEnvironmentAtoms<R, ER>(
     ).pipe(Atom.withLabel(`environment-board-workers:${environmentId}`)),
   );
 
+  /** What re-reads a card's worker thread titles: its worker threads changing, or one of their
+      workers going online or offline. Titles are fixed at spawn, so nothing else does. A re-read
+      on going offline loses nothing: the board answers with the titles it already read. */
+  const workerThreadTitlesSignalAtom = Atom.family((key: string) => {
+    const [environmentId, cardId] = JSON.parse(key) as [EnvironmentId, BoardCardId];
+    return Atom.make((get) => {
+      const links = get(cardThreadLinksAtom(environmentId)).filter(
+        (link) => link.cardId === cardId && link.workerId !== undefined,
+      );
+      if (links.length === 0) return "";
+      const online = new Set(
+        get(workersAtom(environmentId))
+          .workers.filter((worker) => worker.status.state === "online")
+          .map((worker) => worker.id),
+      );
+      return links
+        .map((link) => `${link.threadId}:${online.has(link.workerId!) ? 1 : 0}`)
+        .sort()
+        .join(",");
+    }).pipe(Atom.withLabel(`environment-board-worker-thread-titles-signal:${key}`));
+  });
+
+  // T3o: a card's thread titles from its workers, whose threads this shell never holds (T3O-121).
+  const workerThreadTitlesAtom = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:board:worker-thread-titles",
+    tag: BOARD_WORKERS_WS_METHODS.threadTitles,
+    refreshTrigger: ({ environmentId, input }) =>
+      workerThreadTitlesSignalAtom(JSON.stringify([environmentId, input.cardId])),
+  });
+
   // T3o: the Schedules tab and the Scheduled tasks page's marker (T3O-117).
   const schedulesAtom = createEnvironmentRpcQueryAtomFamily(runtime, {
     label: "environment-data:board:schedules",
@@ -1027,6 +1058,7 @@ export function createBoardEnvironmentAtoms<R, ER>(
     stageListAtom,
     projectStageConfigsAtom,
     workersAtom,
+    workerThreadTitlesAtom,
     /** Raw subscription state (loading/failure visible), keyed like
         `cardDetailValueAtom`. */
     cardDetailStateAtom,

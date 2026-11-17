@@ -26,6 +26,7 @@ export const BoardWorkersLocalOnlyTest = Layer.succeed(BoardWorkers, {
   cancelJoinCode: () => Effect.fail(refusedAction),
   rename: () => Effect.fail(refusedAction),
   threadAccess: () => Effect.fail(refusedAction),
+  threadTitles: () => Effect.succeed({}),
   remove: () => Effect.fail(refusedAction),
   removePreview: () => Effect.fail(refusedAction),
   setDefault: () => Effect.fail(refusedAction),

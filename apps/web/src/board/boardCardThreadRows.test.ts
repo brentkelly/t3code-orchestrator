@@ -4,6 +4,8 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   boardCardChatPresence,
   boardCardMissingThreadReason,
+  boardCardThreadLabel,
+  cardHasWorkerThreads,
   cardThreadIdsMissingFromShell,
   type BoardCardThreadRows,
 } from "./boardCardThreadRows";
@@ -26,6 +28,33 @@ describe("cardThreadIdsMissingFromShell", () => {
     expect(cardThreadIdsMissingFromShell(links, [{ id: ThreadId.make("in-shell") }])).toEqual([
       ThreadId.make("older-settled"),
     ]);
+  });
+});
+
+describe("cardHasWorkerThreads", () => {
+  it("asks the board for worker titles only for a live link on a worker", () => {
+    expect(cardHasWorkerThreads([link("local"), link("on-worker", { workerId: "w" })])).toBe(true);
+    expect(cardHasWorkerThreads([link("local")])).toBe(false);
+    expect(cardHasWorkerThreads([link("gone", { workerId: "w", tombstonedAt: linkedAt })])).toBe(
+      false,
+    );
+  });
+});
+
+describe("boardCardThreadLabel", () => {
+  it("names a worker thread by its title, falling back to its worker only when unknown", () => {
+    expect(
+      boardCardThreadLabel({ title: "T3O-1 · Building", loading: true, workerLabel: "mw1" }),
+    ).toBe("T3O-1 · Building");
+    expect(boardCardThreadLabel({ title: undefined, loading: true, workerLabel: "mw1" })).toBe(
+      "Loading thread…",
+    );
+    expect(boardCardThreadLabel({ title: undefined, loading: false, workerLabel: "mw1" })).toBe(
+      "Thread on mw1",
+    );
+    expect(boardCardThreadLabel({ title: undefined, loading: false, workerLabel: null })).toBe(
+      null,
+    );
   });
 });
 
