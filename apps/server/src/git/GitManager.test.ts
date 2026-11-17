@@ -1900,7 +1900,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       const rows: ReadonlyArray<{
         readonly name: string;
         readonly pr: FakeChangeRequest;
-        readonly forge: FakeProviderScenario["repositoryCloneUrls"];
+        readonly forge: NonNullable<FakeProviderScenario["repositoryCloneUrls"]>;
         readonly found: boolean;
       }> = [
         {

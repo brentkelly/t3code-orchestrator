@@ -8,7 +8,7 @@ You can think of T3 Code as an open source "bring-your-own-subscription" alterna
 
 ## You are in T3o, a fork
 
-This repository is **T3o** (`brentkelly/t3code-orchestrator`), a fork of
+This repository is **T3o** (`brentkelly/t3o`), a fork of
 [`pingdotgg/t3code`](https://github.com/pingdotgg/t3code). Everything below this section is upstream's
 guidance and still applies. This section overrides it where they disagree.
 

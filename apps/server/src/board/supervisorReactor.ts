@@ -224,7 +224,10 @@ import {
 } from "./ThreadGateway.ts";
 import type { BoardCommand } from "./decider.ts";
 import { syncCardThreadPullRequests } from "./cardThreadPullRequests.ts";
-import { resolveCardPullRequestTarget } from "./cardPullRequestTarget.ts";
+import {
+  confirmsRenamedRepositoryTarget,
+  resolveCardPullRequestTarget,
+} from "./cardPullRequestTarget.ts";
 import {
   removeBoardCardAttachmentsDir,
   resolveBoardCardAttachmentPath,
@@ -7467,7 +7470,8 @@ const make = Effect.gen(function* () {
       .pullRequestRepository({})
       .pipe(Effect.orElseSucceed(() => null));
     const resolved = resolveCardPullRequestTarget(target, repository);
-    if ("refused" in resolved) {
+    // T3o (T3O-119): another repository's name may be this one's since a rename; the forge decides.
+    if ("refused" in resolved && resolved.reason !== "other-repository") {
       return { outcome: "refused", detail: resolved.refused } as const;
     }
     const found = yield* workspace.getPullRequest({ number: resolved.number, force: true }).pipe(
@@ -7483,6 +7487,11 @@ const make = Effect.gen(function* () {
         } as const),
       ),
     );
+    if ("refused" in resolved) {
+      if ("failure" in found || !confirmsRenamedRepositoryTarget(resolved, found.summary.url)) {
+        return { outcome: "refused", detail: resolved.refused } as const;
+      }
+    }
     if ("failure" in found) return { outcome: "refused", detail: found.failure } as const;
     const summary = found.summary;
     const pullRequest = {

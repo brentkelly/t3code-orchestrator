@@ -45,6 +45,46 @@ function repositoryPath(repository: string): string {
     .replace(/\.git$/u, "");
 }
 
+/** The repository path of a pull request URL, as the board compares it. Null when unrecognised. */
+function pullRequestUrlTarget(url: string): { repository: string; number: number } | null {
+  const parsed = sourceControlDefinitions.parseChangeRequestUrl(url)?.link ?? null;
+  if (parsed === null) return null;
+  const repository = sourceControlDefinitions
+    .canonicalRepositoryKey(`${parsed.host}/${parsed.repository}`)
+    .split("/")
+    .slice(1)
+    .join("/");
+  return { repository, number: parsed.number };
+}
+
+function sameRepository(named: string, own: string): boolean {
+  return named === own || named.endsWith(`/${own}`);
+}
+
+/** A refusal the forge may overturn: a repository renamed since `origin` was set. */
+export interface OtherRepositoryRefusal {
+  readonly refused: string;
+  readonly reason: "other-repository";
+  readonly repository: string;
+  readonly number: number;
+}
+
+/**
+ * T3o (T3O-119): whether the pull request the forge returned for an other-repository
+ * refusal is the one the target named, because the board's repository was renamed.
+ */
+export function confirmsRenamedRepositoryTarget(
+  refusal: OtherRepositoryRefusal,
+  pullRequestUrl: string,
+): boolean {
+  const confirmed = pullRequestUrlTarget(pullRequestUrl);
+  return (
+    confirmed !== null &&
+    confirmed.number === refusal.number &&
+    sameRepository(refusal.repository, confirmed.repository)
+  );
+}
+
 /**
  * The pull request number to link, or why it cannot be linked. `repository` is
  * the board's (`origin`). Compared by path, not host: a Forgejo URL carries a
@@ -53,21 +93,20 @@ function repositoryPath(repository: string): string {
 export function resolveCardPullRequestTarget(
   target: BoardCardPullRequestTarget,
   boardRepository: BoardRepository | null | undefined,
-): { readonly number: number } | { readonly refused: string } {
+):
+  | { readonly number: number }
+  | { readonly refused: string; readonly reason?: undefined }
+  | OtherRepositoryRefusal {
   let repository: string | undefined;
   let number: number | undefined;
   if (target.url !== undefined) {
-    const parsed = sourceControlDefinitions.parseChangeRequestUrl(target.url)?.link ?? null;
+    const parsed = pullRequestUrlTarget(target.url);
     if (parsed === null) {
       return {
         refused: `'${target.url}' is not a recognised pull request URL. Pass the pull request's URL, its number, or its repository and number.`,
       };
     }
-    repository = sourceControlDefinitions
-      .canonicalRepositoryKey(`${parsed.host}/${parsed.repository}`)
-      .split("/")
-      .slice(1)
-      .join("/");
+    repository = parsed.repository;
     number = parsed.number;
   } else {
     repository = target.repository === undefined ? undefined : repositoryPath(target.repository);
@@ -80,8 +119,11 @@ export function resolveCardPullRequestTarget(
   if (own === null) {
     return { refused: "This card's project has no recognised source-control remote to link from." };
   }
-  if (repository !== undefined && repository !== own && !repository.endsWith(`/${own}`)) {
+  if (repository !== undefined && !sameRepository(repository, own)) {
     return {
+      reason: "other-repository",
+      repository,
+      number,
       refused: `Pull request ${repository}#${number} is not in this card's repository (${own}); only a pull request on the card's own repository can be linked.`,
     };
   }
