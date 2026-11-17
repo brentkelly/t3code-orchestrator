@@ -19,6 +19,7 @@ import {
   revealBoardPromptInvisibles,
   type BoardImportScheduleSummary,
   type BoardSchedulePlacements,
+  boardSchedulePlacement,
 } from "./boardProjectSettings.logic";
 
 export function BoardImportSchedulesSection(props: {
@@ -87,7 +88,7 @@ export function BoardImportSchedulesSection(props: {
           key={row.fileId}
           machineLabel={machineLabel}
           onPlace={props.onPlace}
-          placement={props.placements[row.fileId] ?? null}
+          placement={boardSchedulePlacement(props.placements, row.fileId)}
           row={row}
           serverEnvironmentId={props.serverEnvironmentId}
           serverUtcOffsetMinutes={props.serverUtcOffsetMinutes}

@@ -615,6 +615,31 @@ describe("BoardSchedules export-linked tasks", () => {
       assert.isTrue(ctx.world.tasks.has("hand-2"));
     }));
 
+  test("a re-export rebuilds earlier links from the live tasks under the same ids", () =>
+    Effect.gen(function* () {
+      const ctx = yield* setup;
+      ctx.world.tasks.set("hand-1", handMade("hand-1", "First"));
+      ctx.world.tasks.set("hand-2", handMade("hand-2", "Second"));
+      const first = yield* ctx.schedules.exportSchedules(projectId, { excludeHandMade: false });
+      const ids = new Map(first.handMade.map((task) => [task.taskId as string, task.fileId]));
+
+      ctx.world.tasks.set("hand-1", handMade("hand-1", "First, renamed", { prompt: "Edited." }));
+      ctx.world.tasks.delete("hand-2");
+      const again = yield* ctx.schedules.exportSchedules(projectId, { excludeHandMade: false });
+      assert.deepStrictEqual(
+        again.schedules?.map((schedule) => [schedule.id, schedule.title, schedule.prompt]),
+        [[ids.get("hand-1"), "First, renamed", "Edited."]],
+      );
+      assert.deepStrictEqual(
+        again.handMade.map((task) => [task.taskId, task.fileId]),
+        [["hand-1", ids.get("hand-1")]],
+      );
+      assert.deepStrictEqual(
+        (yield* ctx.store.rows(projectId)).map((row) => [row.fileId, row.definition.prompt]),
+        [[ids.get("hand-1"), "Edited."]],
+      );
+    }));
+
   test("an exported schedule whose id the file renamed adopts its task by title", () =>
     Effect.gen(function* () {
       const ctx = yield* setup;

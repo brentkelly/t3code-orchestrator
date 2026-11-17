@@ -586,12 +586,16 @@ const decodeScheduleWhen = Schema.decodeUnknownOption(BoardScheduleWhen);
 const SCHEDULE_KEYS = new Set(["id", "title", "schedule", "enabled", "prompt", "freshSession"]);
 
 /** T3o: the file's `schedules` block (T3O-117). A bad entry or a repeated id is
-    dropped with a warning and the rest still apply. `freshSession` is accepted
-    and reserved: every run is already a new thread in a fresh worktree. */
-function decodeSchedules(value: unknown, warnings: string[]): ReadonlyArray<T3oFileSchedule> {
+    dropped with a warning and the rest still apply. A value that isn't a list is
+    null (leave schedules alone), never `[]`, which would delete them all.
+    `freshSession` is accepted and reserved: every run is already a new thread. */
+function decodeSchedules(
+  value: unknown,
+  warnings: string[],
+): ReadonlyArray<T3oFileSchedule> | null {
   if (!Array.isArray(value)) {
     warnings.push("schedules: expected a list of schedules; ignored.");
-    return [];
+    return null;
   }
   const out: T3oFileSchedule[] = [];
   const ids = new Set<string>();

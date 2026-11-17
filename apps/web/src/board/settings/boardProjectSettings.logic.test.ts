@@ -230,6 +230,7 @@ describe("t3o.json schedules (T3O-117)", () => {
   it("reads Replace and import with nothing to place, stop or delete", () => {
     const summary = boardImportScheduleSummary([row("bench", "create")], {});
     expect(boardImportPrimaryLabel(summary)).toBe("Replace and import");
+    expect(boardImportScheduleSummary([row("constructor", "create")], {}).scheduled).toEqual([]);
   });
 
   it("warns in amber when anything runs, and lists each stop and deletion", () => {

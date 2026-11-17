@@ -42,6 +42,7 @@ import {
   boardImportScheduleChips,
   boardImportScheduleMark,
   boardImportScheduleSummary,
+  boardSchedulePlacement,
   boardImportSummaryChips,
   type BoardSchedulePlacements,
 } from "./boardProjectSettings.logic";
@@ -98,7 +99,7 @@ export function BoardImportConfirmDialog(props: {
         schedulePlacements: Object.fromEntries(
           scheduleRows
             .filter((row) => row.kind !== "delete")
-            .map((row) => [row.fileId, placements[row.fileId] ?? null]),
+            .map((row) => [row.fileId, boardSchedulePlacement(placements, row.fileId)]),
         ),
       },
     }).then((result) => {

@@ -782,7 +782,8 @@ describe("schedules (T3O-117)", () => {
 
   it("warns about a block that is not a list", () => {
     const resolved = resolve({ schedules: { nightly } });
-    expect(resolved.schedules).toEqual([]);
+    expect(resolved.schedules).toBeNull();
+    expect(resolve({ schedules: null }).schedules).toBeNull();
     expect(resolved.delta.warnings[0]).toContain("schedules: expected a list");
   });
 

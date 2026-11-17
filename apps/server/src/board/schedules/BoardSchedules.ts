@@ -357,10 +357,6 @@ export const makeBoardSchedules = (deps: BoardSchedulesDeps): BoardSchedulesShap
   const boardLinked = (rows: ReadonlyArray<BoardScheduleStoreRow>) =>
     new Set<string>(rows.filter((row) => !row.exportLinked).map((row) => row.taskId));
 
-  const linkedTaskIds = store
-    .rows()
-    .pipe(Effect.map((rows) => new Set<string>(rows.map((row) => row.taskId))));
-
   const handMadeOf = (
     tasks: ReadonlyArray<ScheduledTask>,
     linked: ReadonlySet<string>,
@@ -830,11 +826,18 @@ export const makeBoardSchedules = (deps: BoardSchedulesDeps): BoardSchedulesShap
             warnings: [],
           };
         }
-        const live = rows.filter((row) => !row.tombstone);
-        const linked = yield* linkedTaskIds;
+        // An earlier export's links are rebuilt from the live tasks under the same ids:
+        // edits by hand are carried, and a task deleted or no longer exportable drops out.
+        const previous = new Map(
+          rows.filter((row) => row.exportLinked).map((row) => [row.taskId as string, row]),
+        );
+        const refreshed = new Set<string>();
+        const linked = boardLinked(yield* store.rows());
         const tasks = yield* listTasks;
         const taken = new Set(rows.map((row) => row.fileId));
-        const definitions = live.map((row) => row.definition);
+        const definitions = rows
+          .filter((row) => !row.tombstone && !row.exportLinked)
+          .map((row) => row.definition);
         const handMade: BoardScheduleExportedTask[] = [];
         const warnings: string[] = [];
         for (const task of tasks) {
@@ -851,8 +854,9 @@ export const makeBoardSchedules = (deps: BoardSchedulesDeps): BoardSchedulesShap
             warnings.push(`"${task.title}" runs more often than once a minute; left out.`);
             continue;
           }
-          const id = slugScheduleId(task.title, taken);
+          const id = previous.get(task.id)?.fileId ?? slugScheduleId(task.title, taken);
           taken.add(id);
+          refreshed.add(id);
           const definition: T3oFileSchedule = {
             id,
             title: task.title,
@@ -873,6 +877,9 @@ export const makeBoardSchedules = (deps: BoardSchedulesDeps): BoardSchedulesShap
             title: task.title,
             environmentId: deps.serverEnvironmentId,
           });
+        }
+        for (const row of previous.values()) {
+          if (!refreshed.has(row.fileId)) yield* store.remove(row.projectId, row.fileId);
         }
         return {
           schedules: definitions.length === 0 ? undefined : definitions,

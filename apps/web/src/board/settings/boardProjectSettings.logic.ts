@@ -339,6 +339,13 @@ export const boardImportScheduleMark = (kind: BoardScheduleImportKind) =>
 
 export type BoardSchedulePlacements = Readonly<Record<string, EnvironmentId | null>>;
 
+/** Own keys only: an id like `constructor` must not read the prototype. */
+export const boardSchedulePlacement = (
+  placements: BoardSchedulePlacements,
+  fileId: string,
+): EnvironmentId | null =>
+  Object.hasOwn(placements, fileId) ? (placements[fileId] ?? null) : null;
+
 /** What an import does to its schedules given the machines picked so far. */
 export interface BoardImportScheduleSummary {
   /** Rows that will run, with their machine. */
@@ -355,7 +362,8 @@ export function boardImportScheduleSummary(
   placements: BoardSchedulePlacements,
 ): BoardImportScheduleSummary {
   const placeable = rows.filter((row) => row.kind !== "delete");
-  const placed = (row: BoardScheduleImportRow) => (placements[row.fileId] ?? null) !== null;
+  const placed = (row: BoardScheduleImportRow) =>
+    boardSchedulePlacement(placements, row.fileId) !== null;
   return {
     scheduled: placeable.filter(placed),
     stops: placeable.filter(
@@ -431,7 +439,7 @@ export function boardImportScheduleVerdict(input: {
       : `${plural(scheduled.length, "schedule")} will run unattended, with full access to the machine: ${scheduled
           .map(
             (row) =>
-              `'${row.title}' on ${input.machineLabel(input.placements[row.fileId] ?? null)}`,
+              `'${row.title}' on ${input.machineLabel(boardSchedulePlacement(input.placements, row.fileId))}`,
           )
           .join(", ")}.`;
   return {
