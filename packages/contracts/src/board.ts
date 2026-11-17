@@ -1210,7 +1210,7 @@ export const BoardCardGroup = Schema.Struct({
   target: BoardCardGroupTarget,
   /** What inheriting children take as their Automation toggles
       (see `resolveBoardCardAutomation`). Auto-build: ready children with their
-      dependencies met start themselves once the group is `started`. */
+      dependencies met start themselves, whether or not the group is `started`. */
   autoBuild: Schema.Boolean,
   /** Children merge themselves, into the integration branch or trunk. */
   autoMerge: Schema.Boolean,
@@ -2071,13 +2071,25 @@ export function boardCardCiSteps(
   }));
 }
 
+/** T3o: the automation gates (T3O-115), in pipeline order: `boardGateDue`: `boardGateDue` returns the first one due. */
+export const BOARD_GATES = [
+  "plan",
+  "answer",
+  "review-start",
+  "sign-off",
+  "split-sign-off",
+  "split",
+  "build",
+] as const;
+export type BoardGate = (typeof BOARD_GATES)[number];
+
 /**
  * T3o: an automation gate that was due but could not act on its last attempt (T3O-115): a
  * refused move or a fault. Derived blocks (unmet dependencies, no capacity) are not recorded
  * here; they already show. Written only when `gate` + `reason` change, cleared by the move.
  */
 export const BoardCardGateBlock = Schema.Struct({
-  gate: TrimmedNonEmptyString,
+  gate: Schema.Literals(BOARD_GATES),
   reason: Schema.Literals(["move-refused", "fault"]),
   detail: Schema.NullOr(TrimmedNonEmptyString),
 });
@@ -12220,8 +12232,8 @@ export const DEFAULT_BOARD_SYNC_PHASE_PROMPT = `This card's base branch has adva
 export const BoardStepExecution = Schema.Struct({
   prompt: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   model: Schema.NullOr(BoardModelSelection).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
-  /** Unset means the mode-based default `resolveBoardStageExecution` fills: `auto` in build
-      mode, `approval-required` otherwise. A value the user picked is honoured verbatim. */
+  /** Unset means `auto`, filled by `resolveBoardStageExecution`. A value the user picked is
+      honoured verbatim. */
   runtimeMode: Schema.optional(RuntimeMode),
   timeoutMs: PositiveInt.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_STEP_TIMEOUT_MS)),
@@ -12359,8 +12371,8 @@ export const BoardStageExecutionSimple = Schema.Struct({
   autoExecute: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   prompt: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   model: Schema.NullOr(BoardModelSelection).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
-  /** Unset means the mode-based default `resolveBoardStageExecution` fills: `auto` in build
-      mode, `approval-required` otherwise. A value the user picked is honoured verbatim. */
+  /** Unset means `auto`, filled by `resolveBoardStageExecution`. A value the user picked is
+      honoured verbatim. */
   runtimeMode: Schema.optional(RuntimeMode),
   mode: BoardStageMode.pipe(Schema.withDecodingDefault(Effect.succeed("plan" as const))),
   humanInLoop: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
@@ -12416,8 +12428,8 @@ export const BoardStageExecutionReview = Schema.Struct({
   autoExecute: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   prompt: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   model: Schema.NullOr(BoardModelSelection).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
-  /** Unset means the mode-based default `resolveBoardStageExecution` fills: `auto` in build
-      mode, `approval-required` otherwise. A value the user picked is honoured verbatim. */
+  /** Unset means `auto`, filled by `resolveBoardStageExecution`. A value the user picked is
+      honoured verbatim. */
   runtimeMode: Schema.optional(RuntimeMode),
   mode: BoardStageMode.pipe(Schema.withDecodingDefault(Effect.succeed("build" as const))),
   humanInLoop: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),

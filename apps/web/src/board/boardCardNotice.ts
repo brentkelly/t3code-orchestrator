@@ -10,6 +10,7 @@ import type {
   BoardCardAttentionTone,
   BoardCardGateBlock,
   BoardCardStepStalledReason,
+  BoardGate,
 } from "@t3tools/contracts";
 
 import type { BoardAutoMergePill } from "./boardAutoMergeHold";
@@ -149,7 +150,7 @@ export function boardCardNoPullRequest(input: {
   return !settling;
 }
 
-const GATE_LABELS: Readonly<Record<string, string>> = {
+const GATE_LABELS: Readonly<Record<BoardGate, string>> = {
   plan: "Auto-plan",
   answer: "Auto-plan",
   "review-start": "Plan review",
@@ -161,7 +162,7 @@ const GATE_LABELS: Readonly<Record<string, string>> = {
 
 /** T3o: why an automation gate is held, in the card's words (T3O-115). */
 export function boardGateBlockTooltip(block: BoardCardGateBlock): string {
-  const who = GATE_LABELS[block.gate] ?? "Automation";
+  const who = GATE_LABELS[block.gate];
   const why = (
     block.detail ?? (block.reason === "fault" ? "something went wrong" : "it was refused")
   ).replace(/\.$/, "");
