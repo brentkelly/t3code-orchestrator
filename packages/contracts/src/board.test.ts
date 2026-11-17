@@ -3119,9 +3119,9 @@ describe("automation (T3O-38)", () => {
     });
 
     it("answer: an unattended review counts only while it runs", () => {
-      const asked = {
+      const asked: Partial<BoardCardStepState> = {
         status: "awaiting-input",
-        awaitingReason: "question" as const,
+        awaitingReason: "question",
         threadId: ThreadId.make("thread-asked"),
       };
       const reviewed = planning({ planReview: { enabled: true, rounds: 1, unattended: true } });
