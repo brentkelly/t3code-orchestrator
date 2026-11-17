@@ -3165,6 +3165,28 @@ describe("automation (T3O-38)", () => {
         const failed = hold({ classification: "other", stop: "fix-failed" });
         expect(due({ card: atMerge({ autoMergeHold: failed }) })).toBe(null);
       });
+
+      it("merge: an armed group is due once every live child is done", () => {
+        const group = {
+          ...groupCard("g", {}),
+          stage: BOARD_SEED_STAGE_IDS.merge,
+          autoMergeSetting: true,
+          pullRequest: link("open"),
+        };
+        const child = (stage: BoardCard["stage"], archivedAt: string | null = null) =>
+          waiting({
+            id: BoardCardId.make(`child-${stage}`),
+            parentCardId: group.id,
+            stage,
+            archivedAt,
+          });
+        expect(due({ card: group, others: [child(BOARD_SEED_STAGE_IDS.done)] })).toBe("merge");
+        expect(due({ card: group, others: [child(BOARD_SEED_STAGE_IDS.building)] })).toBe(null);
+        expect(due({ card: group, others: [child(BOARD_SEED_STAGE_IDS.building, NOW)] })).toBe(
+          "merge",
+        );
+        expect(due({ card: { ...group, pullRequest: link("merged") } })).toBe("merged-done");
+      });
     });
 
     it("plan: due in Planning with Auto-plan on and no step this stay", () => {

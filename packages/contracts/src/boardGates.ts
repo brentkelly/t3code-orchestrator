@@ -46,16 +46,23 @@ export interface BoardGateIndex {
   readonly stepByCard: ReadonlyMap<string, BoardCardStepState>;
   readonly plansByCard: ReadonlyMap<string, ReadonlyArray<BoardPlan>>;
   readonly liveChildCount: ReadonlyMap<string, number>;
+  /** Live children not yet in the done-role stage: a group merges only once there are none. */
+  readonly unfinishedChildCount: ReadonlyMap<string, number>;
 }
 
 export function boardGateIndex(board: BoardState): BoardGateIndex {
   const cardsById = new Map<string, BoardCard>();
   const liveChildCount = new Map<string, number>();
+  const unfinishedChildCount = new Map<string, number>();
+  const doneStageId = boardStageWithRole(board, "done")?.stageId ?? null;
   for (const card of board.cards) {
     cardsById.set(String(card.id), card);
     if (card.parentCardId !== null && card.archivedAt === null) {
       const parent = String(card.parentCardId);
       liveChildCount.set(parent, (liveChildCount.get(parent) ?? 0) + 1);
+      if (card.stage !== doneStageId) {
+        unfinishedChildCount.set(parent, (unfinishedChildCount.get(parent) ?? 0) + 1);
+      }
     }
   }
   const stepByCard = new Map<string, BoardCardStepState>();
@@ -68,7 +75,7 @@ export function boardGateIndex(board: BoardState): BoardGateIndex {
     if (list === undefined) plansByCard.set(String(plan.cardId), [plan]);
     else list.push(plan);
   }
-  return { cardsById, stepByCard, plansByCard, liveChildCount };
+  return { cardsById, stepByCard, plansByCard, liveChildCount, unfinishedChildCount };
 }
 
 export interface BoardGateInput {
@@ -130,7 +137,7 @@ export function boardGateFacts(input: BoardGateInput): BoardGateFacts {
  */
 export function boardGateDue(input: BoardGateInput): BoardGateDue {
   const { board, card } = input;
-  if (card.archivedAt !== null || card.group !== null) return null;
+  if (card.archivedAt !== null) return null;
   const index = input.index ?? boardGateIndex(board);
   const hasChildren = (index.liveChildCount.get(String(card.id)) ?? 0) > 0;
   const bound = card.placedWorkerId ?? card.pinnedWorkerId;
@@ -138,7 +145,9 @@ export function boardGateDue(input: BoardGateInput): BoardGateDue {
   const stage = boardStageById(board, card.stage);
   if (stage === null) return null;
   const role = effectiveBoardStageRole(stage);
+  // A group merges its own branch once its children are in, so only the merge gates read groups.
   if (role === "merge") return boardMergeGateDue(input, index);
+  if (card.group !== null) return null;
   const before = boardStageBeforeBuild(board);
   if (role !== "plan" && card.stage !== before?.stageId) return null;
   const facts = boardGateFacts({ ...input, index });
@@ -239,7 +248,7 @@ function boardMergeGateDue(input: BoardGateInput, index: BoardGateIndex): BoardG
       : { gate: "merged-done" };
   }
   if (card.blocked) return null;
-  if ((index.liveChildCount.get(String(card.id)) ?? 0) > 0) return null;
+  if ((index.unfinishedChildCount.get(String(card.id)) ?? 0) > 0) return null;
   if (!boardCardAutoMergeOn(input)) return null;
   const step = index.stepByCard.get(String(card.id)) ?? null;
   if (step !== null && !isBoardTerminalStepStatus(step.status)) return null;

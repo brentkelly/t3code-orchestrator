@@ -7,6 +7,7 @@ import {
   BOARD_CHECKS_FIX_STEP_LABEL,
   BOARD_SEED_STAGE_IDS,
   BoardCardId,
+  defaultBoardCardGroup,
   EMPTY_BOARD_STATE,
   ProviderInstanceId,
   ThreadId,
@@ -1206,6 +1207,34 @@ it.effect("lose the event: an armed card at merge across a restart merges on the
     Effect.gen(function* () {
       // Never told it arrived. `beginStageRun` used to return before the armed check because the
       // merge stage never auto-executes, so only an arrival event could merge it.
+      yield* h.reactor.drain;
+      assert.deepStrictEqual(yield* h.mergeAttempts, [{ number: 284 }]);
+      assert.strictEqual(stageOf(yield* h.board), DONE);
+    }),
+  ),
+);
+
+/** An armed group parked at the merge stage, and its one child, already done. */
+const groupAtMerge = (): BoardCard => ({
+  ...cardAtMerge({ autoMerge: true }),
+  group: defaultBoardCardGroup(EMPTY_BOARD_STATE, { stage: BOARD_SEED_STAGE_IDS.merge }),
+});
+const doneChild = (): BoardCard =>
+  makeBoardCard({ id: "child-one", stage: DONE, orderKey: "c", parentCardId: "card-one" });
+
+it.effect("an armed group merges on its arrival once its children are done", () =>
+  withGovernor(setup({ cards: [groupAtMerge(), doneChild()] }), (h) =>
+    Effect.gen(function* () {
+      yield* h.pumpDomain(cardMoved(groupAtMerge(), REVIEW, MERGE, 1));
+      assert.deepStrictEqual(yield* h.mergeAttempts, [{ number: 284 }]);
+      assert.strictEqual(stageOf(yield* h.board), DONE);
+    }),
+  ),
+);
+
+it.effect("an armed group parked at merge across a restart merges on the boot pass", () =>
+  withGovernor(setup({ cards: [groupAtMerge(), doneChild()] }), (h) =>
+    Effect.gen(function* () {
       yield* h.reactor.drain;
       assert.deepStrictEqual(yield* h.mergeAttempts, [{ number: 284 }]);
       assert.strictEqual(stageOf(yield* h.board), DONE);

@@ -8251,9 +8251,7 @@ const make = Effect.gen(function* () {
     if (mergeStage === null) return;
     const settings = yield* boardSettings;
     for (const card of board.cards) {
-      if (card.archivedAt !== null || card.group !== null || card.stage !== mergeStage.stageId) {
-        continue;
-      }
+      if (card.archivedAt !== null || card.stage !== mergeStage.stageId) continue;
       if (!boardCardAutoMergeOn({ board, card, settings })) continue;
       // Through the lookup cache, so a card costs at most one forge read per cache lifetime.
       if (card.pullRequest === null || card.pullRequest.state === "open") {

@@ -65,10 +65,10 @@ function sameGateBlock(
   return left.gate === right.gate && left.reason === right.reason;
 }
 
-/** The cards a pass never evaluates: archived, groups and Done. Backlog is evaluated; no gate is
-    due there. */
+/** The cards a pass never evaluates: archived and Done. Groups are evaluated for their merge
+    gates; the predicate says no other gate is due on one. */
 function sweepable(board: BoardState, card: BoardCard): boolean {
-  if (card.archivedAt !== null || card.group !== null) return false;
+  if (card.archivedAt !== null) return false;
   const stage = boardStageById(board, card.stage);
   if (stage === null) return false;
   const role = effectiveBoardStageRole(stage);
