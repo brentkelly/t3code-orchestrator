@@ -542,9 +542,13 @@ const refuseOtherWorkersCard = Effect.fn("BoardToolkit.refuseOtherWorkersCard")(
   // card belong to no worker, so a build agent keeps write access to them (T3O-87).
   const target = card.group !== null ? null : boardCardPlacementTarget(card);
   if (target === null || target === relayed.value.workerId) return;
+  // T3o: a schedule run on a worker is bound the same way until T3O-114 relaxes it (T3O-118).
+  const scheduleRun = (yield* scheduleCaller(scope.thread.threadId)) !== null;
   return yield* new BoardToolError({
     code: "rejected",
-    message: `'${card.key}' runs on another worker, so it cannot be changed from this one: ask a human to do it from the app.`,
+    message: `'${card.key}' runs on another worker, so it cannot be changed from this one: ask a human to do it from the app.${
+      scheduleRun ? " Schedule runs can't change cards on other machines yet (T3O-114)." : ""
+    }`,
   });
 });
 

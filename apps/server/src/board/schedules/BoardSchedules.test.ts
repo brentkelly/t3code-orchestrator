@@ -4,6 +4,8 @@
  */
 import {
   BoardScheduleError,
+  type BoardWorkerCapacitySnapshot,
+  type BoardWorkersState,
   EnvironmentId,
   ProjectId,
   ProviderInstanceId,
@@ -32,7 +34,12 @@ import {
   type BoardThreadState,
   type UnknownThreadState,
 } from "../ThreadGateway.ts";
-import { makeBoardSchedules, type BoardSchedulesDeps } from "./BoardSchedules.ts";
+import {
+  makeBoardSchedules,
+  type BoardScheduleWorkerLaunchInput,
+  type BoardSchedulesDeps,
+} from "./BoardSchedules.ts";
+import { scheduleWorkerTarget } from "./boardScheduleWorkers.ts";
 import { BoardScheduleStore, BoardScheduleStoreLive } from "./BoardScheduleStore.ts";
 import { orThread, registerBoardScheduleRunner } from "./scheduleRuns.ts";
 import { SKIPPED_NOT_SCHEDULED, SKIPPED_STILL_GOING } from "./scheduleLogic.ts";
@@ -42,6 +49,90 @@ const T0 = "2026-03-01T00:00:00.000Z";
 const projectId = ProjectId.make("project-a");
 const server = EnvironmentId.make("env-board");
 const codex = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" };
+const worker = EnvironmentId.make("env-build-02");
+const workerProjectId = ProjectId.make("worker-project-a");
+const REPOSITORY_KEY = "github.com/acme/mesh-relay";
+
+/** The board's one worker, build-02, as its summary and last capacity snapshot say. */
+const workersState = (world: {
+  readonly workerStatus: "online" | "offline" | "incompatible";
+  readonly workerProtocol: number;
+  readonly workerHasCheckout: boolean;
+  readonly workerProviderEnabled: boolean;
+}): BoardWorkersState => ({
+  defaultWorkerId: "local",
+  workers: [
+    {
+      id: worker,
+      label: "build-02",
+      addedAt: T0,
+      status: {
+        state: world.workerStatus,
+        lastSeenAt: T0,
+        t3oVersion: "0.1.9",
+        protocolVersion: world.workerProtocol,
+      },
+      snapshot: {
+        providers: [
+          {
+            instanceId: codex.instanceId,
+            driver: "codex",
+            displayName: null,
+            enabled: world.workerProviderEnabled,
+            models: [],
+          },
+        ],
+        checkouts: world.workerHasCheckout
+          ? [
+              {
+                projectId: workerProjectId,
+                title: "mesh.relay",
+                workspaceRoot: "/home/build/mesh.relay",
+                repositoryKey: REPOSITORY_KEY,
+              },
+            ]
+          : [],
+        projectsFolder: null,
+        reportedAt: T0,
+      },
+    },
+  ],
+  setups: [],
+  joinCodes: [],
+});
+
+const capacitySnapshot = (world: {
+  readonly workerReadiness: "ready" | "not-ready";
+  readonly workerSignedIn: boolean;
+}): BoardWorkerCapacitySnapshot => {
+  const none = { cpuCores: 0, ramGiB: 0, diskGB: 0 };
+  return {
+    at: T0,
+    declared: none,
+    headroom: none,
+    over: { cpuRam: false, disk: false },
+    agents: { running: 0, max: null },
+    providers: [
+      {
+        instanceId: codex.instanceId,
+        driver: "codex",
+        account: { status: world.workerSignedIn ? "signed-in" : "signed-out" },
+        quota: { exhausted: false, checkedAt: null, resetsAt: null, windows: [] },
+        agents: { running: 0, max: null },
+      },
+    ],
+    readiness: [
+      {
+        repositoryKey: REPOSITORY_KEY,
+        path: "scripts/ready.sh",
+        state: world.workerReadiness,
+        version: null,
+        checkedAt: T0,
+      },
+    ],
+    heavyCards: [],
+  };
+};
 
 const nightly: T3oFileSchedule = {
   id: "nightly-tests",
@@ -108,6 +199,15 @@ const makeWorld = () => {
     /** One stale `list`, as a page that hasn't seen a hand deletion yet. */
     staleList: null as ReadonlyArray<ScheduledTask> | null,
     uuids: 0,
+    workerStatus: "online" as "online" | "offline" | "incompatible",
+    workerProtocol: 6,
+    workerHasCheckout: true,
+    workerProviderEnabled: true,
+    workerReadiness: "ready" as "ready" | "not-ready",
+    workerSignedIn: true,
+    workerLaunches: [] as Array<BoardScheduleWorkerLaunchInput>,
+    /** The worker refuses the launch at its agent cap while set. */
+    workerAtAgentCap: false,
   };
   const fail = (message: string) => Effect.fail(new ScheduledTaskError({ message }));
   const deps = (store: BoardScheduleStore["Service"]): BoardSchedulesDeps => ({
@@ -194,6 +294,29 @@ const makeWorld = () => {
     uuid: Effect.sync(() => `uuid-${++world.uuids}`),
     utcOffsetMinutes: Effect.succeed(60),
     retainInBackground: false,
+    workers: {
+      labels: Effect.sync(() => new Map([[worker, "build-02"]])),
+      target: ({ workerId, modelSelection }) =>
+        Effect.sync(() =>
+          scheduleWorkerTarget({
+            workerId,
+            workers: workersState(world),
+            snapshot: capacitySnapshot(world),
+            repositoryKey: REPOSITORY_KEY,
+            projectTitle: "mesh.relay",
+            providerInstanceId: modelSelection.instanceId,
+          }),
+        ),
+      launch: (_workerId, input) =>
+        Effect.gen(function* () {
+          world.workerLaunches.push(input);
+          if (world.workerAtAgentCap) {
+            return yield* Effect.fail({ message: "At its agent cap (2).", agentCap: true });
+          }
+          // The worker prunes every settled run it was sent that touched no card.
+          return input.previousRuns.filter((run) => !run.touchedCard).map((run) => run.threadId);
+        }),
+    },
   });
   return { world, deps };
 };
@@ -493,9 +616,12 @@ describe("BoardSchedules", () => {
   test("refuses a placement on a machine the board can't target", () =>
     Effect.gen(function* () {
       const ctx = yield* setup;
-      assert.isNull(ctx.schedules.placementRefusal(server));
-      assert.isNull(ctx.schedules.placementRefusal(null));
-      assert.isNotNull(ctx.schedules.placementRefusal(EnvironmentId.make("env-other")));
+      assert.isNull(yield* ctx.schedules.placementRefusal(server));
+      assert.isNull(yield* ctx.schedules.placementRefusal(null));
+      // Any registered worker, whatever its state now: an offline one's runs are skipped.
+      ctx.world.workerStatus = "offline";
+      assert.isNull(yield* ctx.schedules.placementRefusal(worker));
+      assert.isNotNull(yield* ctx.schedules.placementRefusal(EnvironmentId.make("env-other")));
       yield* importFile(ctx, [nightly]);
       const refused = yield* Effect.flip(
         ctx.schedules.setMachine({
@@ -821,6 +947,104 @@ describe("BoardSchedules runs", () => {
         { worktreePath: `/worktrees/${old}`, branch: "t3o/schedule-run-old" },
       ]);
       assert.notInclude(yield* runIds(), old);
+    }));
+});
+
+describe("BoardSchedules runs on a worker (T3O-118)", () => {
+  const onWorker = Effect.gen(function* () {
+    const ctx = yield* setup;
+    yield* importFile(ctx, [nightly], { [nightly.id]: worker });
+    const row = yield* rowOf(ctx);
+    return { ...ctx, task: ctx.world.tasks.get(row.taskId)! };
+  });
+
+  test("launches on the worker's own project and prunes the runs the worker confirms", () =>
+    Effect.gen(function* () {
+      const ctx = yield* onWorker;
+      const day = 24 * 60 * 60 * 1000;
+      for (const [index, age] of [1, 2, 3, 9, 10, 11].entries()) {
+        yield* ctx.store.recordRun({
+          threadId: ThreadId.make(`old-${index}`),
+          projectId,
+          fileId: nightly.id,
+          environmentId: index === 5 ? server : worker,
+          startedAt: DateTime.formatIso(DateTime.makeUnsafe(NOW - age * day)),
+          launchError: null,
+          branch: `t3o/schedule-run-old-${index}`,
+        });
+      }
+      yield* ctx.store.recordTouchedCard(ThreadId.make("old-4"), "card-1");
+
+      // The run's thread is the worker's, so the runner has none of its own to return.
+      assert.isNull(yield* ctx.schedules.run(ctx.task));
+      assert.deepStrictEqual(ctx.world.launches, []);
+      const [sent] = ctx.world.workerLaunches;
+      assert.strictEqual(sent?.workerProjectId, workerProjectId);
+      assert.strictEqual(sent?.prompt, nightly.prompt);
+      assert.deepStrictEqual(sent?.modelSelection, codex);
+      assert.strictEqual(sent?.branch, "t3o/schedule-run-uuid-2");
+      // Only this worker's runs past retention, each with whether it touched a card.
+      assert.deepStrictEqual(sent?.previousRuns, [
+        { threadId: "old-3", branch: "t3o/schedule-run-old-3", touchedCard: false },
+        { threadId: "old-4", branch: "t3o/schedule-run-old-4", touchedCard: true },
+      ]);
+      const runs = yield* ctx.store.runs(projectId, nightly.id);
+      assert.deepStrictEqual(
+        runs.map((run) => run.threadId),
+        [sent!.threadId, "old-0", "old-1", "old-2", "old-4", "old-5"],
+      );
+      assert.strictEqual(runs[0]?.environmentId, worker);
+      assert.strictEqual(runs[0]?.launchError, null);
+    }));
+
+  test("a worker that can't take the run now skips it, saying why", () =>
+    Effect.gen(function* () {
+      const ctx = yield* onWorker;
+      const cases: ReadonlyArray<[(world: typeof ctx.world) => void, string]> = [
+        [(world) => (world.workerStatus = "offline"), "Skipped: build-02 is offline"],
+        [(world) => (world.workerProtocol = 5), "Skipped: build-02 needs a T3o update"],
+        [(world) => (world.workerStatus = "incompatible"), "Skipped: build-02 needs a T3o update"],
+        [
+          (world) => (world.workerReadiness = "not-ready"),
+          "Skipped: build-02 isn't ready for mesh.relay",
+        ],
+        [
+          (world) => (world.workerHasCheckout = false),
+          "Skipped: build-02 has no checkout of mesh.relay",
+        ],
+        [
+          (world) => (world.workerProviderEnabled = false),
+          "Skipped: build-02 has no codex provider",
+        ],
+        [(world) => (world.workerSignedIn = false), "Skipped: build-02 isn't signed in to codex"],
+      ];
+      for (const [arrange, message] of cases) {
+        Object.assign(ctx.world, {
+          workerStatus: "online",
+          workerProtocol: 6,
+          workerHasCheckout: true,
+          workerProviderEnabled: true,
+          workerReadiness: "ready",
+          workerSignedIn: true,
+        });
+        arrange(ctx.world);
+        const skipped = yield* Effect.flip(ctx.schedules.run(ctx.task));
+        assert.strictEqual(skipped.message, message);
+      }
+      assert.deepStrictEqual(ctx.world.workerLaunches, []);
+      assert.deepStrictEqual(yield* ctx.store.runs(projectId, nightly.id), []);
+    }));
+
+  test("a refusal at the worker's agent cap is recorded as the run's launch error", () =>
+    Effect.gen(function* () {
+      const ctx = yield* onWorker;
+      ctx.world.workerAtAgentCap = true;
+      assert.isNull(yield* ctx.schedules.run(ctx.task));
+      const [run] = yield* ctx.store.runs(projectId, nightly.id);
+      assert.strictEqual(run?.launchError, "Skipped: build-02 at its agent limit");
+      const listed = yield* ctx.schedules.list({ projectId });
+      assert.strictEqual(listed.schedules[0]?.lastResult.kind, "skipped");
+      assert.strictEqual(listed.schedules[0]?.environmentId, worker);
     }));
 });
 

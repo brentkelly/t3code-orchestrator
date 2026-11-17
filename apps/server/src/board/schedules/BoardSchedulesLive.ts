@@ -19,6 +19,7 @@ import { BoardSchedules, makeBoardSchedules } from "./BoardSchedules.ts";
 import { BoardScheduleLauncher } from "./BoardScheduleLauncher.ts";
 import { BoardScheduleLauncherLive } from "../ThreadGatewayV2.ts";
 import { BoardScheduleStore, BoardScheduleStoreLive } from "./BoardScheduleStore.ts";
+import { makeBoardScheduleWorkers } from "./boardScheduleWorkers.ts";
 import { makeRemoveRunWorktree } from "./runWorktree.ts";
 import { registerBoardScheduleRunner } from "./scheduleRuns.ts";
 
@@ -30,6 +31,7 @@ const make = Effect.gen(function* () {
   const launcher = yield* BoardScheduleLauncher;
   const workspaces = yield* BoardWorkspaces;
   const removeRunWorktree = yield* makeRemoveRunWorktree;
+  const workers = yield* makeBoardScheduleWorkers;
   const serverSettings = yield* ServerSettingsService;
   const crypto = yield* SecureRandom.SecureRandom;
   const serverEnvironmentId = yield* Effect.flatMap(
@@ -102,6 +104,7 @@ const make = Effect.gen(function* () {
       Effect.map((now) => Math.round(DateTime.zonedOffset(now) / 60_000)),
     ),
     retainInBackground: true,
+    workers,
   });
 });
 

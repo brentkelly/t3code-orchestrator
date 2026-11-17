@@ -109,8 +109,48 @@ export interface BoardSchedulesDeps {
   }) => Effect.Effect<ThreadId, { readonly message: string }>;
   readonly uuid: Effect.Effect<string>;
   readonly utcOffsetMinutes: Effect.Effect<number>;
-  /** Off in tests, which run retention inline to observe it. */
+  /** Off in tests, which run retention and worker launches inline to observe them. */
   readonly retainInBackground: boolean;
+  /** The board's workers a schedule can run on (T3O-118); absent, only this server. */
+  readonly workers?: BoardScheduleWorkers;
+}
+
+/** Where a worker-targeted run goes, or why it can't go there now. */
+export type BoardScheduleWorkerTarget =
+  | { readonly kind: "ready"; readonly workerProjectId: ProjectId; readonly label: string }
+  | { readonly kind: "skip"; readonly reason: string };
+
+export interface BoardScheduleWorkerLaunchInput {
+  readonly commandId: CommandId;
+  readonly threadId: ThreadId;
+  readonly workerProjectId: ProjectId;
+  readonly title: string;
+  readonly prompt: string;
+  readonly modelSelection: ModelSelection;
+  readonly branch: string;
+  readonly previousRuns: ReadonlyArray<{
+    readonly threadId: ThreadId;
+    readonly branch: string | null;
+    readonly touchedCard: boolean;
+  }>;
+}
+
+export interface BoardScheduleWorkers {
+  /** The board's registered workers' labels, by id. */
+  readonly labels: Effect.Effect<ReadonlyMap<EnvironmentId, string>>;
+  readonly target: (input: {
+    readonly workerId: EnvironmentId;
+    readonly projectId: ProjectId;
+    readonly modelSelection: ModelSelection;
+  }) => Effect.Effect<BoardScheduleWorkerTarget>;
+  /** Launch on the worker; answers which previous runs it pruned. */
+  readonly launch: (
+    workerId: EnvironmentId,
+    input: BoardScheduleWorkerLaunchInput,
+  ) => Effect.Effect<
+    ReadonlyArray<ThreadId>,
+    { readonly message: string; readonly agentCap: boolean }
+  >;
 }
 
 /** One import entry the service applies: the previewed row and what it rests on. */
@@ -151,7 +191,7 @@ export interface BoardSchedulesShape {
     schedules: ReadonlyArray<T3oFileSchedule> | null,
   ) => Effect.Effect<BoardSchedulePreview, BoardScheduleError>;
   /** Why a placement can't be used, or null. */
-  readonly placementRefusal: (environmentId: EnvironmentId | null) => string | null;
+  readonly placementRefusal: (environmentId: EnvironmentId | null) => Effect.Effect<string | null>;
   readonly applyImport: (
     projectId: ProjectId,
     preview: BoardSchedulePreview,
@@ -190,9 +230,6 @@ const scheduleError = (message: string, cause?: unknown) =>
 
 const localNow = DateTime.withCurrentZoneLocal(DateTime.nowInCurrentZone);
 
-const machineName = (serverEnvironmentId: EnvironmentId, environmentId: EnvironmentId) =>
-  environmentId === serverEnvironmentId ? "This server" : environmentId;
-
 export const makeBoardSchedules = (deps: BoardSchedulesDeps): BoardSchedulesShape => {
   const { store } = deps;
   const locks = new Map<string, Semaphore.Semaphore>();
@@ -212,10 +249,26 @@ export const makeBoardSchedules = (deps: BoardSchedulesDeps): BoardSchedulesShap
     Effect.map((tasks) => new Map(tasks.map((task) => [task.id as string, task]))),
   );
 
+  const workerLabels =
+    deps.workers === undefined
+      ? Effect.succeed(new Map<EnvironmentId, string>() as ReadonlyMap<EnvironmentId, string>)
+      : deps.workers.labels;
+  const machineName = (environmentId: EnvironmentId) =>
+    environmentId === deps.serverEnvironmentId
+      ? Effect.succeed("This server")
+      : workerLabels.pipe(Effect.map((labels) => labels.get(environmentId) ?? environmentId));
+
+  // Any registered worker: one offline or not ready yet is skipped when its run is due.
   const placementRefusal: BoardSchedulesShape["placementRefusal"] = (environmentId) =>
     environmentId === null || environmentId === deps.serverEnvironmentId
-      ? null
-      : `${environmentId} isn't a machine this board can run schedules on.`;
+      ? Effect.succeed(null)
+      : workerLabels.pipe(
+          Effect.map((labels) =>
+            labels.has(environmentId)
+              ? null
+              : `${environmentId} isn't a machine this board can run schedules on.`,
+          ),
+        );
 
   const upsertInput = (
     row: BoardScheduleStoreRow,
@@ -480,7 +533,7 @@ export const makeBoardSchedules = (deps: BoardSchedulesDeps): BoardSchedulesShap
 
   const setMachine: BoardSchedulesShape["setMachine"] = Effect.fn("BoardSchedules.setMachine")(
     function* (input) {
-      const refusal = placementRefusal(input.environmentId);
+      const refusal = yield* placementRefusal(input.environmentId);
       if (refusal !== null) return yield* scheduleError(refusal);
       yield* withProjectLock(
         input.projectId,
@@ -936,6 +989,90 @@ export const makeBoardSchedules = (deps: BoardSchedulesDeps): BoardSchedulesShap
 
   const skip = (message: string) => new BoardScheduleRunError({ message });
 
+  /**
+   * A run on a worker (T3O-118): the worker must be online, on protocol 6, ready for the
+   * project with a checkout of it, and hold a signed-in provider for the model. The launch
+   * is forked; the worker prunes the schedule's old runs before it, and the board forgets
+   * the runs it confirms removed.
+   */
+  const runOnWorker = Effect.fn("BoardSchedules.runOnWorker")(function* (
+    row: BoardScheduleStoreRow,
+    workerId: EnvironmentId,
+    task: ScheduledTask,
+  ) {
+    const workers = deps.workers;
+    if (workers === undefined) {
+      return yield* skip(
+        `Skipped: ${yield* machineName(workerId)} isn't a machine this board can run schedules on.`,
+      );
+    }
+    const modelSelection = yield* deps.modelFor(row.projectId);
+    const target = yield* workers.target({ workerId, projectId: row.projectId, modelSelection });
+    if (target.kind === "skip") return yield* skip(`Skipped: ${target.reason}`);
+    const uuid = yield* deps.uuid;
+    const threadId = ThreadId.make(`thread-schedule-${uuid}`);
+    const branch = `${SCHEDULE_RUN_BRANCH_PREFIX}${uuid}`;
+    yield* store
+      .recordRun({
+        threadId,
+        projectId: row.projectId,
+        fileId: row.fileId,
+        environmentId: workerId,
+        startedAt: yield* nowIso,
+        launchError: null,
+        branch,
+      })
+      .pipe(Effect.mapError((error) => skip(error.message)));
+    const launch = Effect.gen(function* () {
+      const candidates = retentionCandidates(
+        yield* store.runs(row.projectId, row.fileId),
+        yield* Clock.currentTimeMillis,
+      ).filter((run) => run.environmentId === workerId && run.threadId !== threadId);
+      const previousRuns = yield* Effect.forEach(candidates, (run) =>
+        Effect.map(store.threadTouchedCard(run.threadId), (touchedCard) => ({
+          threadId: run.threadId,
+          branch: run.branch,
+          touchedCard,
+        })),
+      );
+      const launched = yield* Effect.result(
+        workers.launch(workerId, {
+          commandId: CommandId.make(`board-schedule:${uuid}`),
+          threadId,
+          workerProjectId: target.workerProjectId,
+          title: task.title,
+          prompt: task.prompt,
+          modelSelection,
+          branch,
+          previousRuns,
+        }),
+      );
+      if (launched._tag === "Failure") {
+        const { message, agentCap } = launched.failure;
+        yield* store.setLaunchError(
+          threadId,
+          agentCap ? `Skipped: ${target.label} at its agent limit` : message,
+        );
+        return;
+      }
+      const sent = new Set<string>(candidates.map((run) => run.threadId));
+      for (const pruned of launched.success) {
+        if (sent.has(pruned)) yield* store.deleteRun(pruned);
+      }
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Schedule run launch on a worker failed", {
+          projectId: row.projectId,
+          fileId: row.fileId,
+          workerId,
+          cause,
+        }),
+      ),
+    );
+    yield* deps.retainInBackground ? Effect.forkDetach(launch) : launch;
+    return null;
+  });
+
   const run: BoardSchedulesShape["run"] = Effect.fn("BoardSchedules.run")(function* (task) {
     const row = yield* store
       .rowByTask(task.id)
@@ -957,9 +1094,7 @@ export const makeBoardSchedules = (deps: BoardSchedulesDeps): BoardSchedulesShap
       return yield* skip(SKIPPED_STILL_GOING);
     }
     if (row.environmentId !== deps.serverEnvironmentId) {
-      return yield* skip(
-        `Skipped: ${machineName(deps.serverEnvironmentId, row.environmentId)} isn't a machine this board can run schedules on.`,
-      );
+      return yield* runOnWorker(row, row.environmentId, task);
     }
     const uuid = yield* deps.uuid;
     const threadId = ThreadId.make(`thread-schedule-${uuid}`);

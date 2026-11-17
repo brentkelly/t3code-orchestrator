@@ -354,7 +354,9 @@ export function deriveLastResult(input: {
       : result("never", null);
   }
   if (latestRun.launchError !== null) {
-    return result("failed-to-start", latestRun.startedAt, {
+    // A worker that couldn't take the run (its agent cap) skipped it, as a timer skip does.
+    const kind = latestRun.launchError.startsWith("Skipped") ? "skipped" : "failed-to-start";
+    return result(kind, latestRun.startedAt, {
       threadId: latestRun.threadId,
       detail: latestRun.launchError,
     });
