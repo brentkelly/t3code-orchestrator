@@ -25,6 +25,8 @@ const DAY_MS = 24 * HOUR_MS;
 const MISSED_GRACE_MS = 10 * MINUTE_MS;
 const RETENTION_KEEP_RECENT = 3;
 const RETENTION_WINDOW_MS = 7 * DAY_MS;
+/** A frequent interval schedule keeps no more runs than this, however recent. */
+const RETENTION_KEEP_MAX = 20;
 const OVERLAP_CAP_MS = 6 * HOUR_MS;
 /** How long a run with no thread yet and no launch error counts as still launching. */
 const LAUNCH_GRACE_MS = 5 * MINUTE_MS;
@@ -292,15 +294,20 @@ export function previousRunStillGoing(input: {
   return age < overlapCapMs(input.schedule);
 }
 
-/** Runs past the newest three and older than seven days, the ones retention may drop. */
+/** Runs past the newest three that are older than seven days or past the newest twenty, the
+    ones retention may drop. */
 export function retentionCandidates(
   runs: ReadonlyArray<BoardScheduleRun>,
   nowMs: number,
 ): ReadonlyArray<BoardScheduleRun> {
   const newestFirst = runs.toSorted((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt));
   return newestFirst
-    .slice(RETENTION_KEEP_RECENT)
-    .filter((run) => nowMs - Date.parse(run.startedAt) > RETENTION_WINDOW_MS)
+    .filter(
+      (run, index) =>
+        index >= RETENTION_KEEP_MAX ||
+        (index >= RETENTION_KEEP_RECENT &&
+          nowMs - Date.parse(run.startedAt) > RETENTION_WINDOW_MS),
+    )
     .filter((run) => !run.workspaceRemoved);
 }
 

@@ -17,6 +17,7 @@ import {
   lineDiffCounts,
   previousFixedTimeDue,
   previousRunStillGoing,
+  retentionCandidates,
   scheduleKey,
   slugScheduleId,
 } from "./scheduleLogic.ts";
@@ -37,6 +38,7 @@ const run = (startedAt: number, launchError: string | null = null): BoardSchedul
   launchError,
   branch: null,
   worktreePath: null,
+  workspaceRemoved: false,
 });
 
 const state = (over: Partial<BoardThreadState> = {}): BoardThreadState => ({
@@ -208,6 +210,19 @@ describe("deriveLastResult", () => {
       task: null,
     });
     assert.strictEqual(notSetUp.kind, "schedule-failed");
+  });
+});
+
+describe("retentionCandidates", () => {
+  it("drops runs past the newest twenty even inside the seven-day window", () => {
+    const runs = Array.from({ length: 25 }, (_, index) => ({
+      ...run(NOW - index * HOUR),
+      threadId: ThreadId.make(`run-${index}`),
+    }));
+    assert.deepStrictEqual(
+      retentionCandidates(runs, NOW).map((candidate) => candidate.threadId),
+      ["run-20", "run-21", "run-22", "run-23", "run-24"],
+    );
   });
 });
 

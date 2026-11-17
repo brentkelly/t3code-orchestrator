@@ -343,7 +343,7 @@ offline, out of date or not ready for the project can't be picked until it is.
   launch, but the hold lapses while the worktree is set up, so a burst can briefly exceed it. A
   schedule never has two runs going at once.
 - The worker keeps the latest runs and removes older settled ones, their worktrees and branches
-  with them, keeping any run that filed or changed a card. This carries on after the schedule
+  with them, as on the board server; a run that filed or changed a card keeps its thread. This carries on after the schedule
   moves to another machine, each time it fires, while the old worker is online.
 
 ## Removing a worker

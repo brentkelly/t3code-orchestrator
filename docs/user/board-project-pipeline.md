@@ -115,6 +115,9 @@ A `t3o.json` can also declare recurring runs. Each entry needs an `id` (letters,
   project's setup script runs first. Write prompts with paths relative to that worktree. Runs are
   unattended, with full access to the machine; read a schedule's prompt in the import dialog before
   you pick a machine for it.
+- **Old runs are cleaned up.** Each schedule keeps its newest three runs, every run from the last
+  seven days up to its newest twenty, and any run still working or waiting on you. Older settled
+  runs lose their thread, worktree and branch; a run that filed or changed a card keeps its thread.
 - **`fixed_time` follows the board server's clock**, whatever machine runs it.
 - **A run's board tools are limited to its project.** It can file cards there, and arm, move (up to
   Planning) or update only the cards that schedule's runs created. It can never turn Auto-merge on, though
