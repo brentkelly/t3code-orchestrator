@@ -19,7 +19,8 @@ export interface BoardScheduleLaunchInput {
   readonly projectId: ProjectId;
   readonly title: string;
   readonly prompt: string;
-  readonly taskId: ScheduledTaskId;
+  /** The board server's timer; absent on a worker, which has no task of its own (T3O-118). */
+  readonly taskId?: ScheduledTaskId;
   readonly modelSelection: ModelSelection;
   readonly baseRef: string;
   /** Created off the base for this run alone. */

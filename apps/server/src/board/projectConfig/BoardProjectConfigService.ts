@@ -278,7 +278,7 @@ export const make = Effect.gen(function* () {
       }),
     );
     for (const placement of Object.values(placements)) {
-      const refusal = schedules?.placementRefusal(placement) ?? null;
+      const refusal = schedules === null ? null : yield* schedules.placementRefusal(placement);
       if (refusal !== null) {
         return yield* new BoardSettingsCommandError({ code: "refused", message: refusal });
       }

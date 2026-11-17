@@ -4,6 +4,7 @@
  * after the confirmation. Export writes the file into the project's checkout,
  * uncommitted; with no checkout it is a download.
  */
+import { useAtomValue } from "@effect/atom-react";
 import type {
   BoardProjectExportResult,
   BoardProjectStageConfigShell,
@@ -47,7 +48,8 @@ export function BoardProjectImportTab(props: {
   const [exported, setExported] = useState<BoardProjectExportResult | null>(null);
   const candidate = candidates?.[0] ?? null;
   const schedules = useBoardSchedules(environmentId);
-  const namer = boardScheduleMachineNamer(schedules);
+  const workers = useAtomValue(boardEnvironment.workersAtom(environmentId));
+  const namer = boardScheduleMachineNamer(schedules, workers);
   const fileSchedules = (schedules?.schedules ?? []).filter(
     (row) => row.projectId === props.projectId,
   );

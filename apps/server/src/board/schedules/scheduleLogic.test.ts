@@ -91,6 +91,8 @@ describe("previousRunStillGoing", () => {
     ],
     ["a settled run", state(), NOW - HOUR, undefined, false],
     ["a run whose state is unknown", "unknown" as const, NOW - HOUR, undefined, false],
+    ["a run still launching, with no thread yet", null, NOW - 60_000, undefined, true],
+    ["a run whose thread never appeared", null, NOW - HOUR, undefined, false],
   ] as const)("%s → %s", (_name, current, startedAt, schedule, going) => {
     assert.strictEqual(
       previousRunStillGoing({

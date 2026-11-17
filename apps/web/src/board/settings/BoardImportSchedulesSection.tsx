@@ -8,6 +8,7 @@ import { Clock3Icon, TriangleAlertIcon } from "lucide-react";
 
 import { cn } from "../../lib/utils";
 import { BoardScheduleMachinePicker } from "../schedules/BoardScheduleMachinePicker";
+import type { BoardScheduleMachines } from "../schedules/useBoardSchedules";
 import {
   BOARD_IMPORT_SCHEDULE_KIND_LABELS,
   boardImportScheduleExplanation,
@@ -27,18 +28,13 @@ export function BoardImportSchedulesSection(props: {
   readonly summary: BoardImportScheduleSummary;
   readonly placements: BoardSchedulePlacements;
   readonly onPlace: (fileId: string, environmentId: EnvironmentId | null) => void;
-  readonly serverEnvironmentId: EnvironmentId;
   readonly serverUtcOffsetMinutes: number | null;
   readonly projectTitle: string;
   /** Picking a machine needs the operate scope; without it every row stays Don't schedule. */
   readonly canPlace: boolean;
+  readonly machines: BoardScheduleMachines;
 }) {
-  const machineLabel = (environmentId: EnvironmentId | null) =>
-    environmentId === null
-      ? "Not scheduled"
-      : environmentId === props.serverEnvironmentId
-        ? "This server"
-        : environmentId;
+  const machineLabel = props.machines.name;
   const verdict = boardImportScheduleVerdict({
     summary: props.summary,
     placements: props.placements,
@@ -87,10 +83,10 @@ export function BoardImportSchedulesSection(props: {
           canPlace={props.canPlace}
           key={row.fileId}
           machineLabel={machineLabel}
+          machines={props.machines}
           onPlace={props.onPlace}
           placement={boardSchedulePlacement(props.placements, row.fileId)}
           row={row}
-          serverEnvironmentId={props.serverEnvironmentId}
           serverUtcOffsetMinutes={props.serverUtcOffsetMinutes}
         />
       ))}
@@ -102,9 +98,9 @@ function ScheduleRow(props: {
   readonly row: BoardScheduleImportRow;
   readonly placement: EnvironmentId | null;
   readonly onPlace: (fileId: string, environmentId: EnvironmentId | null) => void;
-  readonly serverEnvironmentId: EnvironmentId;
   readonly serverUtcOffsetMinutes: number | null;
   readonly machineLabel: (environmentId: EnvironmentId | null) => string;
+  readonly machines: BoardScheduleMachines;
   readonly canPlace: boolean;
 }) {
   const { row, placement } = props;
@@ -172,8 +168,9 @@ function ScheduleRow(props: {
               noneLabel="Don't schedule"
               noneSub="Import it without running it anywhere"
               note={`Run '${row.title}' on one machine. Usually only one machine should run a given schedule.`}
+              choices={props.machines.choices}
+              name={props.machineLabel}
               onSelect={(environmentId) => props.onPlace(row.fileId, environmentId)}
-              serverEnvironmentId={props.serverEnvironmentId}
               value={placement}
             />
             {current !== null && placement !== current && props.canPlace ? (

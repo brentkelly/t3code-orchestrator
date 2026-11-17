@@ -6,6 +6,7 @@ import {
   CommandId,
   ProjectId,
   type BoardGatewayCall,
+  type BoardGatewayLaunchScheduleRunInput,
   type BoardMcpRelayRequest,
   AuthOrchestrationReadScope,
   AuthSessionId,
@@ -17,7 +18,7 @@ import {
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Layer from "effect/Layer";
-import { assert, it } from "@effect/vitest";
+import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Queue from "effect/Queue";
@@ -27,10 +28,12 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import { TestClock } from "effect/testing";
 
 import type { AuthenticatedSession } from "../../auth/EnvironmentAuth.ts";
-import { aliveThread } from "../threadGateway.testkit.ts";
-import { makeInProcessWorker } from "./distributed.testkit.ts";
+import { aliveThread, fakeThreadState } from "../threadGateway.testkit.ts";
+import { makeInProcessWorker, WORKER_PROJECT_ID } from "./distributed.testkit.ts";
+import { scheduleRunBranchOf } from "../schedules/scheduleLogic.ts";
 import { decodeGatewayCallResult } from "./gatewayWire.ts";
 import { makeMcpRelayHost, type McpRelayHostShape } from "./McpRelayHost.ts";
+import type { BoardRelayStoreShape } from "./BoardRelayStore.ts";
 import { WorkerGatewayHost } from "./WorkerGatewayHost.ts";
 import { workerGatewayRpcHandlers } from "./workerGatewayRpc.ts";
 
@@ -362,3 +365,245 @@ it.effect("a deleted thread's board record goes with it", () =>
     }),
   ),
 );
+
+describe("a board's schedule run on the worker (T3O-118)", () => {
+  const RUN = ThreadId.make("thread-schedule-run");
+  const boardSession = (board: string = CENTRAL): AuthenticatedSession => ({
+    ...session([AuthOrchestrationOperateScope], `session-${board}`),
+    subject: t3oBoardSubject(board),
+  });
+  const launchCall = (
+    previousRuns: BoardGatewayLaunchScheduleRunInput["previousRuns"] = [],
+  ): BoardGatewayCall => ({
+    _tag: "launchScheduleRun",
+    input: {
+      commandId: CommandId.make("board-schedule:run-1"),
+      threadId: RUN,
+      projectId: WORKER_PROJECT_ID,
+      title: "walls nightly full run",
+      prompt: "Run the suite.",
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5-codex" },
+      branch: "t3o/schedule-run-run",
+      centralEnvironmentId: CENTRAL,
+      previousRuns,
+    },
+  });
+  /** A worker whose schedule port records each launch and removal. */
+  const workerWithRuns = (
+    options: {
+      readonly agentCapRefusal?: () => string | null;
+      readonly refuseDelete?: (threadId: ThreadId) => boolean;
+    } = {},
+  ) =>
+    Effect.gen(function* () {
+      const launched: Array<{ projectId: string; relayedTo: EnvironmentId | null }> = [];
+      const removed: Array<{ worktreePath: string | null; branch: string | null }> = [];
+      // The worker's relay store, once it exists: the launch reads it as it runs.
+      let relayStore: BoardRelayStoreShape | null = null;
+      const env = yield* makeInProcessWorker({
+        ...options,
+        scheduleRuns: {
+          launch: (input) =>
+            Effect.gen(function* () {
+              const relayedTo =
+                relayStore === null
+                  ? null
+                  : yield* relayStore
+                      .relayedThreadCentral(input.threadId)
+                      .pipe(Effect.orElseSucceed(() => null));
+              launched.push({ projectId: input.projectId, relayedTo });
+            }),
+          removeRunWorktree: (input) =>
+            Effect.sync(() => {
+              removed.push({ worktreePath: input.worktreePath, branch: input.branch });
+              return true;
+            }),
+        },
+      });
+      relayStore = env.relayStore.store;
+      const run = (call: BoardGatewayCall, as = boardSession()) => {
+        const handle = workerGatewayRpcHandlers(as)["boardWorker.gateway.call"];
+        return handle(call).pipe(Effect.provideService(WorkerGatewayHost, env.host));
+      };
+      /** A refusal's kind and reason, or "answered". */
+      const refusalOf = (call: BoardGatewayCall, as = boardSession()) =>
+        run(call, as).pipe(
+          Effect.as("answered"),
+          Effect.catch((error) =>
+            Effect.succeed(
+              error._tag === "BoardWorkerGatewayError"
+                ? `${error.kind}${error.reason === undefined ? "" : `:${error.reason}`}`
+                : error._tag,
+            ),
+          ),
+        );
+      return { env, launched, removed, run, refusalOf };
+    });
+
+  it.effect(
+    "records the thread as relayed before it launches, on the project the board named",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { env, launched, run } = yield* workerWithRuns();
+          const encoded = yield* run(launchCall());
+          assert.deepStrictEqual(yield* decodeGatewayCallResult("launchScheduleRun", encoded), {
+            pruned: [],
+          });
+          assert.deepStrictEqual(launched, [{ projectId: WORKER_PROJECT_ID, relayedTo: CENTRAL }]);
+          assert.strictEqual(yield* env.relayStore.store.relayedThreadCentral(RUN), CENTRAL);
+        }),
+      ),
+  );
+
+  it.effect("refuses a session that isn't a board's, and a board launching for another", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { launched, refusalOf } = yield* workerWithRuns();
+        assert.strictEqual(
+          yield* refusalOf(launchCall(), session([AuthOrchestrationOperateScope])),
+          "refused",
+        );
+        assert.strictEqual(
+          yield* refusalOf(launchCall(), boardSession("env-other-board")),
+          "refused",
+        );
+        assert.deepStrictEqual(launched, []);
+      }),
+    ),
+  );
+
+  it.effect("waits at the worker's agent cap, launching nothing", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { launched, refusalOf } = yield* workerWithRuns({
+          agentCapRefusal: () => "At its cap (2).",
+        });
+        assert.strictEqual(yield* refusalOf(launchCall()), "refused:agent-cap");
+        assert.deepStrictEqual(launched, []);
+      }),
+    ),
+  );
+
+  it.effect("removes the board's old settled runs and keeps those that touched a card", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { env, removed, run } = yield* workerWithRuns();
+        const settled = ThreadId.make("thread-schedule-settled");
+        const touched = ThreadId.make("thread-schedule-touched");
+        const turning = ThreadId.make("thread-schedule-turning");
+        const foreign = ThreadId.make("thread-schedule-other-board");
+        const gone = ThreadId.make("thread-schedule-gone");
+        yield* Ref.update(env.threads.states, (states) =>
+          new Map(states)
+            .set(settled, fakeThreadState(settled, { worktreePath: "/home/worker/run-settled" }))
+            .set(touched, fakeThreadState(touched))
+            .set(turning, aliveThread(turning))
+            .set(foreign, fakeThreadState(foreign)),
+        );
+        for (const threadId of [settled, touched, turning]) {
+          yield* env.relayStore.store.recordRelayedThread(threadId, CENTRAL);
+        }
+        yield* env.relayStore.store.recordRelayedThread(foreign, EnvironmentId.make("env-other"));
+        const previous = (threadId: ThreadId, touchedCard = false) => ({
+          threadId,
+          branch: scheduleRunBranchOf(threadId),
+          touchedCard,
+        });
+        const encoded = yield* run(
+          launchCall([
+            previous(settled),
+            previous(touched, true),
+            previous(turning),
+            previous(foreign),
+            previous(gone),
+            // Never a branch that thread's run didn't make.
+            { threadId: ThreadId.make("thread-schedule-odd"), branch: "main", touchedCard: false },
+            { threadId: gone, branch: "t3o/schedule-run-other", touchedCard: false },
+          ]),
+        );
+        const { pruned } = yield* decodeGatewayCallResult("launchScheduleRun", encoded);
+        assert.deepStrictEqual(pruned, [settled, gone]);
+        assert.deepStrictEqual(removed, [
+          { worktreePath: "/home/worker/run-settled", branch: "t3o/schedule-run-settled" },
+          { worktreePath: null, branch: "t3o/schedule-run-gone" },
+        ]);
+        const deletes = (yield* env.threads.calls).filter((call) => call.type === "thread.delete");
+        assert.deepStrictEqual(
+          deletes.map((call) => call.threadId),
+          [settled],
+        );
+      }),
+    ),
+  );
+
+  it.effect("prunes a run on a later pass after its first delete is refused", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let refuse = true;
+        const { env, removed, run } = yield* workerWithRuns({ refuseDelete: () => refuse });
+        const settled = ThreadId.make("thread-schedule-settled");
+        yield* Ref.update(env.threads.states, (states) =>
+          new Map(states).set(settled, fakeThreadState(settled)),
+        );
+        yield* env.relayStore.store.recordRelayedThread(settled, CENTRAL);
+        const pruneCall: BoardGatewayCall = {
+          _tag: "pruneScheduleRuns",
+          input: {
+            projectId: WORKER_PROJECT_ID,
+            centralEnvironmentId: CENTRAL,
+            previousRuns: [
+              { threadId: settled, branch: scheduleRunBranchOf(settled), touchedCard: false },
+            ],
+          },
+        };
+        const prune = run(pruneCall).pipe(
+          Effect.flatMap((encoded) => decodeGatewayCallResult("pruneScheduleRuns", encoded)),
+        );
+        assert.deepStrictEqual((yield* prune).pruned, []);
+        assert.deepStrictEqual(removed, []);
+        refuse = false;
+        assert.deepStrictEqual((yield* prune).pruned, [settled]);
+        assert.strictEqual(removed.length, 1);
+      }),
+    ),
+  );
+
+  it.effect("prunes without launching, only for the board's own runs", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { env, launched, removed, run, refusalOf } = yield* workerWithRuns();
+        const settled = ThreadId.make("thread-schedule-settled");
+        yield* Ref.update(env.threads.states, (states) =>
+          new Map(states).set(
+            settled,
+            fakeThreadState(settled, { worktreePath: "/home/worker/run-settled" }),
+          ),
+        );
+        yield* env.relayStore.store.recordRelayedThread(settled, CENTRAL);
+        const pruneCall = (centralEnvironmentId: EnvironmentId): BoardGatewayCall => ({
+          _tag: "pruneScheduleRuns",
+          input: {
+            projectId: WORKER_PROJECT_ID,
+            centralEnvironmentId,
+            previousRuns: [
+              { threadId: settled, branch: "t3o/schedule-run-settled", touchedCard: false },
+            ],
+          },
+        });
+        assert.strictEqual(
+          yield* refusalOf(pruneCall(EnvironmentId.make("env-other-board"))),
+          "refused",
+        );
+        assert.deepStrictEqual(removed, []);
+        const encoded = yield* run(pruneCall(CENTRAL));
+        const { pruned } = yield* decodeGatewayCallResult("pruneScheduleRuns", encoded);
+        assert.deepStrictEqual(pruned, [settled]);
+        assert.deepStrictEqual(launched, []);
+        assert.deepStrictEqual(removed, [
+          { worktreePath: "/home/worker/run-settled", branch: "t3o/schedule-run-settled" },
+        ]);
+      }),
+    ),
+  );
+});

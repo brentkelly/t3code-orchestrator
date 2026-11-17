@@ -1,7 +1,7 @@
 /**
  * T3o: where a t3o.json schedule runs (T3O-117) — the New card dialog's
- * worker pin menu, with Don't schedule / Not scheduled first and the board
- * server ("This server", tagged Board). Child B lists workers beside it.
+ * worker pin menu, with Don't schedule / Not scheduled first, the board
+ * server ("This server", tagged Board), then each worker with its status (T3O-118).
  */
 import type { EnvironmentId } from "@t3tools/contracts";
 import { ChevronDownIcon, ServerIcon } from "lucide-react";
@@ -15,7 +15,12 @@ import type { BoardWorkerChoice } from "../workers/cardWorker";
 
 export function BoardScheduleMachinePicker(props: {
   readonly value: EnvironmentId | null;
-  readonly serverEnvironmentId: EnvironmentId;
+  /** The board server, then each worker (`useBoardScheduleMachines`). */
+  readonly choices: ReadonlyArray<BoardWorkerChoice>;
+  readonly name: (environmentId: EnvironmentId | null) => string;
+  /** Controlled open state, so a notice elsewhere can open the menu. */
+  readonly open?: boolean;
+  readonly onOpenChange?: (open: boolean) => void;
   /** "Don't schedule" in the import dialog, "Not scheduled" on the Schedules tab. */
   readonly noneLabel: string;
   readonly noneSub: string;
@@ -26,24 +31,13 @@ export function BoardScheduleMachinePicker(props: {
   readonly warning?: boolean;
   readonly className?: string;
 }) {
-  const [open, setOpen] = useState(false);
-  const choices: ReadonlyArray<BoardWorkerChoice> = [
-    {
-      workerId: props.serverEnvironmentId,
-      label: "This server",
-      detail: "Board",
-      selectable: true,
-      tooltip: null,
-      canSetUp: false,
-      cloning: false,
-    },
-  ];
-  const label =
-    props.value === null
-      ? null
-      : props.value === props.serverEnvironmentId
-        ? "This server"
-        : props.value;
+  const [ownOpen, setOwnOpen] = useState(false);
+  const open = props.open ?? ownOpen;
+  const setOpen = (next: boolean) => {
+    setOwnOpen(next);
+    props.onOpenChange?.(next);
+  };
+  const label = props.value === null ? null : props.name(props.value);
   const pick = (workerId: string | null) => {
     setOpen(false);
     const next = workerId as EnvironmentId | null;
@@ -74,7 +68,7 @@ export function BoardScheduleMachinePicker(props: {
       </PopoverTrigger>
       <BoardPopoverPopup align="start" className="w-72 max-w-[calc(100vw-2rem)] flex-col" inset="1">
         <BoardWorkerPinMenu
-          choices={choices}
+          choices={props.choices}
           followLabel={props.noneLabel}
           followSub={props.noneSub}
           note={props.note}

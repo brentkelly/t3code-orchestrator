@@ -17,8 +17,6 @@ import { FileJsonIcon } from "lucide-react";
 import * as Option from "effect/Option";
 import type { ReactNode } from "react";
 
-import { buildThreadRouteParams } from "../../threadRoutes";
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { cn } from "../../lib/utils";
 import { boardEnvironment } from "../../state/board";
 import { useEnvironmentQuery } from "../../state/query";
@@ -26,7 +24,8 @@ import { environmentShell } from "../../state/shell";
 import { boardScheduleLastResultView } from "../settings/boardProjectSettings.logic";
 import { BOARD_SCHEDULE_RESULT_DOT, BOARD_SCHEDULE_RESULT_TEXT } from "./boardScheduleResultTone";
 import { useBoardEnvironment } from "../useBoardEnvironmentId";
-import { useScheduleNow } from "./useBoardSchedules";
+import { BoardScheduleRunThreadLink } from "./BoardScheduleRunThreadLink";
+import { boardScheduleMachineNamer, useScheduleNow } from "./useBoardSchedules";
 
 function useManagedScheduleTasks(): {
   readonly boardEnvironmentId: EnvironmentId | null;
@@ -64,6 +63,8 @@ const managedFor = (
 function FileMarker(props: {
   readonly managed: BoardScheduleManagedTask;
   readonly projectTitle: string;
+  /** A worker the schedule runs on; null on the board server or unscheduled. */
+  readonly worker: string | null;
 }) {
   return (
     <Link
@@ -75,6 +76,7 @@ function FileMarker(props: {
     >
       <FileJsonIcon className="size-3" />
       From t3o.json · {props.projectTitle}
+      {props.worker === null ? null : ` · Runs on ${props.worker}`}
     </Link>
   );
 }
@@ -99,12 +101,13 @@ function ManagedStatus(props: {
   const { managed } = props;
   const now = useScheduleNow();
   const projectTitle = useProjectTitle(props.boardEnvironmentId, managed.projectId);
-  const machine =
-    managed.targetEnvironmentId === null
+  const workers = useAtomValue(boardEnvironment.workersAtom(props.boardEnvironmentId));
+  const name = boardScheduleMachineNamer({ serverEnvironmentId: managed.environmentId }, workers);
+  const machine = managed.targetEnvironmentId === null ? null : name(managed.targetEnvironmentId);
+  const worker =
+    managed.targetEnvironmentId === null || managed.targetEnvironmentId === managed.environmentId
       ? null
-      : managed.targetEnvironmentId === managed.environmentId
-        ? "This server"
-        : managed.targetEnvironmentId;
+      : machine;
   const result = boardScheduleLastResultView(
     {
       lastResult: managed.lastResult,
@@ -117,7 +120,7 @@ function ManagedStatus(props: {
   );
   return (
     <>
-      <FileMarker managed={managed} projectTitle={projectTitle} />
+      <FileMarker managed={managed} projectTitle={projectTitle} worker={worker} />
       {managed.editedByHand ? (
         <span className="text-muted-foreground">Edited here · the next import overwrites it</span>
       ) : null}
@@ -130,15 +133,15 @@ function ManagedStatus(props: {
         {result.text}
       </span>
       {managed.lastResult.threadId === null ? null : (
-        <Link
+        <BoardScheduleRunThreadLink
+          boardEnvironmentId={props.boardEnvironmentId}
           className="underline underline-offset-2 hover:text-foreground"
-          params={buildThreadRouteParams(
-            scopeThreadRef(props.boardEnvironmentId, managed.lastResult.threadId),
-          )}
-          to="/$environmentId/$threadId"
-        >
-          Open run thread
-        </Link>
+          label="Open run thread"
+          name={name}
+          ranOn={managed.lastResult.ranOn ?? null}
+          serverEnvironmentId={managed.environmentId}
+          threadId={managed.lastResult.threadId}
+        />
       )}
     </>
   );

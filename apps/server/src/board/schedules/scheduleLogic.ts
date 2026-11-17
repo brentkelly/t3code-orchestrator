@@ -10,7 +10,7 @@ import {
   type BoardScheduleWhen,
   type ScheduledTask,
   type T3oFileSchedule,
-  type ThreadId,
+  ThreadId,
 } from "@t3tools/contracts";
 
 import * as DateTime from "effect/DateTime";
@@ -26,6 +26,22 @@ const MISSED_GRACE_MS = 10 * MINUTE_MS;
 const RETENTION_KEEP_RECENT = 3;
 const RETENTION_WINDOW_MS = 7 * DAY_MS;
 const OVERLAP_CAP_MS = 6 * HOUR_MS;
+/** How long a run with no thread yet and no launch error counts as still launching. */
+const LAUNCH_GRACE_MS = 5 * MINUTE_MS;
+
+/** Every schedule run's branch starts so; a worker prunes no other branch for a board. */
+const SCHEDULE_RUN_BRANCH_PREFIX = "t3o/schedule-run-";
+const SCHEDULE_RUN_THREAD_PREFIX = "thread-schedule-";
+
+/** A run's thread id and branch share one UUID, so either names the other. */
+export const scheduleRunThreadId = (uuid: string) =>
+  ThreadId.make(`${SCHEDULE_RUN_THREAD_PREFIX}${uuid}`);
+export const scheduleRunBranch = (uuid: string) => `${SCHEDULE_RUN_BRANCH_PREFIX}${uuid}`;
+/** The only branch a run with this thread id may have, or null when it isn't a run's thread. */
+export const scheduleRunBranchOf = (threadId: ThreadId): string | null =>
+  threadId.startsWith(SCHEDULE_RUN_THREAD_PREFIX)
+    ? scheduleRunBranch(threadId.slice(SCHEDULE_RUN_THREAD_PREFIX.length))
+    : null;
 
 export const SKIPPED_NOT_SCHEDULED = "Skipped: not scheduled";
 export const SKIPPED_STILL_GOING = "Skipped: previous run still going";
@@ -257,8 +273,9 @@ const overlapCapMs = (schedule: unknown): number =>
     ? 2 * schedule.everyMs
     : OVERLAP_CAP_MS;
 
-/** Whether the previous run is still actively turning. A run awaiting a human, one whose
-    state is unknown, and one past the cap all count as settled, so none can skip every tick. */
+/** Whether the previous run is still actively turning, or still launching (recorded with no
+    thread yet). A run awaiting a human, one whose state is unknown, and one past the cap all
+    count as settled, so none can skip every tick. */
 export function previousRunStillGoing(input: {
   readonly run: BoardScheduleRun | undefined;
   readonly state: RunState;
@@ -266,9 +283,12 @@ export function previousRunStillGoing(input: {
   readonly nowMs: number;
 }): boolean {
   const { run, state } = input;
-  if (run === undefined || run.launchError !== null || !isLiveState(state)) return false;
+  if (run === undefined || run.launchError !== null) return false;
+  const age = input.nowMs - Date.parse(run.startedAt);
+  if (state === null) return age < LAUNCH_GRACE_MS;
+  if (!isLiveState(state)) return false;
   if (state.activeTurnRef === null || awaitingHuman(state)) return false;
-  return input.nowMs - Date.parse(run.startedAt) < overlapCapMs(input.schedule);
+  return age < overlapCapMs(input.schedule);
 }
 
 /** Runs past the newest three and older than seven days, the ones retention may drop. */
@@ -351,7 +371,9 @@ export function deriveLastResult(input: {
       : result("never", null);
   }
   if (latestRun.launchError !== null) {
-    return result("failed-to-start", latestRun.startedAt, {
+    // A worker that couldn't take the run (its agent cap) skipped it, as a timer skip does.
+    const kind = latestRun.launchError.startsWith("Skipped") ? "skipped" : "failed-to-start";
+    return result(kind, latestRun.startedAt, {
       threadId: latestRun.threadId,
       detail: latestRun.launchError,
     });
