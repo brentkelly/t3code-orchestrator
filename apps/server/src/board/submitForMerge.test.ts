@@ -195,6 +195,36 @@ it.effect("D5: the submit step succeeding moves the card to the merge stage, ove
   ),
 );
 
+it.effect("T3O-116: a submitted card with Auto-merge on merges once it reaches the merge stage", () =>
+  withGovernor(
+    {
+      board: heldBoard(heldBuildCard({ autoMergeSetting: true })),
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+      pullRequest: {
+        number: 51,
+        title: "Submitted",
+        url: "https://example.test/pull/51",
+        baseRef: "main",
+        headRef: "board/card-1",
+        state: "open",
+      },
+    },
+    ({ reactor, board, pumpDomain, mergeAttempts }) =>
+      Effect.gen(function* () {
+        yield* reactor.submitForMerge(cardId);
+        yield* reactor.drain;
+        yield* pumpDomain(stepCompleted(cardId, "succeeded", 10, BOARD_SUBMIT_STEP_ID));
+        assert.strictEqual(cardStage(yield* board, cardId), "merge");
+        // The jump over review is not an adjacent move, and needs none: the merge gate fires on
+        // any arrival, here on the next pass.
+        yield* reactor.tick;
+        yield* reactor.drain;
+        assert.deepStrictEqual(yield* mergeAttempts, [{ number: 51 }]);
+        assert.strictEqual(cardStage(yield* board, cardId), "done");
+      }),
+  ),
+);
+
 it.effect("D6: the directed advance ignores the Build stage's autoAdvance switch", () =>
   withGovernor(
     {

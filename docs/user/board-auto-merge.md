@@ -26,17 +26,17 @@ off, overrides the group.
 ## Arming the whole board
 
 **Settings → Board → Pipeline → Ready for merge → Auto-merge when ready** arms every card, group
-children included, that arrives at that stage from then on. With it on, each card's Auto-merge switch
-shows on, locked and tagged **board**, so you can tell where the decision came from.
+children included. With it on, each card's Auto-merge switch shows on, locked and tagged **board**,
+so you can tell where the decision came from.
 
-Switching it on does **not** merge the cards already sitting in Ready for merge. Those may be parked
-precisely because you did not want them merged, and a merge cannot be undone. They keep their Merge
-button. Switching it back off restores each card's own switch exactly as you left it, and any card
-that was only being retried because of the board-wide setting drops its hold with it.
+Switching it on also merges the cards **already** sitting in Ready for merge, within about half a
+minute, because a merge cannot be undone. A card you want parked there needs its own Auto-merge
+switch turned off first. Switching the setting back off restores each card's own switch exactly as
+you left it, and any card that was only being retried because of the board-wide setting drops its
+hold with it.
 
-A card you dragged straight from Building onto Ready for merge, skipping review, does not
-auto-merge under the board-wide setting. Its diff has never been reviewed. You can still arm that
-card individually, or press Merge.
+An armed card merges however it reached Ready for merge: through review, by "Submit for merge — no
+review", or dragged there by hand.
 
 ## When the forge says no
 
@@ -51,10 +51,17 @@ auto-merge is looked at rather than given up on:
   **Fixing CI** pill while it works, and the merge waits for the re-run checks. If they fail again,
   the board stops and the card reads **Merge needs you**; clicking Merge allows one more fix. This
   happens whether or not the card is armed.
+- **The branch is behind its base** and your repository requires it to be up to date. The board
+  brings it up to date once (an agent merges the base in and pushes), then merges. If the base
+  moves again before the merge lands, the card holds rather than chasing it.
 - **Everything is green and the forge still says no** — a missing approval, a branch protection
   rule. That is a decision the board does not have, so it stops and says so.
-- **Conflicts** take the path they always have: an agent resolves them, and the merge finishes
-  itself if that works.
+- **Conflicts**: an agent resolves them once, and the merge finishes itself if that works. A
+  second conflict while the card waits in Ready for merge is a hold, **Merge needs you**: the board
+  does not resolve conflicts twice. Clicking Merge allows one more fix.
+- **An agent fixing the branch fails**, or the card has no pull request or no checkout to merge
+  from: the card holds and says why. Linking a pull request to a card that had none lets the merge
+  go ahead by itself.
 
 Whatever happens, the forge's own words are on the card. Open it and the banner says why, which
 attempt it was, and how the checks stood.
@@ -98,10 +105,14 @@ branch moved — drops its hold on the way out.
 - The board re-checks every thirty seconds, so a retry lands within about half a minute of its time.
 - A card that is blocked by an unfinished dependency is skipped silently. It already says it is
   blocked; a second pill making a different claim would only be confusing. It merges on the next
-  check after the dependency lands — unless the server restarted in between, in which case it waits
-  for a click, because a merge nobody watched start is not one the board will guess at.
-- Holds survive a restart. A card mid-ladder when the server stops picks up where it left off.
-- Pushing a new commit resets the attempts, because new commits mean new CI.
+  check after the dependency lands, restart or not.
+- Holds survive a restart, and so does the count of fixes the board has made. A card mid-ladder when
+  the server stops picks up where it left off; a card armed in Ready for merge when the server stops
+  merges once it is back.
+- Pushing a new commit resets the attempts, because new commits mean new CI. That includes a card
+  whose attempts ran out: push a fix to its pull request and Auto-merge starts again by itself.
+- A pull request merged outside the board (on GitHub, say) moves its card from Ready for merge to
+  Done within a few minutes.
 - Reading the _reason_ a merge was refused needs GitHub or Forgejo. On other providers the board
   still retries on the same schedule; it just cannot tell a failing check from a passing one, so it
   uses all eight attempts before handing the card back to you.

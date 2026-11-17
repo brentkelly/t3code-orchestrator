@@ -105,6 +105,7 @@ import {
   type BoardPlan,
   type BoardState,
   BoardShellSnapshot,
+  DEFAULT_BOARD_MERGE_STAGE_EXECUTION,
 } from "./board.ts";
 import { defaultBoardCardGroup } from "./boardGroups.ts";
 import { boardGateDue } from "./boardGates.ts";
@@ -3065,6 +3066,7 @@ describe("automation (T3O-38)", () => {
       readonly plans?: number;
       readonly settings?: typeof DEFAULT_BOARD_SETTINGS;
       readonly unreachable?: ReadonlyArray<string>;
+      readonly nowMs?: number;
     }) =>
       boardGateDue({
         board: {
@@ -3077,7 +3079,92 @@ describe("automation (T3O-38)", () => {
         ...(input.unreachable === undefined
           ? {}
           : { workerUnreachable: (id: string) => input.unreachable!.includes(id) }),
+        ...(input.nowMs === undefined ? {} : { nowMs: input.nowMs }),
       })?.gate ?? null;
+
+    describe("merge gates (T3O-116)", () => {
+      const link = (state: "open" | "merged"): BoardCardPullRequest => ({
+        number: 7,
+        url: "https://example.test/pull/7",
+        state,
+        title: null,
+        headBranch: "board/card",
+        baseRef: "main",
+        checkedAt: NOW,
+      });
+      const atMerge = (overrides: Partial<BoardCard> = {}) =>
+        waiting({
+          stage: BOARD_SEED_STAGE_IDS.merge,
+          autoMergeSetting: true,
+          pullRequest: link("open"),
+          ...overrides,
+        });
+      const hold = (overrides: Partial<BoardCardAutoMergeHold> = {}): BoardCardAutoMergeHold => ({
+        reason: "Checks are still running.",
+        classification: "soft",
+        detail: null,
+        attempt: 1,
+        heldSince: NOW,
+        retryAt: null,
+        headSha: "sha-one",
+        ...overrides,
+      });
+      const at = Date.parse(NOW);
+
+      it("merged-done comes first: a merged pull request is never merged again", () => {
+        expect(due({ card: atMerge({ pullRequest: link("merged") }) })).toBe("merged-done");
+        // Whatever else holds the merge back, and whether or not Auto-merge is on.
+        expect(
+          due({
+            card: atMerge({
+              pullRequest: link("merged"),
+              autoMergeSetting: false,
+              blocked: true,
+              autoMergeHold: hold(),
+            }),
+          }),
+        ).toBe("merged-done");
+      });
+
+      it("merge: Auto-merge on, not blocked, nothing running, no hold that applies", () => {
+        expect(due({ card: atMerge() })).toBe("merge");
+        expect(due({ card: atMerge({ autoMergeSetting: false }) })).toBe(null);
+        expect(due({ card: atMerge({ blocked: true }) })).toBe(null);
+        const running = step(atMerge(), { stepId: BOARD_SEED_STAGE_IDS.merge, status: "running" });
+        expect(due({ card: atMerge(), step: running })).toBe(null);
+        // The board-wide setting arms it too.
+        const boardWide: typeof DEFAULT_BOARD_SETTINGS = {
+          ...DEFAULT_BOARD_SETTINGS,
+          pipeline: {
+            ...DEFAULT_BOARD_SETTINGS.pipeline,
+            [BOARD_SEED_STAGE_IDS.merge]: { ...DEFAULT_BOARD_MERGE_STAGE_EXECUTION, autoMerge: true },
+          },
+        };
+        expect(due({ card: atMerge({ autoMergeSetting: null }), settings: boardWide })).toBe(
+          "merge",
+        );
+      });
+
+      it("merge: a soft hold waits its rung; a hard hold waits for a person or a push", () => {
+        const soft = atMerge({ autoMergeHold: hold({ retryAt: "2026-01-01T00:05:00.000Z" }) });
+        expect(due({ card: soft, nowMs: at })).toBe(null);
+        expect(due({ card: soft })).toBe(null);
+        expect(due({ card: soft, nowMs: at + 5 * 60_000 })).toBe("merge");
+        expect(due({ card: atMerge({ autoMergeHold: hold() }), nowMs: at + 3_600_000 })).toBe(
+          null,
+        );
+      });
+
+      it("merge: a no-pull-request hold clears once a pull request is linked", () => {
+        const stopped = hold({ classification: "other", stop: "no-pull-request", headSha: null });
+        expect(due({ card: atMerge({ pullRequest: null }) })).toBe("merge");
+        expect(due({ card: atMerge({ pullRequest: null, autoMergeHold: stopped }) })).toBe(null);
+        expect(due({ card: atMerge({ autoMergeHold: stopped }) })).toBe("merge");
+        // Any other stop stays until a person or a push revives it.
+        const failed = hold({ classification: "other", stop: "fix-failed" });
+        expect(due({ card: atMerge({ autoMergeHold: failed }) })).toBe(null);
+      });
+    });
 
     it("plan: due in Planning with Auto-plan on and no step this stay", () => {
       const card = planning({ autoPlanSetting: true });
@@ -3219,6 +3306,8 @@ describe("automation (T3O-38)", () => {
         "split-sign-off",
         "split",
         "build",
+        "merged-done",
+        "merge",
       ]);
       // Every toggle on and planning finished: sign-off, not build, since the card is in Planning.
       const card = planning({

@@ -10767,8 +10767,8 @@ const make = Effect.gen(function* () {
       yield* fireDueGates([event.payload.cardId]);
     }
     // A toggle change owns the step's stance and its one message, so the generic stance arm below
-    // stands aside. Arming a card already parked at merge merges it now: only an edit that touched
-    // the arm may, and it bypasses the adjacency guard. A group change reaches inheriting children.
+    // stands aside. Arming a card already parked at merge merges it now, even past a hold: only an
+    // edit that touched the arm may. A group change reaches inheriting children.
     const automationChanged = event.payload.automationChanged;
     if (automationChanged !== undefined) {
       if (automationChanged.group === true) {
