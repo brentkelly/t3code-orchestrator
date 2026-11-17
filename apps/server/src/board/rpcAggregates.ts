@@ -4,6 +4,7 @@
  * method without a label a compile error.
  */
 import {
+  BOARD_SCHEDULE_WS_METHODS,
   BOARD_WORKER_GATEWAY_WS_METHODS,
   BOARD_WORKER_GIT_CALL_WS_METHODS,
   BOARD_WORKER_WS_METHODS,
@@ -20,6 +21,7 @@ const BOARD_METHOD_MAPS = [
   BOARD_WORKER_WS_METHODS,
   BOARD_WORKER_GATEWAY_WS_METHODS,
   BOARD_WORKER_GIT_CALL_WS_METHODS,
+  BOARD_SCHEDULE_WS_METHODS,
 ];
 
 type BoardWsMethod =
@@ -27,7 +29,8 @@ type BoardWsMethod =
   | (typeof BOARD_WORKERS_WS_METHODS)[keyof typeof BOARD_WORKERS_WS_METHODS]
   | (typeof BOARD_WORKER_WS_METHODS)[keyof typeof BOARD_WORKER_WS_METHODS]
   | (typeof BOARD_WORKER_GATEWAY_WS_METHODS)[keyof typeof BOARD_WORKER_GATEWAY_WS_METHODS]
-  | (typeof BOARD_WORKER_GIT_CALL_WS_METHODS)[keyof typeof BOARD_WORKER_GIT_CALL_WS_METHODS];
+  | (typeof BOARD_WORKER_GIT_CALL_WS_METHODS)[keyof typeof BOARD_WORKER_GIT_CALL_WS_METHODS]
+  | (typeof BOARD_SCHEDULE_WS_METHODS)[keyof typeof BOARD_SCHEDULE_WS_METHODS];
 
 export const BOARD_RPC_AGGREGATES = Object.fromEntries(
   BOARD_METHOD_MAPS.flatMap((methods) => Object.values(methods)).map((method) => [method, "board"]),

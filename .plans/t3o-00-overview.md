@@ -123,8 +123,9 @@ injection, so no provider adapter changes. The worker's board toolkit recognises
 server placed and forwards the call over the connection the **central server** holds open to it (a
 relay stream plus a respond RPC, carried over the worker's own outbound tunnel since `T3O-84`, so
 agents never learn the board's address). The central server authorizes twice:
-the calling thread must be linked to a card, **and** that card must be placed on the worker the
-call arrived from, so one worker cannot touch another worker's cards. Relayed calls must be safe to
+the calling thread must be linked to a card **or** be a t3o.json schedule run the board recorded
+(`T3O-118`), **and** that card or run must be on the worker the call arrived from, so one worker
+cannot touch another worker's cards. Relayed calls must be safe to
 repeat, because a dropped connection can deliver one twice. When the central server is not
 connected the tool returns a retryable "board unreachable" error, never a silent success.
 
@@ -336,8 +337,8 @@ owns a copy of its plan and lands in Ready, so "planned" is a property of the ca
 child gets the body as its brief only and lands in Backlog — and makes the card a group with the
 chosen settings. Omitted advice falls back to: every child planned → `own` with auto-build;
 otherwise inherit, auto-build off; under an ancestor with its own branch → inherit. Approval starts
-nothing: the human starting the group
-(moving it to build) does, and from then on every ready child whose dependencies are met starts
+nothing unless the group has Auto sign-off and Auto-build both on (the human's go-ahead, set ahead
+of time); otherwise the human starting the group (moving it to build) does, and from then on every ready child whose dependencies are met starts
 itself while auto-build is on. Children of an `own` group branch off its integration branch, their
 pull requests target it, and the group's own review is the final integration review against its
 target. **Grouping alone never touches git**: an inherit group has no branch at all.
@@ -481,7 +482,8 @@ a human act unless listed below.
     decision. Alone, its plan still waits at the approval gate (Planning → Ready stays human).
   - Auto-plan + Auto-build: the plan is approved when it arrives, unclear decisions included, and
     the card goes on through Ready to Building once its dependencies are met (every gate still
-    applies). A split is approved with the card's toggles, and its group starts.
+    applies). A split is approved by itself under Auto sign-off (T3O-115), otherwise it waits
+    for a human; once approved, its group goes to Ready.
   - Auto-build alone: an approved card at Ready starts itself once its dependencies are met.
   - A card's **own** Auto-build and an **inherited** one act alike: neither waits for the group to
     start (T3O-115; `group.started` now only places the group). Every gate is a predicate over

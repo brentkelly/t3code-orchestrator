@@ -355,6 +355,7 @@ export function BoardCardContent({
   childRunning,
   noPullRequest,
   atMergeStage,
+  atDoneStage = false,
   autoMergeArmed,
   autoBuildArmed,
   worktreeKeptReason,
@@ -415,6 +416,8 @@ export function BoardCardContent({
       the only place an armed card wears the grey `Auto` glyph. Absent on the
       surfaces that do not resolve it (the drag ghost, the archive sheet). */
   readonly atMergeStage?: boolean | undefined;
+  /** Whether this card sits in the done-role stage, where its worker shows as an icon only. */
+  readonly atDoneStage?: boolean | undefined;
   /** The card's resolved Auto-merge (`boardShellAutoMergeArmedByCard`):
       its own setting, its nearest group's, or the board-wide one.
       Absent reads the card's own setting alone. */
@@ -739,6 +742,7 @@ export function BoardCardContent({
       {isGroup ? null : (
         <BoardCardMetaRow
           cost={costSlot}
+          compactWorker={atDoneStage}
           meta={boardCardMeta(card, todoThreads.length)}
           worker={boardCardWorkerChip(card, workers)}
         />
@@ -771,6 +775,7 @@ function DraggableBoardCardView({
   childRunning,
   noPullRequest,
   atMergeStage,
+  atDoneStage = false,
   autoMergeArmed,
   autoBuildArmed,
   worktreeKeptReason,
@@ -800,6 +805,7 @@ function DraggableBoardCardView({
   /** T3o: forwarded to the card face. */
   readonly noPullRequest?: boolean | undefined;
   readonly atMergeStage?: boolean | undefined;
+  readonly atDoneStage?: boolean | undefined;
   readonly autoMergeArmed?: boolean | undefined;
   readonly autoBuildArmed?: boolean | undefined;
   readonly worktreeKeptReason?: string | null | undefined;
@@ -858,6 +864,7 @@ function DraggableBoardCardView({
         childRunning={childRunning}
         noPullRequest={noPullRequest}
         atMergeStage={atMergeStage}
+        atDoneStage={atDoneStage}
         autoMergeArmed={autoMergeArmed}
         autoBuildArmed={autoBuildArmed}
         worktreeKeptReason={worktreeKeptReason}

@@ -13,11 +13,12 @@ import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Ref from "effect/Ref";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ServerConfig from "../config.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
-import { fakeThreadState, makeFakeThreadGateway } from "./threadGateway.testkit.ts";
+import { aliveThread, fakeThreadState, makeFakeThreadGateway } from "./threadGateway.testkit.ts";
 import { makeLinkedThreadWorkers, makeThreadGatewayRouter } from "./ThreadGatewayRouter.ts";
 import {
   CENTRAL_ID,
@@ -104,7 +105,7 @@ const setup = Effect.gen(function* () {
   const router = makeThreadGatewayRouter({
     local: central.gateway,
     feed: emptyWorkerSignalFeed,
-    linkedWorkers: makeLinkedThreadWorkers(sql),
+    linkedWorkers: makeLinkedThreadWorkers(sql, CENTRAL_ID),
     remote: (workerId) =>
       makeRemoteThreadGateway({
         workerId,
@@ -208,6 +209,62 @@ describe("the thread gateway router's pull request links (T3O-75)", () => {
           ...pullRequest,
         });
         assert.deepStrictEqual((yield* worker.pullRequestLinks).get(WORKER_THREAD), []);
+      }),
+    ),
+  );
+});
+
+describe("the thread gateway router's schedule runs (T3O-118)", () => {
+  const SCHEDULE_THREAD = ThreadId.make("thread-schedule-on-worker");
+  const LOCAL_SCHEDULE_THREAD = ThreadId.make("thread-schedule-local");
+  const GONE_SCHEDULE_THREAD = ThreadId.make("thread-schedule-removed-worker");
+
+  it.effect("routes a schedule run with no card to the worker its run is recorded on", () =>
+    run(
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const { router, threads: worker } = yield* setup;
+        for (const [threadId, environmentId] of [
+          [SCHEDULE_THREAD, WORKER_ID],
+          [LOCAL_SCHEDULE_THREAD, CENTRAL_ID],
+          [GONE_SCHEDULE_THREAD, "env-removed"],
+        ] as const) {
+          yield* sql`
+            INSERT INTO boards.schedule_run_threads
+              (thread_id, project_id, file_id, environment_id, started_at)
+            VALUES (${threadId}, 'project-1', 'nightly', ${environmentId}, '2026-01-01T00:00:00.000Z')
+          `;
+        }
+        yield* worker.gateway.spawn({
+          commandId: CommandId.make("server:board-schedule:worker"),
+          threadId: SCHEDULE_THREAD,
+          projectId: WORKER_PROJECT_ID,
+          title: "nightly",
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5-codex" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: "t3o/schedule-run-1",
+          worktreePath: `${WORKER_ROOT}-run`,
+          text: "Run the nightly.",
+          attachments: [],
+        });
+        yield* Ref.update(worker.states, (states) =>
+          new Map(states).set(SCHEDULE_THREAD, aliveThread(SCHEDULE_THREAD)),
+        );
+        // Never spawned through the router, so nothing in its memory: the database answers.
+        const state = yield* router.threadState(SCHEDULE_THREAD);
+        assert.strictEqual(
+          state === null || state === "unknown" ? null : state.threadId,
+          SCHEDULE_THREAD,
+        );
+        const sweep = yield* router.openThreadIds([
+          SCHEDULE_THREAD,
+          LOCAL_SCHEDULE_THREAD,
+          GONE_SCHEDULE_THREAD,
+        ]);
+        assert.deepStrictEqual([...sweep.open], [SCHEDULE_THREAD]);
+        // A run on this server stays this server's; a removed worker's is never asked.
+        assert.deepStrictEqual([...sweep.unanswered], [GONE_SCHEDULE_THREAD]);
       }),
     ),
   );

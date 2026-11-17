@@ -53,6 +53,27 @@ Known gap: threads unlinked while still alive are tracked only in the reactor's 
 reactor is a partial backstop; closing the gap needs a durable "board is done with this thread"
 record.
 
+## Schedule runs (T3O-117)
+
+A t3o.json schedule's upstream task is only a timer: `ScheduledTaskService.runTask` hands a linked
+task's run to `board/schedules/` (`scheduleRuns.ts`), which launches it in a fresh worktree or
+fails with a `Skipped: …` reason, so upstream's `lastRunStatus` tells the truth. Its outcome is
+worked out when read, from `schedule_run_threads` and the run thread's state, so nothing is lost
+across a restart. The runner must return fast: upstream runs due tasks one at a time, and a
+fixed-time run delayed past its ten-minute grace is silently skipped.
+
+A run on a worker (T3O-118) still fires on the board server's timer. The runner checks the worker
+can take it, records the run, then forks `gateway.launchScheduleRun` (protocol 6): the worker
+records the thread as relayed before launching, so its first board call relays, and prunes the
+schedule's older runs itself, since only it holds their worktrees. The router finds a run's worker
+from `schedule_run_threads`, which no card link covers. The worker's agent-cap reservation lapses
+during worktree setup, so the cap is approximate for these runs.
+
+`scheduleThreadPolicy` limits a run thread's board tools to its project and the cards its
+schedule's runs created (`schedule_created_cards`). Every run has full access to its machine, so
+this is a guardrail against model mistakes and casual prompt injection, not a security boundary:
+anything the run could do through a tool it can also do through the shell.
+
 ## Distributed board
 
 ### MCP relay
@@ -64,8 +85,10 @@ to the central server over the relay stream the central server holds open (`rela
 `board-unreachable`, never a silent success.
 
 The central side runs the same handlers under a synthesised invocation scope after checking that
-the thread is linked to a card on the very worker the call came from, and that the routed gateway
-sees it as a live caller. A card named by a write is bound the same way
+the thread is linked to a card on the very worker the call came from, or is a t3o.json schedule run
+the board itself recorded (`schedule_run_threads`) on that worker, and that the routed gateway
+sees it as a live caller. A schedule run is then held to `scheduleThreadPolicy`. The board
+authorises against its own records, so a worker can't claim a run it wasn't sent. A card named by a write is bound the same way
 (`refuseOtherWorkersCard`). Calls are answered once per worker and call id: a recorded answer is
 re-sent, a running call is awaited, and transient refusals are not recorded.
 

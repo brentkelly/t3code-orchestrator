@@ -32,6 +32,8 @@ import {
   useUpdateBoardSettings,
 } from "../useBoardEnvironmentId";
 import { BoardImportNotices } from "./BoardImportNotice";
+import { useBoardSchedules } from "../schedules/useBoardSchedules";
+import { boardScheduleNeedsAttention } from "./boardProjectSettings.logic";
 
 export function BoardProjectsPage() {
   const resolution = useBoardEnvironment();
@@ -89,6 +91,8 @@ function ProjectRows({
 }) {
   const shellState = useAtomValue(environmentShell.stateValueAtom(environmentId));
   const projects = Option.getOrNull(shellState.snapshot)?.projects ?? [];
+  // T3o: each project's t3o.json schedules, for its chip (T3O-117).
+  const schedules = useBoardSchedules(environmentId)?.schedules ?? [];
 
   const setProject = (
     projectId: ProjectId,
@@ -134,6 +138,10 @@ function ProjectRows({
                 Hidden
               </span>
             ) : null}
+            <ScheduleChip
+              projectId={project.id}
+              rows={schedules.filter((row) => row.projectId === project.id)}
+            />
             <span className="min-w-2 flex-1" />
             <BoardInput
               key={`${project.id}:${entry?.keyPrefix ?? ""}`}
@@ -193,5 +201,28 @@ function ProjectRows({
         );
       })}
     </div>
+  );
+}
+
+function ScheduleChip(props: {
+  readonly projectId: ProjectId;
+  readonly rows: ReadonlyArray<Parameters<typeof boardScheduleNeedsAttention>[0]>;
+}) {
+  const count = props.rows.length;
+  if (count === 0) return null;
+  return (
+    <Link
+      className="inline-flex shrink-0 items-center gap-1 rounded-full bg-accent px-1.75 py-px text-board-11 font-medium text-muted-foreground hover:text-foreground"
+      params={{ projectId: props.projectId, tab: "schedules" }}
+      to="/settings/board/projects/$projectId/$tab"
+    >
+      {props.rows.some(boardScheduleNeedsAttention) ? (
+        <span
+          aria-label="A schedule needs attention"
+          className="size-1.5 rounded-full bg-warning-foreground"
+        />
+      ) : null}
+      {count === 1 ? "1 schedule" : `${count} schedules`}
+    </Link>
   );
 }

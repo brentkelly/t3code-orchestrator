@@ -194,10 +194,10 @@ const BoardCardDbRow = Schema.Struct({
   splitRecommendation: Schema.NullOr(Schema.fromJsonString(BoardSplitRecommendation)),
   // T3o: NULL before migration 078 and whenever no split approval is pending (T3O-105).
   pendingSplitApproval: Schema.NullOr(Schema.fromJsonString(BoardPendingSplitApproval)),
-  // T3o: NULL before migration 080's backfill, and when no gate attempt is blocked (T3O-115).
+  // T3o: NULL before migration 083's backfill, and when no gate attempt is blocked (T3O-115).
   stageEnteredAt: Schema.NullOr(IsoDateTime),
   gateBlock: Schema.NullOr(Schema.fromJsonString(BoardCardGateBlock)),
-  // T3o: NULL before migration 081 and until a merge fix is spent in a stay (T3O-116).
+  // T3o: NULL before migration 084 and until a merge fix is spent in a stay (T3O-116).
   mergeStay: Schema.NullOr(Schema.fromJsonString(BoardCardMergeStay)),
   autoPlan: Schema.NullOr(Schema.fromJsonString(BoardCardAutoPlan)),
   /** NULL for every row written before migration 054 and for every card that
@@ -534,7 +534,7 @@ const BoardCardStepStateDbRow = Schema.Struct({
   // NULL before migration 067 and on every step Auto-plan never reopened.
   reopenedAt: Schema.NullOr(IsoDateTime),
   reopenedPromptAt: Schema.NullOr(IsoDateTime),
-  // T3o: NULL before migration 080 on rows it could not place in a stay, and on a step the
+  // T3o: NULL before migration 083 on rows it could not place in a stay, and on a step the
   // board never auto-answered (T3O-115).
   stageEnteredAt: Schema.NullOr(IsoDateTime),
   autoAnswers: Schema.NullOr(Schema.Int),

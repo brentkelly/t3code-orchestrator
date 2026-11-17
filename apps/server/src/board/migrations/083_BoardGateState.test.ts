@@ -1,5 +1,5 @@
 /**
- * Board migration 080: the stay marker is backfilled so a pre-migration board fires nothing new,
+ * Board migration 083: the stay marker is backfilled so a pre-migration board fires nothing new,
  * and a card dragged back into Planning never reads its old step as this stay's (T3O-115).
  */
 import { assert, it } from "@effect/vitest";
@@ -9,10 +9,10 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { runMigrations } from "../../persistence/Migrations.ts";
 import { attachBoardDatabase } from "../boardDatabase.ts";
-import { BOARD_STALE_STAY_SENTINEL } from "./080_BoardGateState.ts";
+import { BOARD_STALE_STAY_SENTINEL } from "./083_BoardGateState.ts";
 import { BOARD_MIGRATIONS } from "./index.ts";
 
-const MIGRATION_ID = 80;
+const MIGRATION_ID = 83;
 const CREATED = "2026-01-01T00:00:00.000Z";
 const MOVED = "2026-01-02T00:00:00.000Z";
 const AFTER = "2026-01-02T00:05:00.000Z";
@@ -85,7 +85,7 @@ it.effect("backfills each card's stay and keeps a step only when it ran during t
     yield* insertCard("quiet", "ready");
 
     const migration = BOARD_MIGRATIONS.find(([id]) => id === MIGRATION_ID);
-    assert.ok(migration, "migration 080 is registered in the lineage");
+    assert.ok(migration, "migration 083 is registered in the lineage");
     yield* migration[2];
 
     const cards = yield* sql<{ readonly cardId: string; readonly entered: string | null }>`

@@ -325,6 +325,27 @@ Agents on a worker keep reaching the board through their own server, which passe
 on to the board server. While the board server isn't connected to that worker, an agent's board
 calls fail with a message telling it to retry shortly.
 
+## Scheduling a t3o.json task on a worker
+
+A project's `t3o.json` schedules can run on a worker as well as on the board server: pick the
+worker in the import dialog's **Run on** picker, or later on the project's **Schedules** tab. The
+picker lists each worker with whether it is connected and ready for the project; one that is
+offline, out of date or not ready for the project can't be picked until it is.
+
+- **The board server keeps the time.** Every schedule fires on the board server's clock, and only
+  while the board server is up. The worker only runs what the board sends it.
+- **A run due while the worker can't take it is skipped**, and shows amber as skipped with the
+  reason: offline, needs a T3o update, not ready for the project, its provider signed out, or at
+  its agent limit. The Schedules tab warns while its worker is offline and offers to move it.
+- **Its board tools reach the board**, limited to the schedule's project, as on the board server.
+  A run can't change a card that runs on another machine.
+- **A worker's agent limit is approximate for schedule runs**: a run counts against it from its
+  launch, but the hold lapses while the worktree is set up, so a burst can briefly exceed it. A
+  schedule never has two runs going at once.
+- The worker keeps the latest runs and removes older settled ones, their worktrees and branches
+  with them, as on the board server; a run that filed or changed a card keeps its thread. This carries on after the schedule
+  moves to another machine, each time it fires, while the old worker is online.
+
 ## Removing a worker
 
 **Remove worker…** in a worker's menu takes it off the board, gives back everything the board held

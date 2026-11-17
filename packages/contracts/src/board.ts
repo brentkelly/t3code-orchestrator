@@ -65,6 +65,14 @@ import {
   isEmptyBoardProjectResources,
 } from "./boardCapacity.ts";
 import { BoardCardActualsRow } from "./boardActuals.ts";
+// T3o: t3o.json schedules (T3O-117).
+import {
+  BOARD_SCHEDULE_RPCS,
+  BOARD_SCHEDULE_RPC_SCOPES,
+  BoardScheduleExportedTask,
+  BoardScheduleImportOutcome,
+  BoardScheduleImportRow,
+} from "./boardSchedules.ts";
 import {
   BOARD_WORKER_GIT_CALL_RPC_SCOPES,
   BOARD_WORKER_GIT_CALL_RPCS,
@@ -2306,7 +2314,7 @@ export const BoardCard = Schema.Struct({
   ),
   /** T3o: when the card entered its current stage (T3O-115), stamped by the decider on every
       stage change and copied onto the step row at `select-step`, so "this stay" is decidable.
-      Absent on rows and events older than migration 080. */
+      Absent on rows and events older than migration 083. */
   stageEnteredAt: Schema.optionalKey(IsoDateTime),
   /** T3o: the last automation gate attempt that could not act (T3O-115). Absent when none. */
   gateBlock: Schema.optionalKey(BoardCardGateBlock),
@@ -9348,8 +9356,14 @@ export const BoardProjectImportCandidate = Schema.Struct({
       delta: BoardProjectImportDelta,
       createStages: Schema.Array(Schema.Struct({ stageId: BoardStageId, label: Schema.String })),
       texts: Schema.Array(BoardProjectImportText),
+      /** Schedules the import creates, updates, adopts or deletes (T3O-117). */
+      schedules: Schema.optional(Schema.Array(BoardScheduleImportRow)),
+      /** The pipeline and CI already match; only schedules differ. */
+      schedulesOnly: Schema.optional(Schema.Boolean),
     }),
   ),
+  /** How many schedules the file declares, whatever the status (T3O-117). */
+  fileScheduleCount: Schema.optional(NonNegativeInt),
 });
 export type BoardProjectImportCandidate = typeof BoardProjectImportCandidate.Type;
 
@@ -9364,11 +9378,19 @@ export const BoardProjectImportInput = Schema.Struct({
   projectId: ProjectId,
   blobSha: TrimmedNonEmptyString,
   expectedConfigVersion: Schema.String,
+  /** Where each previewed schedule runs, by file id; omitted or null is Don't schedule
+      (T3O-117). Rows the import doesn't change keep their machine whatever this says. */
+  schedulePlacements: Schema.optional(Schema.Record(Schema.String, Schema.NullOr(EnvironmentId))),
 });
 export type BoardProjectImportInput = typeof BoardProjectImportInput.Type;
 
 export const BoardProjectImportResult = Schema.Union([
-  Schema.Struct({ outcome: Schema.Literal("imported"), sequence: NonNegativeInt }),
+  Schema.Struct({
+    outcome: Schema.Literal("imported"),
+    sequence: NonNegativeInt,
+    // T3o: what happened to the file's schedules (T3O-117).
+    schedules: Schema.optional(BoardScheduleImportOutcome),
+  }),
   /** The committed file is no longer the blob the human confirmed. */
   Schema.Struct({ outcome: Schema.Literal("file-changed") }),
   Schema.Struct({ outcome: Schema.Literal("version-mismatch") }),
@@ -9376,18 +9398,34 @@ export const BoardProjectImportResult = Schema.Union([
 ]);
 export type BoardProjectImportResult = typeof BoardProjectImportResult.Type;
 
+export const BoardProjectExportInput = Schema.Struct({
+  projectId: ProjectId,
+  /** "Export again without them": leave out the hand-made tasks the last export linked. */
+  excludeHandMade: Schema.optional(Schema.Boolean),
+});
+export type BoardProjectExportInput = typeof BoardProjectExportInput.Type;
+
+// T3o: hand-made scheduled tasks the export brought into the file, and the
+// tasks it couldn't express (T3O-117).
+const BoardProjectExportSchedules = {
+  handMade: Schema.optional(Schema.Array(BoardScheduleExportedTask)),
+  warnings: Schema.optional(Schema.Array(Schema.String)),
+};
+
 export const BoardProjectExportResult = Schema.Union([
   /** Written to the checkout, not committed. */
   Schema.Struct({
     outcome: Schema.Literal("written"),
     path: Schema.String,
     content: Schema.String,
+    ...BoardProjectExportSchedules,
   }),
   /** No usable checkout: the client offers the content as a download. */
   Schema.Struct({
     outcome: Schema.Literal("download"),
     content: Schema.String,
     reason: Schema.String,
+    ...BoardProjectExportSchedules,
   }),
 ]);
 export type BoardProjectExportResult = typeof BoardProjectExportResult.Type;
@@ -10118,7 +10156,7 @@ export const BOARD_RPCS = [
     error: Schema.Union([BoardSettingsCommandError, EnvironmentAuthorizationError]),
   }),
   Rpc.make(BOARD_WS_METHODS.exportProjectFile, {
-    payload: BoardProjectConfigInput,
+    payload: BoardProjectExportInput,
     success: BoardProjectExportResult,
     error: Schema.Union([BoardSettingsCommandError, EnvironmentAuthorizationError]),
   }),
@@ -10131,6 +10169,8 @@ export const BOARD_RPCS = [
   // `boardWorker.*` the central server calls over its own session.
   ...BOARD_WORKERS_RPCS,
   ...BOARD_WORKER_RPCS,
+  // T3o: the Schedules tab and the Scheduled tasks page's marker (T3O-117).
+  ...BOARD_SCHEDULE_RPCS,
   // The worker's thread gateway, the MCP relay and attachment staging.
   ...BOARD_WORKER_GATEWAY_RPCS,
   // The named git and forge operations a card's worker runs.
@@ -10188,6 +10228,7 @@ export const BOARD_RPC_SCOPES = {
   [BOARD_WS_METHODS.projectTokenStatus]: AuthSettingsWriteScope,
   // Worker management and the worker side's handshake.
   ...BOARD_WORKER_RPC_SCOPES,
+  ...BOARD_SCHEDULE_RPC_SCOPES,
   ...BOARD_WORKER_GATEWAY_RPC_SCOPES,
   ...BOARD_WORKER_GIT_CALL_RPC_SCOPES,
 } as const;

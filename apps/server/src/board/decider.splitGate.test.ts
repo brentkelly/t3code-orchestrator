@@ -405,6 +405,22 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("split gate (T3O-
     }),
   );
 
+  it.effect("starts the group when Auto sign-off and Auto-build are both on", () =>
+    Effect.gen(function* () {
+      const board = makeBoard({
+        parent: { splitRationale: WHY },
+        plans: [makePlan({ key: "p1", ordinal: 0 }), makePlan({ key: "p2", ordinal: 1 })],
+      });
+      const startedWith = (autoSignOff: boolean, autoBuild: boolean) =>
+        decideEvents(approve({ autoSignOff, autoBuild }), board).pipe(
+          Effect.map((events) => approvedEvent(events).payload.card.group?.started),
+        );
+      expect(yield* startedWith(true, true)).toBe(true);
+      expect(yield* startedWith(false, true)).toBe(false);
+      expect(yield* startedWith(true, false)).toBe(false);
+    }),
+  );
+
   it.effect("gives an own branch to a split with Needs-planning children (T3O-53)", () =>
     Effect.gen(function* () {
       const plans = [
@@ -481,7 +497,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("split gate (T3O-
         autoBuild: true,
         autoPlan: true,
         autoSignOff: true,
-        started: false,
+        started: true,
       });
     }),
   );

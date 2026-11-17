@@ -106,7 +106,6 @@ import {
   BOARD_SUBMIT_STEP_LABEL,
   DEFAULT_BOARD_BUILD_STAGE_EXECUTION,
   DEFAULT_BOARD_SETTINGS,
-  DEFAULT_SERVER_SETTINGS,
   EMPTY_BOARD_STATE,
   effectiveBoardStageRole,
   isBoardCardPullRequestTerminal,
@@ -122,7 +121,6 @@ import {
   effectiveBoardRuntimeMode,
   isLiveBoardCardThreadLink,
   resolveBoardStageExecution,
-  resolveBoardDefaultModelSelection,
   resolveBoardStageModelSelection,
   resolveBoardCardMergeStrategy,
   resolveBoardCardStageModelOverride,
@@ -200,7 +198,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { BoardSetupScriptRunner } from "./ports/BoardSetupScriptRunner.ts";
 import * as ServerConfig from "../config.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
-import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import { boardFallbackModelSelection } from "./boardFallbackModel.ts";
 import { forkParked, ServerActivation } from "../serverActivation.ts";
 import { BoardCapacityClient } from "./capacity/BoardCapacityClient.ts";
 import { BoardWorkerCapacity } from "./capacity/BoardWorkerCapacity.ts";
@@ -228,7 +226,10 @@ import {
 } from "./ThreadGateway.ts";
 import type { BoardCommand } from "./decider.ts";
 import { syncCardThreadPullRequests } from "./cardThreadPullRequests.ts";
-import { resolveCardPullRequestTarget } from "./cardPullRequestTarget.ts";
+import {
+  confirmsRenamedRepositoryTarget,
+  resolveCardPullRequestTarget,
+} from "./cardPullRequestTarget.ts";
 import {
   removeBoardCardAttachmentsDir,
   resolveBoardCardAttachmentPath,
@@ -1034,33 +1035,8 @@ const make = Effect.gen(function* () {
     Effect.catchCause(() => Effect.succeed(DEFAULT_BOARD_SETTINGS)),
   );
 
-  /**
-   * A stage with no model runs on the board's default, else the project's default override, else
-   * the project-resolved text-generation selection. No compiled-in pair (it may not be installed),
-   * and not the environment-wide chat default, which would move every unset stage onto it.
-   */
   const fallbackModelSelectionFor = (projectId: ProjectId) =>
-    serverSettings.getSettings.pipe(
-      Effect.map((settings) => {
-        const resolved = resolveProjectSettings(settings, projectId);
-        const projectDefault =
-          resolved.sources.defaultModelSelection === "project"
-            ? resolved.settings.defaultModelSelection
-            : null;
-        const selection = projectDefault ?? resolved.settings.textGenerationModelSelection;
-        return resolveBoardDefaultModelSelection(settings.board ?? DEFAULT_BOARD_SETTINGS, {
-          instanceId: selection.instanceId,
-          model: selection.model,
-          ...(selection.options === undefined ? {} : { options: selection.options }),
-        });
-      }),
-      Effect.catchCause(() =>
-        Effect.succeed({
-          instanceId: DEFAULT_SERVER_SETTINGS.textGenerationModelSelection.instanceId,
-          model: DEFAULT_SERVER_SETTINGS.textGenerationModelSelection.model,
-        }),
-      ),
-    );
+    boardFallbackModelSelection(serverSettings, projectId);
 
   // Threads spawned for a step whose admit was then rejected. An interrupt fired right after
   // spawn races provider session startup and no-ops, so `session.started` for an orphan
@@ -7566,8 +7542,9 @@ const make = Effect.gen(function* () {
 
   /**
    * Resolve a pull request to link to a card in `projectId`, forced. Refuses one not on the
-   * project's repository or unknown to the forge, in words fit to show. Records nothing, so a
-   * caller can check it before the card exists.
+   * project's repository or unknown to the forge, in words fit to show; another repository's
+   * name is read by number and linked only if the forge returns it under that name (a rename).
+   * Records nothing, so a caller can check it before the card exists.
    */
   const resolvePullRequestLink = Effect.fn("board-supervisor-resolvePullRequestLink")(function* (
     workspace: BoardCardWorkspace,
@@ -7579,23 +7556,34 @@ const make = Effect.gen(function* () {
       .pullRequestRepository({})
       .pipe(Effect.orElseSucceed(() => null));
     const resolved = resolveCardPullRequestTarget(target, repository);
-    if ("refused" in resolved) {
+    // T3o (T3O-119): another repository's name may be this one's since a rename; the forge decides.
+    if ("refused" in resolved && resolved.reason !== "other-repository") {
       return { outcome: "refused", detail: resolved.refused } as const;
     }
     const found = yield* workspace.getPullRequest({ number: resolved.number, force: true }).pipe(
       Effect.map((summary) => ({ summary }) as const),
-      Effect.catch((error) =>
-        Effect.succeed({
-          failure: `Could not find pull request #${resolved.number}: ${error.detail}`,
-        } as const),
-      ),
+      Effect.catch((error) => Effect.succeed({ failure: error.detail } as const)),
       Effect.catchCause(() =>
-        Effect.succeed({
-          failure: `Could not find pull request #${resolved.number}: the lookup failed unexpectedly.`,
-        } as const),
+        Effect.succeed({ failure: "the lookup failed unexpectedly." } as const),
       ),
     );
-    if ("failure" in found) return { outcome: "refused", detail: found.failure } as const;
+    if ("refused" in resolved) {
+      if ("failure" in found) {
+        return {
+          outcome: "refused",
+          detail: `${resolved.refused} Could not check whether this card's repository was renamed to it: ${found.failure}`,
+        } as const;
+      }
+      if (!confirmsRenamedRepositoryTarget(resolved, found.summary.url)) {
+        return { outcome: "refused", detail: resolved.refused } as const;
+      }
+    }
+    if ("failure" in found) {
+      return {
+        outcome: "refused",
+        detail: `Could not find pull request #${resolved.number}: ${found.failure}`,
+      } as const;
+    }
     const summary = found.summary;
     const pullRequest = {
       number: summary.number,
@@ -11376,7 +11364,7 @@ const make = Effect.gen(function* () {
   ) {
     yield* ensureIntegrationBranch(event.payload.card);
     // Approving a split on a parent already at build emits no move, so the cascade's usual trigger
-    // never comes. The helper no-ops unless the parent is at build.
+    // never comes. The helper no-ops unless the group has started.
     yield* cascadeUnblockedChildren(event.payload.card.id);
   });
 

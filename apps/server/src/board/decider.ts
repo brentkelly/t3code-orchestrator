@@ -4982,7 +4982,9 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         ...endBoardCardAutoPlan(card, command.createdAt),
         group: defaultBoardCardGroup(board, card, {
           ...settings,
-          started: card.stage === buildStage.stageId,
+          // Auto sign-off with Auto-build is the human's go-ahead to build once signed off.
+          started:
+            card.stage === buildStage.stageId || (settings.autoSignOff && settings.autoBuild),
           // T3o: its planning is finished, so the group waits in Ready, not Planning (T3O-115).
           ...(card.stage === planStageId ? { placed: floor.stageId } : {}),
         }),
