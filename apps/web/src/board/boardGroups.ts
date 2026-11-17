@@ -338,10 +338,9 @@ export function boardGroupCardVm(
   };
 }
 
-/** "auto-build on" once started, "auto-build armed" before; empty when off. */
+/** "auto-build on" when on, whether or not the group has started (T3O-115); empty when off. */
 export function boardGroupAutoBuildLabel(group: BoardCardGroup): string {
-  if (!group.autoBuild) return "";
-  return group.started ? "auto-build on" : "auto-build armed";
+  return group.autoBuild ? "auto-build on" : "";
 }
 
 // ── Drag rules ──────────────────────────────────────────────────────────
@@ -541,15 +540,13 @@ export function boardGroupSettingsVm(
     autoSignOff: {
       on: group.autoSignOff,
       note: group.autoSignOff
-        ? "Approve each child's plan without you. A proposed split still waits for you."
+        ? "Approve each child's finished plan without you, a split included."
         : "Off: each child's plan waits for you.",
     },
     autoBuild: {
       on: group.autoBuild,
       note: group.autoBuild
-        ? group.started
-          ? "Ready children whose dependencies are met build, review and merge on their own."
-          : "Armed. The cascade starts when you drag the group to Building."
+        ? "Ready children whose dependencies are met build, review and merge on their own."
         : "Children wait for you to start them. Turning this off never interrupts a running child.",
     },
     autoMerge: boardWide

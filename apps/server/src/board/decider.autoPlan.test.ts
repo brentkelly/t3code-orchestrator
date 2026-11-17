@@ -389,7 +389,7 @@ const groupOf = (overrides: Partial<NonNullable<BoardCard["group"]>> = {}) => ({
   ...overrides,
 });
 
-const moveTo = (stage: string, id = "card-auto", cause?: "auto-build"): BoardCommand => ({
+const moveTo = (stage: string, id = "card-auto", cause?: "auto-build" | "human"): BoardCommand => ({
   type: "board.card.move",
   commandId: CommandId.make(`cmd-move-${id}-${stage}`),
   cardId: BoardCardId.make(id),
@@ -569,7 +569,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
     );
 
     it.effect(
-      "a drag back out of Building turns Auto-build off; back into Planning, Auto-plan",
+      "a person's drag back out of Building turns Auto-build off; back into Planning, Auto-plan",
       () =>
         Effect.gen(function* () {
           const built = makeCard({
@@ -579,11 +579,15 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
             autoSignOffSetting: true,
             autoBuildSetting: true,
           });
-          const toReady = movedCard(yield* decideEvents(moveTo("ready"), readModel([built])));
+          const toReady = movedCard(
+            yield* decideEvents(moveTo("ready", "card-auto", "human"), readModel([built])),
+          );
           expect(toReady.payload.card.autoBuildSetting).toBe(false);
           expect(toReady.payload.card.autoPlanSetting).toBe(true);
           expect(toReady.payload.automationChanged).toEqual({ autoBuild: true });
-          const toPlanning = movedCard(yield* decideEvents(moveTo("planning"), readModel([built])));
+          const toPlanning = movedCard(
+            yield* decideEvents(moveTo("planning", "card-auto", "human"), readModel([built])),
+          );
           expect(toPlanning.payload.card).toMatchObject({
             autoBuildSetting: false,
             autoPlanSetting: false,
@@ -603,6 +607,14 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
           );
           expect(forward.payload.automationChanged).toBeUndefined();
           expect(forward.payload.card.autoBuildSetting).toBe(null);
+          // T3o: an agent's or the board's backward move disarms nothing (T3O-115).
+          const byAgent = movedCard(yield* decideEvents(moveTo("planning"), readModel([built])));
+          expect(byAgent.payload.automationChanged).toBeUndefined();
+          expect(byAgent.payload.card).toMatchObject({
+            autoBuildSetting: true,
+            autoPlanSetting: true,
+            autoSignOffSetting: true,
+          });
         }),
     );
 

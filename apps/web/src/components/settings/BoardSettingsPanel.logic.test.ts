@@ -51,11 +51,11 @@ describe("stage execution mutations", () => {
     // stage resolves to — its seeded config for a seeded stage, the empty
     // all-defaults one for a custom stage — and produces a complete entry.
     const custom = setBoardStageExecution(boardWith({}), CUSTOM, { autoExecute: true });
-    // The resolved config now carries the effective access level: a
-    // custom stage is plan-mode by default, so `approval-required`.
+    // The resolved config now carries the effective access level: `auto` unless the stage sets
+    // one, plan-mode stages included (T3O-115).
     expect(custom[CUSTOM]).toEqual({
       ...DEFAULT_BOARD_STAGE_EXECUTION,
-      runtimeMode: "approval-required",
+      runtimeMode: "auto",
       autoExecute: true,
     });
 

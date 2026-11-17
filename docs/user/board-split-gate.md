@@ -39,12 +39,13 @@ branch usually inherits.
 
 ## Approving
 
-**Approve split** creates the children and makes the card a group. It starts nothing: the group
-stays in Planning until you start it. **Ask for changes** puts a reply in the planning thread's
+**Approve split** creates the children and makes the card a group, which moves to Ready. Planned
+children land in Ready and build by themselves if the group has Auto-build on; children that still
+need planning go to Planning with Auto-plan on, Backlog otherwise. **Ask for changes** puts a reply in the planning thread's
 composer, so you can tell the agent what to change and it can propose again.
 
-A split always waits for a person, even when every automation gate is on. See
-[Automation](board-auto-plan.md).
+With the card's Auto sign-off on, the board approves the split for you; off, it waits for a
+person. See [Automation](board-auto-plan.md).
 
 ## Approving during a plan review
 

@@ -7,7 +7,6 @@ import {
   boardStageBeforeBuild,
   boardStageById,
   boardStageIndex,
-  boardPlanAutomatedBy,
   boardStageWithRole,
   effectiveBoardStageRole,
   isBoardDeferredStage,
@@ -100,7 +99,6 @@ export function boardAutomationSourceTag(toggle: BoardResolvedAutomationToggle):
   if (toggle.source === "board") return "board";
   const key = toggle.inheritedFrom?.key ?? null;
   if (key === null) return null;
-  if (toggle.waitingForGroupStart) return `from ${key} · when group starts`;
   if (toggle.source === "inherited") return toggle.value ? `from ${key}` : null;
   if (toggle.source === "own") return `overrides ${key}`;
   return null;
@@ -123,10 +121,8 @@ export interface BoardAutomationRow {
       on by the board-wide setting. */
   readonly switchDisabled: boolean;
   readonly lockReason: string | null;
-  /** Sits under the row before it: Auto sign-off belongs to automated planning. */
+  /** Sits under the row before it: Auto sign-off belongs to planning. */
   readonly indent?: boolean;
-  /** Inherited on, held until the group starts: the gate is automatic, the switch reads off. */
-  readonly waitingForGroupStart?: boolean;
 }
 
 function lockState(toggle: BoardResolvedAutomationToggle) {
@@ -150,18 +146,15 @@ function row(
     note: toggle.locked && toggle.lockReason !== null ? toggle.lockReason : note,
     tag: boardAutomationSourceTag(toggle),
     ...lockState(toggle),
-    ...(toggle.waitingForGroupStart ? { waitingForGroupStart: true } : {}),
   };
 }
 
-/** A leaf card's rows: Auto sign-off only while planning is automated. */
+/** A leaf card's rows. Auto sign-off approves finished planning whoever planned (T3O-115). */
 export function boardCardAutomationRows(input: {
   readonly resolved: BoardResolvedAutomation;
   readonly inPlanning: boolean;
   /** The plan step succeeded in Planning; Auto-plan still switches on. */
   readonly planningFinished?: boolean;
-  /** The card's plan review is on and unattended, which automates planning too. */
-  readonly planReviewUnattended?: boolean;
 }): ReadonlyArray<BoardAutomationRow> {
   const { autoPlan, autoSignOff, autoBuild, autoMerge } = input.resolved;
   const planNote =
@@ -169,51 +162,35 @@ export function boardCardAutomationRows(input: {
       ? "Planning is finished."
       : "The agent plans without asking you.";
   const signOffNote = autoSignOff.value
-    ? "Approve the agent's plan without you."
-    : "Off: the agent's plan waits for you.";
-  const buildNote = autoBuild.waitingForGroupStart
-    ? `Start once ${autoBuild.inheritedFrom?.key ?? "the group"} has started, the plan is signed off and dependencies are done.`
-    : "Start once the plan is signed off and dependencies are done.";
+    ? "Approve the finished plan without you, a split included."
+    : "Off: the finished plan waits for you.";
+  const buildNote = "Start once the plan is signed off and dependencies are done.";
   const mergeNote = autoMerge.value
     ? "Merge to the target once code review passes."
     : "Off: finished cards wait for you to merge.";
   return [
     row("autoPlan", BOARD_AUTOMATION_TOGGLE_LABELS.autoPlan, autoPlan, planNote),
-    ...(boardPlanAutomatedBy(input.resolved, {
-      unattendedInPlanning: input.inPlanning && input.planReviewUnattended === true,
-    }) === null
-      ? []
-      : [
-          {
-            ...row(
-              "autoSignOff",
-              BOARD_AUTOMATION_TOGGLE_LABELS.autoSignOff,
-              autoSignOff,
-              signOffNote,
-            ),
-            indent: true,
-          },
-        ]),
+    {
+      ...row("autoSignOff", BOARD_AUTOMATION_TOGGLE_LABELS.autoSignOff, autoSignOff, signOffNote),
+      indent: true,
+    },
     row("autoBuild", BOARD_AUTOMATION_TOGGLE_LABELS.autoBuild, autoBuild, buildNote),
     row("autoMerge", BOARD_AUTOMATION_TOGGLE_LABELS.autoMerge, autoMerge, mergeNote),
   ];
 }
 
 /**
- * Make hands-off: every gate that is off and unlocked, as one set-automation patch. Sign-off
- * comes only with automated planning. Null when there is nothing left to turn on, which hides
- * the button. The decider refuses the whole command if any toggle it turns on is locked.
+ * Make hands-off: every gate that is off and unlocked, as one set-automation patch. Null when
+ * there is nothing left to turn on, which hides the button. The decider refuses the whole
+ * command if any toggle it turns on is locked.
  */
 export function boardMakeHandsOffPatch(
   resolved: BoardResolvedAutomation,
 ): Partial<Record<BoardAutomationToggle, true>> | null {
-  // An inherited on waiting for its group is already automatic; an own on would build early.
-  const turnOn = (toggle: BoardResolvedAutomationToggle) =>
-    !toggle.value && !toggle.locked && !toggle.waitingForGroupStart;
-  const planAutomated = resolved.autoPlan.value || turnOn(resolved.autoPlan);
+  const turnOn = (toggle: BoardResolvedAutomationToggle) => !toggle.value && !toggle.locked;
   const patch: Partial<Record<BoardAutomationToggle, true>> = {
     ...(turnOn(resolved.autoPlan) ? { autoPlan: true } : {}),
-    ...(planAutomated && turnOn(resolved.autoSignOff) ? { autoSignOff: true } : {}),
+    ...(turnOn(resolved.autoSignOff) ? { autoSignOff: true } : {}),
     ...(turnOn(resolved.autoBuild) ? { autoBuild: true } : {}),
     ...(turnOn(resolved.autoMerge) ? { autoMerge: true } : {}),
   };
@@ -291,8 +268,7 @@ export interface BoardAutomationStrip {
   readonly handsOff: boolean;
 }
 
-export const BOARD_AUTOMATION_HANDS_OFF_TOOLTIP =
-  "Every gate is automatic. Proposed splits still need you.";
+export const BOARD_AUTOMATION_HANDS_OFF_TOOLTIP = "Every gate is automatic.";
 
 /**
  * The collapsed header's tag strip, one tag per gate that still applies: past Planning the Plan
@@ -305,8 +281,7 @@ export function boardAutomationStrip(input: {
   /** An unattended plan review automates the Plan gate. */
   readonly planReviewUnattended?: boolean;
 }): BoardAutomationStrip {
-  const on = (id: BoardAutomationRow["id"]) =>
-    input.rows.some((r) => r.id === id && (r.on || r.waitingForGroupStart === true));
+  const on = (id: BoardAutomationRow["id"]) => input.rows.some((r) => r.id === id && r.on);
   const has = (id: BoardAutomationRow["id"]) => input.rows.some((r) => r.id === id);
   const tags: BoardAutomationGateTag[] = [
     ...(input.pastPlanning
@@ -403,9 +378,9 @@ export function boardGroupAutomationEffects(input: {
   }
 
   if (input.toggle === "autoSignOff") {
-    if (!input.next || !settings.autoPlan) return [];
+    if (!input.next) return [];
     const waitingPlans = planning.filter(
-      (child) => child.autoPlanPending === true && !live(child) && child.planCount === 1,
+      (child) => !live(child) && (child.planCount ?? 0) >= 1,
     ).length;
     if (waitingPlans > 0) {
       lines.push(`${count(waitingPlans, "waiting plan", "waiting plans")} will be approved.`);
@@ -414,8 +389,6 @@ export function boardGroupAutomationEffects(input: {
   }
 
   if (input.toggle === "autoBuild") {
-    // Before the group starts, inherited Auto-build is armed, not on.
-    if (!settings.started) return [];
     if (input.next) {
       const ready = children.filter(at(beforeBuild)).length;
       if (ready > 0) {

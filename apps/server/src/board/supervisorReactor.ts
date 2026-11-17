@@ -40,13 +40,16 @@ import {
   type BoardWorkerId,
   boardCardAutoArchiveDue,
   boardAutoPlanInstruction,
-  boardPlanAutomatedBy,
   boardAutoPlanOffInstruction,
   BOARD_PLAN_REVIEW_LATE_START_LEAD,
   BOARD_PLAN_REVIEW_STOP_INSTRUCTION,
   isBoardCardAutoPlanPending,
-  isBoardCardReviewSignOffPending,
-  boardCardAutoBuildDue,
+  boardCardStepThisStay,
+  BOARD_AUTO_ANSWER_LIMIT,
+  BOARD_AUTO_ANSWER_TEXT,
+  boardGateDue,
+  boardGateFacts,
+  boardSplitRecommendationOf,
   boardStageBeforeBuild,
   boardCardPlanningFinished,
   type BoardAutomationChanged,
@@ -56,8 +59,6 @@ import {
   boardBuildHumanInLoopDefault,
   boardCardPendingSplit,
   boardCardPlans,
-  boardSubBoardFloorStage,
-  unmetBoardCardDependencies,
   boardCardPullRequestsEqual,
   boardPullRequestPredatesCard,
   boardCardStepCompletions,
@@ -301,8 +302,16 @@ import {
   planReviewPolicy,
   planReviewPolicyFingerprint,
   planReviewPolicyMessage,
+  resolveCardPlanReview,
   runningPlanReviewStep,
 } from "./planReview.ts";
+// T3o: the automation gate sweep (T3O-115).
+import { gateActed, gateBlocked, gateNotDue, makeBoardGateSweep } from "./gateSweep.ts";
+
+/** Why a gate action's dispatch did not land. */
+type GateDispatchFailure =
+  | { readonly kind: "refused"; readonly detail: string }
+  | { readonly kind: "fault"; readonly detail: null };
 import { keepsPlanningThreadOnExit, keptPlanningThreadId } from "./planningThreadKeep.ts";
 import { boardReleasedThreadIds } from "./threadRelease.ts";
 
@@ -508,6 +517,8 @@ export interface SupervisorReactorShape {
   >;
   /** Reconcile every non-terminal step against the live world (boot / test). */
   readonly reconcile: Effect.Effect<void>;
+  /** T3o: one pass of the production 30s tick, every sweep on it in order (T3O-115). */
+  readonly tick: Effect.Effect<void>;
   /** One timeout-sweep pass over running unattended steps. In
       production the worker runs it on a timer; exposed so tests can drive the
       liveness clock deterministically. */
@@ -946,6 +957,29 @@ const make = Effect.gen(function* () {
           : Effect.succeed<string | null>(refusal.detail);
       }),
     );
+
+  /** T3o: `dispatchRefusal` that also names a fault, so a gate action never reads one as a
+      success (T3O-115). */
+  const dispatchOutcome = (command: BoardCommand) =>
+    dispatchAny(command).pipe(
+      Effect.as<{ readonly kind: "landed" } | GateDispatchFailure>({ kind: "landed" }),
+      Effect.catchCause((cause) => {
+        if (Cause.hasInterruptsOnly(cause)) return Effect.interrupt;
+        const refusal = Cause.findErrorOption(cause).pipe(
+          Option.filter((error) => error._tag === "BoardCommandInvariantError"),
+          Option.getOrUndefined,
+        );
+        if (refusal !== undefined) {
+          return Effect.succeed<GateDispatchFailure>({ kind: "refused", detail: refusal.detail });
+        }
+        return Effect.logWarning("board supervisor dispatch failed", {
+          commandType: command.type,
+          cause: Cause.pretty(cause),
+        }).pipe(Effect.as<GateDispatchFailure>({ kind: "fault", detail: null }));
+      }),
+    );
+  const gateBlockedBy = (failure: GateDispatchFailure) =>
+    gateBlocked(failure.kind === "refused" ? "move-refused" : "fault", failure.detail);
 
   /** `dispatch`, but the caller learns whether the command LANDED. The plain
       helper above swallows a rejection, which is right for best-effort writes
@@ -2992,13 +3026,10 @@ const make = Effect.gen(function* () {
         stepLabel: state.stepLabel,
         prompt: state.prompt,
         humanInLoop: state.humanInLoop,
-        ...(role === "plan" && isBoardCardAutoPlanPending(card)
-          ? {
-              autoPlan: true,
-              ...(automationIn(yield* readBoard, card).autoSignOff.value
-                ? { autoSignOff: true }
-                : {}),
-            }
+        ...(role === "plan" && isBoardCardAutoPlanPending(card) ? { autoPlan: true } : {}),
+        // T3o: attended planning is told too, so a card jumping to Ready is expected (T3O-115).
+        ...(role === "plan" && automationIn(yield* readBoard, card).autoSignOff.value
+          ? { autoSignOff: true }
           : {}),
         ...(planReview === null ? {} : { planReview }),
       },
@@ -6133,42 +6164,10 @@ const make = Effect.gen(function* () {
     const board = yield* readBoard;
     const parent = board.cards.find((candidate) => candidate.id === parentCardId);
     if (parent === undefined || parent.archivedAt !== null) return;
-    const group = boardCardGroupOf(board, parent);
-    // Only a group with auto-build on starts its own children; one
-    // with it off is started child by child.
-    if (group === null || !group.autoBuild) return;
-    const buildStage = boardStageWithRole(board, "build");
-    const floor = boardSubBoardFloorStage(board);
-    if (buildStage === null || floor === null) return;
-    // Only once the group has BEGUN (`started`, set when a human starts the group or moves a
-    // child into build; never by a child's own Auto-build). After that the group runs to
-    // completion wherever it is parked, so dragging it back must not strand freed siblings.
-    if (!group.started) return;
-    for (const child of boardCardActiveChildren(board, parent.id)) {
-      // Waiting on the floor is the only state this starts. A child further
-      // along is already running, done, or parked somewhere by a human — and
-      // none of those want a move. A child group on the floor is started the
-      // same way, and its own arrival cascades one level down.
-      if (child.stage !== floor.stageId) continue;
-      // One mover per card: a child with its own Auto-build value is
-      // the due check's (own on) or stays put (own off).
-      if (child.autoBuildSetting !== null) continue;
-      // The dependency gate would refuse this move anyway; skipping it
-      // here keeps the cascade from teaching the rule by refusal.
-      const unmet = unmetBoardCardDependencies({
-        board,
-        dependsOn: boardCardInheritedDependsOn(board, child),
-        cards: board.cards,
-      });
-      if (unmet.length > 0) continue;
-      yield* dispatch({
-        type: "board.card.move",
-        commandId: yield* commandId("cascade-child"),
-        cardId: child.id,
-        toStage: buildStage.stageId,
-        createdAt: yield* nowIso,
-      });
-    }
+    if (boardCardGroupOf(board, parent) === null) return;
+    // T3o: each child's own gates decide, whether or not the group has started (T3O-115). A child
+    // further along, or parked by a human before Ready, has no gate due.
+    yield* fireDueGates(boardCardActiveChildren(board, parent.id).map((child) => child.id));
   });
 
   /**
@@ -8711,7 +8710,7 @@ const make = Effect.gen(function* () {
       prompt: submit.prompt,
       providerInstanceId: model.instanceId,
       model: model.model,
-      runtimeMode: effectiveBoardRuntimeMode(submit.runtimeMode, "build"),
+      runtimeMode: effectiveBoardRuntimeMode(submit.runtimeMode),
       ...(model.options === undefined ? {} : { modelOptions: model.options }),
       mode: "build",
       // Unattended whatever the card's human-in-the-loop stance: there is
@@ -9319,49 +9318,15 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * End the auto-plan request when the board stopped driving the run: a step parked on a human or
-   * settled `failed`. Reads the live step, so one already back at work keeps its request.
-   */
-  const endAutoPlanIfUndriven = Effect.fn("board-supervisor-endAutoPlanIfUndriven")(function* (
-    cardId: BoardCardId,
-  ) {
-    const board = yield* readBoard;
-    const card = board.cards.find((candidate) => candidate.id === cardId);
-    if (card === undefined || !isBoardCardAutoPlanPending(card)) return;
-    const stage = boardStageById(board, card.stage);
-    if (stage === null || effectiveBoardStageRole(stage) !== "plan") return;
-    const state = boardCardStepState(board, card.id);
-    if (state === null || state.stepId !== card.stage) return;
-    const undriven =
-      state.status === "awaiting-input" ||
-      state.status === "paused" ||
-      state.status === "failed" ||
-      (state.status === "stalled" && state.retryAt === null);
-    if (!undriven) return;
-    yield* endAutoPlan(
-      card.id,
-      "Auto-plan stopped: the planning run stopped or is waiting on you, so nothing will be approved automatically. Finish planning by hand, or click Auto-plan again.",
-    );
-  });
-
-  /** T3o: a deferred split approval is due once its card's planning step has succeeded (T3O-105). */
-  const deferredSplitApprovalDue = (board: BoardState, card: BoardCard): boolean => {
-    if (card.archivedAt !== null || card.pendingSplitApproval === undefined) return false;
-    const stage = boardStageById(board, card.stage);
-    if (stage === null || effectiveBoardStageRole(stage) !== "plan") return false;
-    const state = boardCardStepState(board, card.id);
-    return state !== null && state.stepId === card.stage && state.status === "succeeded";
-  };
-
-  /**
-   * T3o: a split a human approved during the plan review, applied now the planning step has
-   * completed (T3O-105). A refusal clears it with a note, so the split gate asks again.
+   * T3o: the split gate's action: a split approved during the plan review, applied now the
+   * planning step has completed this stay (T3O-105, T3O-115). A refusal clears it with a note, so
+   * the split gate asks again.
    */
   const fireDeferredSplitApproval = Effect.fn("board-supervisor-fireDeferredSplitApproval")(
     function* (cardId: BoardCardId) {
       const card = yield* readCard(cardId);
       const approval = card?.pendingSplitApproval;
-      if (approval === undefined) return;
+      if (approval === undefined) return gateNotDue;
       const refused = yield* dispatchRefusal({
         type: "board.plans.approve",
         commandId: yield* commandId("split-approved-after-review"),
@@ -9375,7 +9340,7 @@ const make = Effect.gen(function* () {
       });
       // A fault rather than a refusal leaves the approval on the card; clear it all the same.
       const after = refused === null ? yield* readCard(cardId) : null;
-      if (refused === null && after?.pendingSplitApproval === undefined) return;
+      if (refused === null && after?.pendingSplitApproval === undefined) return gateActed;
       yield* dispatchOptional({
         type: "board.split.record-approval-refused",
         commandId: yield* commandId("split-approval-refused"),
@@ -9383,118 +9348,255 @@ const make = Effect.gen(function* () {
         detail: refused ?? "The split could not be approved.",
         createdAt: yield* nowIso,
       });
+      return refused === null
+        ? gateBlocked("fault", "The split could not be approved.")
+        : gateBlocked("move-refused", refused);
     },
   );
 
   /**
-   * The sign-off gate: approve an automated planning run's single plan only when the card's Auto
-   * sign-off is on; otherwise it waits at the human gate with the run record pending. A split is
-   * never approved here. Approval moves the card to Ready, and Auto-build takes it from there.
+   * T3o: the sign-off gate's action (T3O-115): move a card whose single plan is finished, and
+   * reviewed when review is on, to Ready, whoever planned it. The build gate takes it from there.
    */
   const approvePlannedCard = Effect.fn("board-supervisor-approvePlannedCard")(function* (
     card: BoardCard,
-    /** What automated the planning: Auto-plan, or an unattended plan review. */
-    by: "auto-plan" | "review" = "auto-plan",
   ) {
     const board = yield* readBoard;
-    const resolved = automationIn(board, card);
-    const plans = boardCardPlans(board, card.id);
-    // Callers pass "review" only for a single waiting plan (`isBoardCardReviewSignOffPending`).
-    if (by === "review" && !resolved.autoSignOff.value) {
-      yield* autoPlanNote(card.id, "Plan review finished. The plan waits for your approval.");
-      return;
-    }
-    if (plans.length === 0) {
-      yield* endAutoPlan(
-        card.id,
-        "Auto-plan finished without proposing a plan, so nothing was approved. Plan the card by hand, or turn Auto-plan off and on again.",
-      );
-      return;
-    }
-    if (plans.length >= 2) {
-      yield* autoPlanNote(
-        card.id,
-        resolved.autoSignOff.value
-          ? "Auto-plan proposed a split. Splits always need your approval."
-          : "Auto-plan finished. The proposed split waits for your approval.",
-      );
-      return;
-    }
-    if (!resolved.autoSignOff.value) {
-      yield* autoPlanNote(card.id, "Auto-plan finished. The plan waits for your approval.");
-      return;
-    }
-    const next = boardNextStageId(board, card.stage, card.projectId);
-    if (next === null) return;
-    const toReady = yield* dispatchRefusal({
+    const live = board.cards.find((candidate) => candidate.id === card.id);
+    if (live === undefined || live.stage !== card.stage) return gateNotDue;
+    const next = boardNextStageId(board, live.stage, live.projectId);
+    if (next === null) return gateNotDue;
+    const moved = yield* dispatchOutcome({
       type: "board.card.move",
       commandId: yield* commandId("auto-plan-approve"),
-      cardId: card.id,
+      cardId: live.id,
       toStage: next,
       createdAt: yield* nowIso,
     });
-    if (toReady !== null) {
-      // A review-driven card has no auto-plan run to end, so the note is written directly.
-      yield* by === "review"
-        ? autoPlanNote(
-            card.id,
-            `Plan review finished, but Auto sign-off could not approve the plan: ${toReady}`,
-          )
-        : endAutoPlan(card.id, `Auto-plan could not approve the plan: ${toReady}`);
-      return;
+    if (moved.kind !== "landed") return gateBlockedBy(moved);
+    const after = yield* readCard(live.id);
+    if (after === null || after.stage === live.stage) {
+      return gateBlocked("fault", "The move to the next stage did not land.");
     }
-    const buildStage = boardStageWithRole(board, "build");
-    if (buildStage === null || next === buildStage.stageId) return;
-    if (!resolved.autoBuild.value) {
+    // The build gate takes it from here; acted on now rather than on the next tick.
+    const ready = yield* readBoard;
+    const signed = ready.cards.find((candidate) => candidate.id === live.id) ?? after;
+    const settings = yield* boardSettings;
+    if (boardGateDue({ board: ready, card: signed, settings })?.gate === "build") {
+      yield* startAutoBuildCard(signed);
+    } else {
       yield* autoPlanNote(
-        card.id,
-        resolved.autoBuild.waitingForGroupStart
-          ? `Auto sign-off approved the plan. It waits in Ready and builds once ${resolved.autoBuild.inheritedFrom?.key ?? "its group"} starts.`
+        live.id,
+        automationIn(ready, signed).autoBuild.value
+          ? "Auto sign-off approved the plan; it waits in Ready and builds itself once its dependencies are done."
           : "Auto sign-off approved the plan. It waits in Ready for you to start it.",
       );
-      return;
     }
-    yield* startAutoBuildCard(card.id, "Auto sign-off approved the plan");
+    return gateActed;
   });
 
   /**
-   * Start a card waiting before build because Auto-build is on: its own, as an `auto-build` move,
-   * or a begun group's, as the cascade's move. Unmet dependencies leave it waiting.
+   * T3o: the split-sign-off gate's action (T3O-115): Auto sign-off approves a proposed split with
+   * the parent's own resolved toggles as the group's settings and the planner's merge target.
    */
-  const startAutoBuildCard = Effect.fn("board-supervisor-startAutoBuildCard")(function* (
-    cardId: BoardCardId,
-    lead: string,
+  const autoApproveSplit = Effect.fn("board-supervisor-autoApproveSplit")(function* (
+    card: BoardCard,
   ) {
     const board = yield* readBoard;
-    const card = board.cards.find((candidate) => candidate.id === cardId);
+    const live = board.cards.find((candidate) => candidate.id === card.id);
+    if (live === undefined || !boardCardPendingSplit(board, live.id)) return gateNotDue;
+    const resolved = automationIn(board, live);
+    const approved = yield* dispatchOutcome({
+      type: "board.plans.approve",
+      commandId: yield* commandId("split-auto-approved"),
+      cardId: live.id,
+      autoBuild: resolved.autoBuild.value,
+      mergeTarget: boardSplitRecommendationOf(board, live).mergeTarget,
+      autoPlan: resolved.autoPlan.value,
+      autoSignOff: resolved.autoSignOff.value,
+      autoMerge: resolved.autoMerge.value,
+      createdAt: yield* nowIso,
+    });
+    if (approved.kind !== "landed") return gateBlockedBy(approved);
+    yield* autoPlanNote(live.id, "Split auto-approved (Auto sign-off).");
+    return gateActed;
+  });
+
+  /**
+   * T3o: the review-start gate's action (T3O-115). A review enabled only by the Settings default
+   * is written onto the card first, which arms it, so the start is never refused for that.
+   */
+  const startPlanReviewGate = Effect.fn("board-supervisor-startPlanReviewGate")(function* (
+    card: BoardCard,
+  ) {
+    const board = yield* readBoard;
+    const live = board.cards.find((candidate) => candidate.id === card.id);
+    if (live === undefined) return gateNotDue;
+    if (live.planReview?.enabled !== true) {
+      const review = resolveCardPlanReview({ board, card: live, settings: yield* boardSettings });
+      const armed = yield* dispatchOutcome({
+        type: "board.card.update",
+        commandId: yield* commandId("plan-review-arm"),
+        cardId: live.id,
+        planReview: { ...review, enabled: true },
+        createdAt: yield* nowIso,
+      });
+      if (armed.kind !== "landed") return gateBlockedBy(armed);
+    }
+    const started = yield* dispatchOutcome({
+      type: "board.plan-review.start",
+      commandId: yield* commandId("plan-review-auto-start"),
+      cardId: live.id,
+      createdAt: yield* nowIso,
+    });
+    return started.kind === "landed" ? gateActed : gateBlockedBy(started);
+  });
+
+  /**
+   * T3o: the answer gate's action (T3O-115): reply to a question an unattended planning run asked
+   * anyway, through its pending request or, when that did not survive, a new turn. Recorded on
+   * the step either way, so the gate is never due twice for one wait.
+   */
+  const answerPlanningQuestion = Effect.fn("board-supervisor-answerPlanningQuestion")(function* (
+    card: BoardCard,
+  ) {
+    const board = yield* readBoard;
+    const live = board.cards.find((candidate) => candidate.id === card.id);
+    if (live === undefined) return gateNotDue;
+    const state = boardCardStepThisStay(boardCardStepState(board, live.id), live);
+    if (state === null || state.status !== "awaiting-input" || state.threadId === null) {
+      return gateNotDue;
+    }
+    const failure = yield* steerPlanningThread(live.id, state, BOARD_AUTO_ANSWER_TEXT);
+    if (failure !== null) return gateBlocked("fault", failure);
+    const recorded = yield* dispatchOutcome({
+      type: "board.card.check-in-step",
+      commandId: yield* commandId("auto-answer"),
+      cardId: live.id,
+      stepId: state.stepId,
+      charged: false,
+      progressed: false,
+      autoAnswered: true,
+      createdAt: yield* nowIso,
+    });
+    if (recorded.kind !== "landed") return gateBlockedBy(recorded);
+    yield* autoPlanNote(
+      live.id,
+      (state.autoAnswers ?? 0) + 1 >= BOARD_AUTO_ANSWER_LIMIT
+        ? `The planning agent asked a question; the board told it to decide for itself. That is the auto-answer limit (${BOARD_AUTO_ANSWER_LIMIT}) for this step, so its next question waits for you.`
+        : "The planning agent asked a question; the board told it to decide for itself and log the call as unclear.",
+    );
+    return gateActed;
+  });
+
+  /** T3o: the plan gate's action (T3O-115): mark the unattended run, then start the stage. */
+  const startPlanningGate = Effect.fn("board-supervisor-startPlanningGate")(function* (
+    card: BoardCard,
+  ) {
+    const live = yield* readCard(card.id);
+    if (live === null || live.stage !== card.stage) return gateNotDue;
+    yield* beginStageRun({ card: yield* markAutoPlanIfOn(live), onDemand: false });
+    const board = yield* readBoard;
+    const after = board.cards.find((candidate) => candidate.id === card.id);
+    if (after === undefined) return gateNotDue;
+    return boardCardStepThisStay(boardCardStepState(board, after.id), after) === null
+      ? gateBlocked("fault", "The planning run did not start.")
+      : gateActed;
+  });
+
+  /**
+   * Start a card waiting before build because Auto-build is on, its own or its group's: an own
+   * one as an `auto-build` move (begins no group), an inherited one as the group's move.
+   */
+  const startAutoBuildCard = Effect.fn("board-supervisor-startAutoBuildCard")(function* (
+    card: BoardCard,
+  ) {
+    const board = yield* readBoard;
+    const live = board.cards.find((candidate) => candidate.id === card.id);
     const buildStage = boardStageWithRole(board, "build");
     const before = boardStageBeforeBuild(board);
-    if (card === undefined || buildStage === null || before === null) return;
-    if (card.stage !== before.stageId || card.archivedAt !== null) return;
-    const resolved = automationIn(board, card);
-    if (!resolved.autoBuild.value) return;
-    const unmet = unmetBoardCardDependencies({
+    if (live === undefined || buildStage === null || before === null) return gateNotDue;
+    if (live.stage !== before.stageId || live.archivedAt !== null) return gateNotDue;
+    // The predicate's reading, so a legacy split parent's children inherit as the gate said.
+    const resolved = boardGateFacts({
       board,
-      dependsOn: boardCardInheritedDependsOn(board, card),
-      cards: board.cards,
-    });
-    if (unmet.length > 0) {
-      yield* autoPlanNote(
-        card.id,
-        `${lead}; it waits in Ready and builds itself once its dependencies are done.`,
-      );
-      return;
-    }
-    const refusal = yield* dispatchRefusal({
+      card: live,
+      settings: yield* boardSettings,
+    }).automation;
+    if (!resolved.autoBuild.value) return gateNotDue;
+    const moved = yield* dispatchOutcome({
       type: "board.card.move",
       commandId: yield* commandId("auto-build"),
-      cardId: card.id,
+      cardId: live.id,
       toStage: buildStage.stageId,
       ...(resolved.autoBuild.source === "own" ? { cause: "auto-build" as const } : {}),
       createdAt: yield* nowIso,
     });
-    if (refusal !== null)
-      yield* autoPlanNote(card.id, `${lead}; the build did not start: ${refusal}`);
+    return moved.kind === "landed" ? gateActed : gateBlockedBy(moved);
+  });
+
+  /**
+   * T3o: whether a finished plan waits at a gate instead of riding the stage's auto-advance: an
+   * unattended run's plan does, with a note saying why nothing was approved (T3O-115).
+   */
+  const planningWaitsAtGate = Effect.fn("board-supervisor-planningWaitsAtGate")(function* (
+    card: BoardCard,
+  ) {
+    const board = yield* readBoard;
+    if (!isBoardCardAutoPlanPending(card)) {
+      // An unattended review finished the planning: its plan waits for a person.
+      const state = boardCardStepThisStay(boardCardStepState(board, card.id), card);
+      const review = resolveCardPlanReview({ board, card, settings: yield* boardSettings });
+      if (state?.planReviewStartedAt === undefined || review.unattended !== true) return false;
+      yield* autoPlanNote(card.id, "Plan review finished. The plan waits for your approval.");
+      return true;
+    }
+    const plans = boardCardPlans(board, card.id).length;
+    if (plans === 0) {
+      yield* endAutoPlan(
+        card.id,
+        "Auto-plan finished without proposing a plan, so nothing was approved. Plan the card by hand, or turn Auto-plan off and on again.",
+      );
+      return true;
+    }
+    if (!automationIn(board, card).autoSignOff.value) {
+      yield* autoPlanNote(
+        card.id,
+        plans >= 2
+          ? "Auto-plan finished. The proposed split waits for your approval."
+          : "Auto-plan finished. The plan waits for your approval.",
+      );
+    }
+    return true;
+  });
+
+  // T3o: the gate sweep (T3O-115). Events call it for the cards they touched, the 30s tick and the
+  // boot pass for every card; both ask the same predicate.
+  const { fireDueGates } = makeBoardGateSweep({
+    readBoard,
+    readSettings: boardSettings,
+    workerUnreachable: Effect.map(
+      workerPausedNow,
+      (paused) => (workerId: string) => paused(workerId as BoardWorkerId),
+    ),
+    actions: {
+      plan: startPlanningGate,
+      answer: answerPlanningQuestion,
+      "review-start": startPlanReviewGate,
+      "sign-off": approvePlannedCard,
+      "split-sign-off": autoApproveSplit,
+      split: (card) => fireDeferredSplitApproval(card.id),
+      build: startAutoBuildCard,
+    },
+    recordBlock: Effect.fn("board-supervisor-recordGateBlock")(function* (cardId, gateBlock) {
+      yield* dispatchOptional({
+        type: "board.card.update",
+        commandId: yield* commandId("gate-block"),
+        cardId,
+        gateBlock,
+        createdAt: yield* nowIso,
+      });
+    }),
   });
 
   /**
@@ -9751,36 +9853,22 @@ const make = Effect.gen(function* () {
           yield* stopAutoPlanRun(card);
           return "stopped" as const;
         }
-        // Auto sign-off turned on for a finished unattended review whose single plan waits.
-        if (
-          !pending &&
-          resolved.autoSignOff.value &&
-          isBoardCardReviewSignOffPending(board, card)
-        ) {
-          yield* approvePlannedCard(card, "review");
-          const after = yield* readCard(card.id);
-          return after !== null && after.stage !== card.stage ? ("approved" as const) : null;
-        }
-        // Auto sign-off turned on for a finished run whose single plan waits for approval.
-        if (pending && finished && resolved.autoSignOff.value) {
-          if (
-            boardCardStepState(board, card.id) !== null &&
-            boardPlanAutomatedBy(resolved) !== null &&
-            boardCardPlans(board, card.id).length === 1
-          ) {
-            yield* approvePlannedCard(card);
-            const after = yield* readCard(card.id);
-            return after !== null && after.stage !== card.stage ? ("approved" as const) : null;
-          }
-        }
-        return null;
+        // T3o: every toggle a finished plan waits on is the gates' (T3O-115).
+        const fired = yield* fireDueGates([card.id]);
+        return fired.some(
+          (entry) =>
+            (entry.gate === "sign-off" || entry.gate === "split-sign-off") &&
+            entry.outcome.kind === "acted",
+        )
+          ? ("approved" as const)
+          : null;
       }
       const before = boardStageBeforeBuild(board);
       if (before !== null && card.stage === before.stageId) {
-        if (!resolved.autoBuild.value) return null;
-        yield* startAutoBuildCard(card.id, "Auto-build is on");
-        const after = yield* readCard(card.id);
-        return after !== null && after.stage !== card.stage ? ("built" as const) : null;
+        const fired = yield* fireDueGates([card.id]);
+        return fired.some((entry) => entry.gate === "build" && entry.outcome.kind === "acted")
+          ? ("built" as const)
+          : null;
       }
       if (
         (changed.autoMerge === true || changed.group === true) &&
@@ -9921,8 +10009,8 @@ const make = Effect.gen(function* () {
       if (completion.outcome === "succeeded" && settledReviewPhase(board, card, state)) {
         yield* replanSettledStage(card, { resume: true });
       }
-      // T3o: a re-delivered success fires a split approval the first delivery missed (T3O-105).
-      if (deferredSplitApprovalDue(board, card)) yield* fireDeferredSplitApproval(card.id);
+      // T3o: a re-delivered success fires a gate the first delivery missed (T3O-105, T3O-115).
+      yield* fireDueGates([card.id]);
       return;
     }
     // Refresh trigger: a step boundary in the review stage. The review loop
@@ -10015,19 +10103,12 @@ const make = Effect.gen(function* () {
           }
           return;
         }
-        // T3o: a split approved after review fires first, then the sign-off gate (T3O-105).
-        if (stageRole === "plan") yield* fireDeferredSplitApproval(card.id);
-        // The sign-off gate owns an auto-planned card's plan: it is approved when Auto sign-off
-        // authorises it and otherwise waits for a human, so the stage's own auto-advance must
-        // not move it.
+        // T3o: a finished plan is the gates' (split, review start, sign-off), whoever planned it
+        // (T3O-115). An automated card's plan never rides the stage's own auto-advance.
         if (stageRole === "plan") {
+          const fired = yield* fireDueGates([card.id]);
           const planned = yield* readCard(card.id);
-          const reviewed =
-            planned !== null &&
-            !isBoardCardAutoPlanPending(planned) &&
-            isBoardCardReviewSignOffPending(yield* readBoard, planned);
-          if (planned !== null && (isBoardCardAutoPlanPending(planned) || reviewed)) {
-            yield* approvePlannedCard(planned, reviewed ? "review" : "auto-plan");
+          if (fired.length > 0 || (planned !== null && (yield* planningWaitsAtGate(planned)))) {
             yield* releaseFinishedThreads;
             yield* schedule();
             return;
@@ -10287,25 +10368,8 @@ const make = Effect.gen(function* () {
     select: (card: BoardCard, board: BoardState) => boolean,
   ) {
     const board = yield* readBoard;
-    const buildStage = boardStageWithRole(board, "build");
-    if (buildStage === null) return;
-    for (const card of board.cards) {
-      if (!select(card, board)) continue;
-      if (!boardCardAutoBuildDue({ board, card })) continue;
-      // A non-dependency refusal: the card stays armed and fires once the gate clears; clearing the
-      // arm here would spend it on a move that never happened.
-      if (boardCardPendingSplit(board, card.id)) continue;
-      yield* dispatch({
-        type: "board.card.move",
-        commandId: yield* commandId("auto-start"),
-        cardId: card.id,
-        toStage: buildStage.stageId,
-        // An own Auto-build start begins no group, so it never starts
-        // the card's siblings.
-        cause: "auto-build",
-        createdAt: yield* nowIso,
-      });
-    }
+    // T3o: the build gate decides, own or inherited Auto-build alike (T3O-115).
+    yield* fireDueGates(board.cards.filter((card) => select(card, board)).map((card) => card.id));
   });
 
   /** The targeted narrowing: only a card that DEPENDS on the one
@@ -10413,9 +10477,10 @@ const make = Effect.gen(function* () {
       the same reason `sweepSchedules` is. Missing a targeted trigger costs one
       30s window; a dependency that lands while the server is down is caught by
       boot reconciliation running the same pass. */
-  const sweepArmedCards = startArmedCards(() => true).pipe(
+  const sweepGates = Effect.suspend(() => fireDueGates("all")).pipe(
+    Effect.asVoid,
     Effect.catchCause((cause) =>
-      Effect.logWarning("board supervisor: auto-start sweep failed", {
+      Effect.logWarning("board supervisor: gate sweep failed", {
         cause: Cause.pretty(cause),
       }),
     ),
@@ -10481,11 +10546,10 @@ const make = Effect.gen(function* () {
     if (event.payload.scheduledStartAt !== undefined) {
       yield* applyScheduleEdit(event.payload.cardId);
     }
-    // Keyed on the card's state, not the payload marker: a card also becomes due when an edit drops
-    // its last blocking edge or a dependency is deleted, or when its last dependency finished
-    // between the modal rendering and the arm. Unarmed cards, the majority, pay nothing.
-    if (event.payload.card.autoBuildSetting === true) {
-      yield* startArmedCards((candidate) => candidate.id === event.payload.cardId);
+    // T3o: an edit can make a gate due, such as dropping the last blocking edge (T3O-115). A toggle
+    // change is re-evaluated below first, which fires the gates itself once a reopen is settled.
+    if (event.payload.automationChanged === undefined) {
+      yield* fireDueGates([event.payload.cardId]);
     }
     // A toggle change owns the step's stance and its one message, so the generic stance arm below
     // stands aside. Arming a card already parked at merge merges it now: only an edit that touched
@@ -10906,6 +10970,8 @@ const make = Effect.gen(function* () {
       yield* cascadeUnblockedChildren(card.parentCardId);
       yield* syncAncestorGroups(card.parentCardId);
     }
+    // T3o: a card that waited on this one may have its build gate due now (T3O-115).
+    yield* startArmedDependents(card.id);
   });
 
   // Create and push the split's integration branch (branch only), then record it. A failed push
@@ -11545,10 +11611,8 @@ const make = Effect.gen(function* () {
     switch (decision.kind) {
       case "advance":
         yield* settleStep({ card, state, outcome: "succeeded" });
-        // T3o: a planning step that finished during downtime fires its deferred split (T3O-105).
-        if (deferredSplitApprovalDue(yield* readBoard, card)) {
-          yield* fireDeferredSplitApproval(card.id);
-        }
+        // T3o: a planning step that finished during downtime fires its gates (T3O-105, T3O-115).
+        yield* fireDueGates([card.id]);
         // Ask the executor what runs next: advance a finished single-step
         // stage, or resume the next round-scoped step of a multi-step loop
         // whose phase settled during downtime.
@@ -11772,8 +11836,6 @@ const make = Effect.gen(function* () {
     for (const card of quiet.cards) {
       if (card.archivedAt !== null) continue;
       const state = boardCardStepState(quiet, card.id);
-      // T3o: a deferred split whose firing a restart cut off, settled but never applied (T3O-105).
-      if (deferredSplitApprovalDue(quiet, card)) yield* fireDeferredSplitApproval(card.id);
       if (state === null || !settledReviewPhase(quiet, card, state)) continue;
       yield* replanSettledStage(card, { resume: true });
     }
@@ -11787,7 +11849,7 @@ const make = Effect.gen(function* () {
     // A predicate over state rather than an event to catch, so
     // boot needs no backlog to replay — it simply asks the question once, and
     // the 30s sweep asks it again from then on.
-    yield* sweepArmedCards;
+    yield* sweepGates;
     // And every retry rung that came due while the server was down.
     // A predicate over state rather than an event to catch, exactly like the
     // armed-card pass above, so a card parked for a rung that expired hours ago
@@ -12031,10 +12093,14 @@ const make = Effect.gen(function* () {
       // T3o: a split approved after review, or undone, is review policy too (T3O-105).
       case "board.split-approval-changed":
         return steerPlanReviewPolicy(event.payload.cardId, { idleOnly: true }).pipe(Effect.asVoid);
+      // T3o: a parked, paused or failed planning run no longer ends Auto-plan: the toggle is the
+      // automation, and the gates act on it (T3O-115).
       case "board.card-step-awaiting-input":
+        // An unattended planning run parked on a question is the answer gate's.
+        return fireDueGates([event.payload.cardId]).pipe(Effect.asVoid);
       case "board.card-step-paused":
       case "board.card-step-settled":
-        return endAutoPlanIfUndriven(event.payload.cardId);
+        return Effect.void;
       case "board.card-step-force-start-requested":
         // A human took a slot over the cap. Scheduling here is what
         // makes the click start the card: without it the override would sit on
@@ -12050,7 +12116,6 @@ const make = Effect.gen(function* () {
             // and in-thread resumes also emit this event, hence the status test.
             event.payload.state.status === "queued" ? schedule() : Effect.void,
           ),
-          Effect.andThen(endAutoPlanIfUndriven(event.payload.cardId)),
         );
       case "board.project-stage-config-set":
         return handleProjectConfigSet(event.payload.projectId);
@@ -12523,6 +12588,33 @@ const make = Effect.gen(function* () {
     ),
   );
 
+  // T3o: the 30s tick, one effect for production and tests (T3O-115).
+  const tick = Effect.suspend(() =>
+    // These sweeps ride the 30s tick: each is a board read plus an in-memory pass serialised
+    // against the handlers, and the tick is the only retry for work nothing else will ask about
+    // again (dropped turn ends, a restart, a worker whose reconcile did not finish).
+    syncWorkerReach.pipe(
+      Effect.andThen(sweepTimeouts),
+      Effect.andThen(releaseFinishedThreads),
+      Effect.andThen(sweepSchedules),
+      Effect.andThen(sweepGates),
+      Effect.andThen(sweepRetries),
+      Effect.andThen(sweepAutoMergeHolds),
+      // Forge-check CI steps poll on the same cadence.
+      Effect.andThen(sweepCiForgeSteps),
+      // A pass with nothing behind it is held on the second tick.
+      Effect.andThen(sweepOrphanedCiPasses),
+      Effect.andThen(sweepAutoArchives),
+      // T3o: worker capacity's phase rule, settling and sync, then the upgrade (T3O-86).
+      Effect.andThen(sweepCapacity),
+      // T3o: a pending or queued row whose spawn was lost is `schedule()`'s, not a gate's;
+      // without capacity admission nothing else on the tick reaches it (T3O-115).
+      Effect.andThen(Effect.suspend(() => schedule())),
+      // T3o: the timeout and capacity sweeps share one thread read per thread (T3O-108).
+      withTickThreadStates,
+    ),
+  );
+
   const processInput = (input: SupervisorInput) => {
     switch (input.source) {
       case "domain":
@@ -12547,26 +12639,7 @@ const make = Effect.gen(function* () {
         );
       case "timeout-sweep":
         timeoutSweepQueued = false;
-        // These sweeps ride the 30s tick: each is a board read plus an in-memory pass serialised
-        // against the handlers, and the tick is the only retry for work nothing else will ask about
-        // again (dropped turn ends, a restart, a worker whose reconcile did not finish).
-        return syncWorkerReach.pipe(
-          Effect.andThen(sweepTimeouts),
-          Effect.andThen(releaseFinishedThreads),
-          Effect.andThen(sweepSchedules),
-          Effect.andThen(sweepArmedCards),
-          Effect.andThen(sweepRetries),
-          Effect.andThen(sweepAutoMergeHolds),
-          // Forge-check CI steps poll on the same cadence.
-          Effect.andThen(sweepCiForgeSteps),
-          // A pass with nothing behind it is held on the second tick.
-          Effect.andThen(sweepOrphanedCiPasses),
-          Effect.andThen(sweepAutoArchives),
-          // T3o: worker capacity's phase rule, settling and sync, then the upgrade (T3O-86).
-          Effect.andThen(sweepCapacity),
-          // T3o: the timeout and capacity sweeps share one thread read per thread (T3O-108).
-          withTickThreadStates,
-        );
+        return tick;
     }
   };
 
@@ -12810,7 +12883,12 @@ const make = Effect.gen(function* () {
       readBoard.pipe(Effect.flatMap((board) => readyWorkersFor(board, projectId))),
     fireSchedules: sweepSchedules,
     fireAutoArchives: sweepAutoArchives,
-    startArmed: sweepArmedCards,
+    startArmed: sweepGates,
+    tick: tick.pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("board supervisor: tick failed", { cause: Cause.pretty(cause) }),
+      ),
+    ),
     fireRetries: sweepRetries,
     fireAutoMerges: sweepAutoMergeHolds,
     releaseThreads: releaseFinishedThreads,

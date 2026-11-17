@@ -121,6 +121,7 @@ const supervisorStub: SupervisorReactorShape = {
   fireSchedules: Effect.void,
   fireAutoArchives: Effect.void,
   startArmed: Effect.void,
+  tick: Effect.void,
   fireRetries: Effect.void,
   fireAutoMerges: Effect.void,
   releaseThreads: Effect.void,

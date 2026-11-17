@@ -6,6 +6,7 @@ import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  BOARD_GATES,
   boardCardEffectivePriority,
   BoardStageExecution,
   resolveBoardReviewTierModel,
@@ -28,10 +29,10 @@ import {
   boardCardAutoMergeArmed,
   boardShellAutoMergeArmedByCard,
   boardCardAutoMergeGaveUp,
-  boardCardAutoBuildDue,
+  BoardSettings,
+  DEFAULT_BOARD_SETTINGS,
   BOARD_AUTOMATION_BOARD_WIDE_MERGE_REASON,
   resolveBoardCardAutomationIn,
-  boardPlanAutomatedBy,
   boardCardPlanningFinished,
   isBoardCardAutoMergeSoft,
   boardStageBeforeBuild,
@@ -106,6 +107,8 @@ import {
   BoardShellSnapshot,
 } from "./board.ts";
 import { defaultBoardCardGroup } from "./boardGroups.ts";
+import { boardGateDue } from "./boardGates.ts";
+import { BoardWorkerId } from "./boardWorkers.ts";
 import type {
   BoardCardAutoMergeHold,
   BoardCardCi,
@@ -120,6 +123,8 @@ const encodeShell = Schema.encodeUnknownSync(BoardCardShell);
 const decodeShell = Schema.decodeUnknownSync(BoardCardShell);
 const encodeSnapshot = Schema.encodeUnknownSync(BoardShellSnapshot);
 const decodeStepState = Schema.decodeUnknownSync(BoardCardStepState);
+const decodeSettings = Schema.decodeSync(BoardSettings);
+const decodeWorkerId = Schema.decodeSync(BoardWorkerId);
 const decodeCard = Schema.decodeUnknownSync(BoardCard);
 const encodeCard = Schema.encodeSync(BoardCard);
 
@@ -2013,6 +2018,20 @@ describe("cards that need a human (boardCardAttention)", () => {
       expect(flag?.label).toBe("Needs permission");
     });
 
+    // T3o: the answer gate never touches a permission prompt; an unattended planning run parked on
+    // one reads violet, waiting on a human, never blue (T3O-115).
+    it("flags an Auto-plan card parked on a permission prompt violet", () => {
+      const flag = attention({
+        ...permission,
+        stepRunning: true,
+        autoPlanSetting: true,
+        autoPlanPending: true,
+        stage: BOARD_SEED_STAGE_IDS.planning,
+      });
+      expect(flag?.reason).toBe("permission");
+      expect(flag?.tone).toBe("attention");
+    });
+
     it("derives from the thread shells the card already rides", () => {
       // The real shape: the provider's turn is still RUNNING, blocked on the
       // prompt — which is why the card used to read as working.
@@ -2810,10 +2829,6 @@ describe("automation (T3O-38)", () => {
     ...overrides,
   });
   const boardWith = (cards: ReadonlyArray<BoardCard>) => ({ ...EMPTY_BOARD_STATE, cards });
-  const on = (card: BoardCard, ...blockers: ReadonlyArray<BoardCard>) => ({
-    board: boardWith([card, ...blockers]),
-    card,
-  });
   const groupCard = (
     id: string,
     overrides: Partial<NonNullable<BoardCard["group"]>>,
@@ -2903,16 +2918,11 @@ describe("automation (T3O-38)", () => {
       const inherited = resolve(child, [outer, inner]);
       expect(inherited.autoPlan).toMatchObject({ value: true, source: "inherited" });
       expect(inherited.autoSignOff).toMatchObject({ value: true, source: "inherited" });
-      expect(boardPlanAutomatedBy(inherited)).toBe("auto-plan");
       const signOffOverridden = resolve({ ...child, autoSignOffSetting: false }, [outer, inner]);
       expect(signOffOverridden.autoSignOff).toMatchObject({ value: false, source: "own" });
-      // Turning Auto-plan off leaves sign-off stored, but nothing automates the planning.
+      // Turning Auto-plan off leaves sign-off stored.
       const planOff = resolve({ ...child, autoPlanSetting: false }, [outer, inner]);
       expect(planOff.autoSignOff.value).toBe(true);
-      expect(boardPlanAutomatedBy(planOff)).toBe(null);
-      // An unattended plan review in Planning automates it too; Auto-plan still names itself.
-      expect(boardPlanAutomatedBy(planOff, { unattendedInPlanning: true })).toBe("review");
-      expect(boardPlanAutomatedBy(inherited, { unattendedInPlanning: true })).toBe("auto-plan");
       expect(inherited.autoPlan.inheritedFrom).toEqual({ id: "inner", key: "INNER" });
       expect(inherited.autoMerge).toMatchObject({ value: true, source: "inherited" });
       const overridden = resolve({ ...child, autoPlanSetting: false, autoMergeSetting: false }, [
@@ -2923,23 +2933,15 @@ describe("automation (T3O-38)", () => {
       expect(overridden.autoMerge).toMatchObject({ value: false, source: "own" });
     });
 
-    it("keeps an inherited Auto-build off until the group has begun", () => {
-      const waitingGroup = groupCard("group", { autoBuild: true, started: false });
-      const child = waiting({ parentCardId: waitingGroup.id });
-      const before = resolve(child, [waitingGroup]);
-      expect(before.autoBuild).toMatchObject({
-        value: false,
-        source: "inherited",
-        waitingForGroupStart: true,
-      });
-      const begun = { ...waitingGroup, group: { ...waitingGroup.group!, started: true } };
-      expect(resolve(child, [begun]).autoBuild).toMatchObject({
-        value: true,
-        waitingForGroupStart: false,
-      });
-      // The child's own value never waits.
-      const own = resolve({ ...child, autoBuildSetting: true }, [waitingGroup]).autoBuild;
-      expect(own).toMatchObject({ value: true, source: "own", waitingForGroupStart: false });
+    it("inherits a group's Auto-build whether or not the group has begun (T3O-115)", () => {
+      for (const started of [false, true]) {
+        const group = groupCard("group", { autoBuild: true, started });
+        const child = waiting({ parentCardId: group.id });
+        expect(resolve(child, [group]).autoBuild).toMatchObject({
+          value: true,
+          source: "inherited",
+        });
+      }
     });
 
     it("turns every card's Auto-merge on, locked, when board-wide auto-merge is on", () => {
@@ -3009,57 +3011,222 @@ describe("automation (T3O-38)", () => {
     });
   });
 
-  describe("boardCardAutoBuildDue", () => {
+  describe("boardGateDue (T3O-115)", () => {
     const open = blocker("blocker-open", BOARD_SEED_STAGE_IDS.building);
     const done = blocker("blocker-done", BOARD_SEED_STAGE_IDS.done);
     const archived = blocker("blocker-archived", BOARD_SEED_STAGE_IDS.building, NOW);
+    const ENTERED = "2026-01-02T00:00:00.000Z";
     const armed = (overrides: Partial<BoardCard> = {}) =>
       waiting({ autoBuildSetting: true, ...overrides });
+    const planning = (overrides: Partial<BoardCard> = {}) =>
+      waiting({ stage: BOARD_SEED_STAGE_IDS.planning, stageEnteredAt: ENTERED, ...overrides });
+    const step = (
+      card: BoardCard,
+      overrides: Partial<BoardCardStepState> = {},
+    ): BoardCardStepState => ({
+      ...decodeStepState({
+        cardId: card.id,
+        stepId: BOARD_SEED_STAGE_IDS.planning,
+        stepLabel: null,
+        attempt: 1,
+        stallCount: 0,
+        lastNudgeAt: null,
+        prompt: "Plan it.",
+        providerInstanceId: "codex",
+        model: "gpt-5-codex",
+        mode: "plan",
+        humanInLoop: false,
+        maxAttempts: 3,
+        timeoutMs: 600_000,
+        threadId: null,
+        status: "succeeded",
+        slotHeld: false,
+        startedAt: null,
+        updatedAt: NOW,
+        stageEnteredAt: ENTERED,
+      }),
+      ...overrides,
+    });
+    const plan = (card: BoardCard, ordinal: number): BoardPlan => ({
+      planId: BoardPlanId.make(`${card.id}::p${ordinal}`),
+      cardId: card.id,
+      title: `Plan ${ordinal}`,
+      summary: "Summary.",
+      dependsOn: [],
+      ordinal,
+      locked: false,
+      createdAt: NOW,
+      updatedAt: NOW,
+    });
+    const due = (input: {
+      readonly card: BoardCard;
+      readonly others?: ReadonlyArray<BoardCard>;
+      readonly step?: BoardCardStepState;
+      readonly plans?: number;
+      readonly settings?: typeof DEFAULT_BOARD_SETTINGS;
+      readonly unreachable?: ReadonlyArray<string>;
+    }) =>
+      boardGateDue({
+        board: {
+          ...boardWith([input.card, ...(input.others ?? [])]),
+          stepStates: input.step === undefined ? [] : [input.step],
+          plans: Array.from({ length: input.plans ?? 0 }, (_, index) => plan(input.card, index)),
+        },
+        card: input.card,
+        settings: input.settings ?? DEFAULT_BOARD_SETTINGS,
+        ...(input.unreachable === undefined
+          ? {}
+          : { workerUnreachable: (id: string) => input.unreachable!.includes(id) }),
+      })?.gate ?? null;
 
-    it("is due at Ready once every dependency is done, or with none at all", () => {
-      expect(boardCardAutoBuildDue(on(armed({ dependsOn: [done.id] }), done))).toBe(true);
-      expect(boardCardAutoBuildDue(on(armed()))).toBe(true);
+    it("plan: due in Planning with Auto-plan on and no step this stay", () => {
+      const card = planning({ autoPlanSetting: true });
+      expect(due({ card })).toBe("plan");
+      // A step for this stay, whatever its status, is the step's own to drive.
+      for (const status of ["pending", "queued", "running", "failed", "stalled"] as const) {
+        expect(due({ card, step: step(card, { status }) })).toBe(null);
+      }
+      expect(due({ card: planning({ autoPlanSetting: false }) })).toBe(null);
+      // A step left from an earlier stay does not count: re-plan.
+      expect(due({ card, step: step(card, { stageEnteredAt: NOW }) })).toBe("plan");
+      // A pending split waits at its own gate.
+      expect(due({ card, plans: 2 })).toBe(null);
     });
 
-    it("is not due while one is still outstanding", () => {
-      expect(boardCardAutoBuildDue(on(armed({ dependsOn: [done.id, open.id] }), done, open))).toBe(
-        false,
+    it("sign-off: one plan, planning finished this stay, regardless of who planned", () => {
+      const card = planning({ autoSignOffSetting: true });
+      expect(due({ card, step: step(card), plans: 1 })).toBe("sign-off");
+      expect(due({ card, step: step(card, { status: "running" }), plans: 1 })).toBe(null);
+      expect(due({ card, step: step(card), plans: 0 })).toBe(null);
+      expect(due({ card: planning(), step: step(card), plans: 1 })).toBe(null);
+      // Dragged back into Planning: the old success is not this stay's.
+      expect(due({ card, step: step(card, { stageEnteredAt: NOW }), plans: 1 })).toBe(null);
+    });
+
+    it("review-start comes before sign-off, and sign-off waits for a started review", () => {
+      const reviewed = planning({
+        autoSignOffSetting: true,
+        planReview: { enabled: true, rounds: 1, unattended: false },
+      });
+      expect(due({ card: reviewed, step: step(reviewed), plans: 1 })).toBe("review-start");
+      const started = step(reviewed, { planReviewStartedAt: ENTERED });
+      expect(due({ card: reviewed, step: started, plans: 1 })).toBe("sign-off");
+      // No automation on: an armed review waits for a human's Start review.
+      const attended = planning({ planReview: { enabled: true, rounds: 1, unattended: false } });
+      expect(due({ card: attended, step: step(attended), plans: 1 })).toBe(null);
+      // Unattended review alone starts it.
+      const unattended = planning({ planReview: { enabled: true, rounds: 1, unattended: true } });
+      expect(due({ card: unattended, step: step(unattended), plans: 1 })).toBe("review-start");
+    });
+
+    it("answer: an unattended review counts only while it runs", () => {
+      const asked: Partial<BoardCardStepState> = {
+        status: "awaiting-input",
+        awaitingReason: "question",
+        threadId: ThreadId.make("thread-asked"),
+      };
+      const reviewed = planning({ planReview: { enabled: true, rounds: 1, unattended: true } });
+      // Attended planning before the review starts: the question is the person's.
+      expect(due({ card: reviewed, step: step(reviewed, asked), plans: 1 })).toBe(null);
+      const reviewing = step(reviewed, { ...asked, planReviewStartedAt: ENTERED });
+      expect(due({ card: reviewed, step: reviewing, plans: 1 })).toBe("answer");
+      const finished = step(reviewed, { ...reviewing, planReviewDoneAt: NOW });
+      expect(due({ card: reviewed, step: finished, plans: 1 })).toBe(null);
+      const autoPlanned = planning({ autoPlanSetting: true });
+      expect(due({ card: autoPlanned, step: step(autoPlanned, asked) })).toBe("answer");
+      // Answered this wait, then another write bumped the row: still answered.
+      const answered = step(autoPlanned, { ...asked, autoAnswers: 1, autoAnsweredAt: NOW });
+      expect(due({ card: autoPlanned, step: { ...answered, updatedAt: ENTERED } })).toBe(null);
+    });
+
+    it("review-start: a review enabled only by the Settings default is due", () => {
+      const settings = decodeSettings({
+        pipeline: {
+          [BOARD_SEED_STAGE_IDS.planning]: {
+            kind: "simple",
+            planReview: { enabledByDefault: true, defaultRounds: 1, prompt: null },
+          },
+        },
+      });
+      const card = planning({ autoPlanSetting: true });
+      expect(due({ card, step: step(card), plans: 1, settings })).toBe("review-start");
+      expect(due({ card, step: step(card), plans: 1 })).toBe(null);
+    });
+
+    it("split-sign-off with two or more plans; split once an approval is recorded", () => {
+      const card = planning({ autoSignOffSetting: true });
+      expect(due({ card, step: step(card), plans: 2 })).toBe("split-sign-off");
+      expect(due({ card: planning(), step: step(card), plans: 2 })).toBe(null);
+      const approved = planning({
+        pendingSplitApproval: {
+          autoBuild: false,
+          mergeTarget: "own",
+          fingerprint: "fp",
+          approvedAt: NOW,
+        },
+      });
+      expect(due({ card: approved, step: step(approved), plans: 2 })).toBe("split");
+      expect(due({ card: approved, step: step(approved, { status: "running" }), plans: 2 })).toBe(
+        null,
       );
     });
 
-    it("is due on an ARCHIVED dependency, and never on an id with no card", () => {
-      expect(boardCardAutoBuildDue(on(armed({ dependsOn: [archived.id] }), archived))).toBe(true);
-      expect(boardCardAutoBuildDue(on(armed({ dependsOn: [BoardCardId.make("card-gone")] })))).toBe(
-        false,
+    it("build: due at Ready once every dependency is done, or with none at all", () => {
+      expect(due({ card: armed({ dependsOn: [done.id] }), others: [done] })).toBe("build");
+      expect(due({ card: armed() })).toBe("build");
+      expect(due({ card: armed({ dependsOn: [done.id, open.id] }), others: [done, open] })).toBe(
+        null,
+      );
+      expect(due({ card: armed({ dependsOn: [archived.id] }), others: [archived] })).toBe("build");
+      expect(due({ card: armed({ dependsOn: [BoardCardId.make("card-gone")] }) })).toBe(null);
+      expect(due({ card: waiting({ autoBuildSetting: false }) })).toBe(null);
+      // A pending split never builds as one card.
+      expect(due({ card: armed(), plans: 2 })).toBe(null);
+    });
+
+    it("build: an inherited Auto-build is due whether or not the group has started", () => {
+      for (const started of [false, true]) {
+        const group = groupCard("group", { autoBuild: true, started });
+        expect(due({ card: waiting({ parentCardId: group.id }), others: [group] })).toBe("build");
+      }
+      const parent = { ...groupCard("parent", { autoBuild: true }), dependsOn: [open.id] };
+      expect(due({ card: waiting({ parentCardId: parent.id }), others: [parent, open] })).toBe(
+        null,
       );
     });
 
-    it("needs the card's OWN Auto-build: an inherited one is the group cascade's", () => {
-      const begun = groupCard("group", { autoBuild: true, started: true });
-      const child = waiting({ parentCardId: begun.id });
-      expect(boardCardAutoBuildDue({ board: boardWith([child, begun]), card: child })).toBe(false);
-      expect(boardCardAutoBuildDue(on(waiting({ autoBuildSetting: false })))).toBe(false);
-    });
-
-    it("waits on the dependencies of every group the card sits in (T3O-26)", () => {
-      const parent = { ...groupCard("parent", {}), dependsOn: [open.id] };
-      const child = armed({ parentCardId: parent.id });
-      expect(boardCardAutoBuildDue({ board: boardWith([child, parent, open]), card: child })).toBe(
-        false,
-      );
-    });
-
-    it("is never due for an archived card, a group, or a card not at Ready", () => {
-      expect(boardCardAutoBuildDue(on(armed({ archivedAt: NOW })))).toBe(false);
-      expect(boardCardAutoBuildDue(on(armed({ stage: BOARD_SEED_STAGE_IDS.planning })))).toBe(
-        false,
-      );
+    it("is never due for an archived card, a group, an unreachable worker or another stage", () => {
+      expect(due({ card: armed({ archivedAt: NOW }) })).toBe(null);
+      expect(due({ card: armed({ stage: BOARD_SEED_STAGE_IDS.backlog }) })).toBe(null);
+      expect(due({ card: armed({ stage: BOARD_SEED_STAGE_IDS.building }) })).toBe(null);
       const group = {
         ...groupCard("g", {}),
         autoBuildSetting: true,
         stage: BOARD_SEED_STAGE_IDS.ready,
       };
-      expect(boardCardAutoBuildDue(on(group))).toBe(false);
+      expect(due({ card: group })).toBe(null);
+      const pinned = armed({ pinnedWorkerId: decodeWorkerId("worker-away") });
+      expect(due({ card: pinned, unreachable: ["worker-away"] })).toBe(null);
+      expect(due({ card: pinned, unreachable: [] })).toBe("build");
+    });
+
+    it("returns one gate per card, in pipeline order", () => {
+      expect(BOARD_GATES).toEqual([
+        "plan",
+        "answer",
+        "review-start",
+        "sign-off",
+        "split-sign-off",
+        "split",
+        "build",
+      ]);
+      // Every toggle on and planning finished: sign-off, not build, since the card is in Planning.
+      const card = planning({
+        autoPlanSetting: true,
+        autoSignOffSetting: true,
+        autoBuildSetting: true,
+      });
+      expect(due({ card, step: step(card), plans: 1 })).toBe("sign-off");
     });
   });
 

@@ -96,6 +96,7 @@ export function boardCardFace(input: {
     workerMove: quiet ? null : boardCardMoveNotice(card, input.workers),
     workerTrouble: quiet ? null : boardCardWorkerTrouble(card, input.workers),
     providerMissing: !isGroup && boardCardProviderStalled(card),
+    gateBlock: isGroup || quiet ? null : card.gateBlock,
   });
   return { own, tone: flag?.tone ?? null, notice };
 }

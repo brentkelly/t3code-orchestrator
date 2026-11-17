@@ -34,6 +34,9 @@ and the review is armed rather than started: the section reads **Ready to start*
 sent until you click **Start review**. That gives you time to set the rounds and Unattended first.
 The review then runs in the same planning thread and the plan comes back to you for sign-off.
 
+When Auto-plan, Auto sign-off or an unattended review is on, an armed review starts itself, so a
+finished plan is always reviewed before it is signed off.
+
 To stop a running review, switch it off: the agent summarises what it has found, re-posts the plan
 if it changed, and finishes. If you switch off a review that started after planning had finished,
 the re-posted plan still replaces the old one, but the card keeps the planning summary from before
@@ -42,14 +45,14 @@ the review.
 ## Unattended
 
 With **Unattended** on, the review runs like Auto-plan: the agent asks you nothing, decides each
-finding itself and flags the calls it is unsure of on the decision log. Turning it on mid-review
+finding itself and flags contentious or uncertain calls as unclear or important on the decision
+log. Turning it on mid-review
 takes effect at the agent's next round; if the agent is already waiting on a question about a
 finding, the board answers it once, telling it to decide for itself.
 
-An unattended review counts as automated planning, so the card's **Auto sign-off** gate applies
-(the Automation section shows `Plan · auto from review`). With Auto sign-off on, a reviewed single
-plan is approved without you when the review ends; with it off, the plan waits for you. Turning
-Auto sign-off on later approves a plan that is waiting. A proposed split always waits for you.
+The card's **Auto sign-off** applies to any finished review, attended or unattended: with it on, the
+reviewed plan (or split) is approved without you when the review ends; with it off, the plan waits
+for you. Turning Auto sign-off on later approves a plan that is waiting.
 
 ## Settings and per-project overrides
 
