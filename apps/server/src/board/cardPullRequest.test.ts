@@ -1356,34 +1356,50 @@ describe("merging a card's pull request", () => {
     ),
   );
 
-  it.effect(
-    "never starts a CI fix when the forge pins the refusal on a draft or a branch behind its base",
-    () =>
-      Effect.forEach(
-        ["draft", "behind"] as const,
-        (blockedReason) =>
-          withGovernor(
-            {
-              board: { nextCardNumberByProject: {}, cards: [cardInMerge()] },
-              settings: settings(),
-              pullRequest: openPr,
-              mergeFailure: "the host refused",
-              // A pushed fix clears neither blocker, so the one CI fix must not
-              // be spent on it.
-              mergeState: refusal({ blockedReason, failed: 1 }),
-            },
-            (h) =>
-              Effect.gen(function* () {
-                const result = yield* h.reactor.mergePullRequest(cardInMerge().id);
-                assert.equal(result.outcome, "refused", blockedReason);
-                const started = (yield* h.commands).filter(
-                  (command) => command.type === "board.card.start-stage-thread",
-                );
-                assert.equal(started.length, 0, blockedReason);
-              }),
-          ),
-        { discard: true },
-      ),
+  it.effect("never starts a CI fix when the forge pins the refusal on a draft", () =>
+    withGovernor(
+      {
+        board: { nextCardNumberByProject: {}, cards: [cardInMerge()] },
+        settings: settings(),
+        pullRequest: openPr,
+        mergeFailure: "the host refused",
+        // A pushed fix does not clear a draft, so the one CI fix must not be spent on it.
+        mergeState: refusal({ blockedReason: "draft", failed: 1 }),
+      },
+      (h) =>
+        Effect.gen(function* () {
+          const result = yield* h.reactor.mergePullRequest(cardInMerge().id);
+          assert.equal(result.outcome, "refused");
+          const started = (yield* h.commands).filter(
+            (command) => command.type === "board.card.start-stage-thread",
+          );
+          assert.equal(started.length, 0);
+        }),
+    ),
+  );
+
+  it.effect("a branch behind its base is brought up to date, not handed a CI fix (T3O-116)", () =>
+    withGovernor(
+      {
+        board: { nextCardNumberByProject: {}, cards: [cardInMerge()] },
+        settings: settings(),
+        pullRequest: openPr,
+        mergeFailure: "the host refused",
+        mergeState: refusal({ blockedReason: "behind", failed: 1 }),
+      },
+      (h) =>
+        Effect.gen(function* () {
+          const result = yield* h.reactor.mergePullRequest(cardInMerge().id);
+          assert.equal(result.outcome, "conflict");
+          const started = (yield* h.commands).filter(
+            (command) => command.type === "board.card.start-stage-thread",
+          );
+          assert.equal(started.length, 1);
+          assert.include(String(started[0]?.commandId), "merge-branch-update");
+          const card = (yield* h.board).cards.find((c) => c.id === cardInMerge().id);
+          assert.equal(card?.mergeStay?.branchUpdates, 1);
+        }),
+    ),
   );
 
   it.effect("does not claim a conflict fix that never started", () =>

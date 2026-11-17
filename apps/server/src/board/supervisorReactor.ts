@@ -8258,20 +8258,22 @@ const make = Effect.gen(function* () {
       }
       if (!boardCardAutoMergeOn({ board, card, settings })) continue;
       // Through the lookup cache, so a card costs at most one forge read per cache lifetime.
-      if (card.pullRequest?.state === "open") yield* refreshCardPullRequestLink(card);
-      const hold = card.autoMergeHold;
+      if (card.pullRequest === null || card.pullRequest.state === "open") {
+        yield* refreshCardPullRequestLink(card);
+      }
+      const fresh = (yield* readCard(card.id)) ?? card;
+      const hold = fresh.autoMergeHold;
       if (
         hold === null ||
         hold.retryAt !== null ||
         hold.headSha === null ||
         hold.stop === "no-pull-request" ||
-        card.pullRequest?.state !== "open"
+        fresh.pullRequest?.state !== "open"
       ) {
         continue;
       }
-      const live = (yield* probeMergeState(card)).state?.headSha ?? null;
+      const live = (yield* probeMergeState(fresh)).state?.headSha ?? null;
       if (live === null || live === hold.headSha) continue;
-      const fresh = (yield* readCard(card.id)) ?? card;
       yield* clearAutoMergeHold(fresh);
       yield* resetMergeFixes(fresh);
     }
@@ -11514,8 +11516,12 @@ const make = Effect.gen(function* () {
       boardStageWithRole(board, "merge")?.stageId === event.payload.toStage &&
       event.payload.fromStage !== event.payload.toStage
     ) {
-      checksFixSpent.delete(String(card.id));
-      mergeAwaitingChecks.delete(String(card.id));
+      // T3o: not while a fix this process started is in flight: the arrival was re-delivered after
+      // the merge gate had already acted on it (T3O-116).
+      if (!mergeAwaitingConflictFix.has(String(card.id))) {
+        checksFixSpent.delete(String(card.id));
+        mergeAwaitingChecks.delete(String(card.id));
+      }
       readiedOnArrival = yield* markCardPullRequestReady((yield* readCard(card.id)) ?? card, {
         forMerge: false,
       });
