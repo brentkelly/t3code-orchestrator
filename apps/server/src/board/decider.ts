@@ -6151,9 +6151,10 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       }
       // `question` when there is something to answer, `stopped` when a human-in-the-loop
       // turn ended. Either way the slot is RELEASED: no thread runs, so a parked card must
-      // not hold capacity; on resume the step re-takes one.
+      // not hold capacity; on resume the step re-takes one. A new wait has not been auto-answered.
+      const { autoAnsweredAt: _answered, ...unanswered } = current;
       const state: BoardCardStepState = {
-        ...current,
+        ...unanswered,
         status: "awaiting-input",
         awaitingReason: command.reason,
         slotHeld: false,
@@ -7197,19 +7198,20 @@ const decideOneBoardCommand = Effect.fn("decideOneBoardCommand")(function* (inpu
 });
 
 /**
- * T3o: the one place a stage change stamps `stageEnteredAt` (T3O-115). Every event carrying a
- * card whose stage differs from the card before it gets the event's time; any other carries the
- * prior stamp, so a payload rebuilt from scratch never drops it. A stage change also clears the
- * card's `gateBlock`: the gate it recorded is behind it.
+ * T3o: the one place a stage change stamps `stageEnteredAt` (T3O-115); every other card payload
+ * carries the prior stamp. A stage change also strips the card's `gateBlock` from that event and
+ * every later one in the decision: the gate it recorded is behind it.
  */
 function withStageEntryStamps(decided: BoardDecision, board: BoardState): BoardDecision {
   const events = boardDecidedEvents(decided);
   const known = new Map<
     string,
-    { readonly stage: BoardCard["stage"]; readonly stageEnteredAt: string | undefined }
+    {
+      readonly stage: BoardCard["stage"];
+      readonly stageEnteredAt: string | undefined;
+      readonly leftStage?: boolean;
+    }
   >();
-  const priorOf = (cardId: string) =>
-    known.get(cardId) ?? board.cards.find((candidate) => String(candidate.id) === cardId);
   let changed = false;
   const stamped = events.map((event) => {
     if (event.type === "board.card-created") {
@@ -7224,11 +7226,13 @@ function withStageEntryStamps(decided: BoardDecision, board: BoardState): BoardD
     if (card === undefined || card === null || typeof card !== "object" || !("stage" in card)) {
       return event;
     }
-    const prior = priorOf(String(card.id));
-    const entered = prior === undefined || prior.stage !== card.stage;
-    const at = entered ? event.occurredAt : prior.stageEnteredAt;
-    known.set(String(card.id), { stage: card.stage, stageEnteredAt: at });
-    const clearBlock = entered && card.gateBlock !== undefined;
+    const prior = known.get(String(card.id));
+    const before = prior ?? board.cards.find((candidate) => String(candidate.id) === card.id);
+    const entered = before === undefined || before.stage !== card.stage;
+    const at = entered ? event.occurredAt : before.stageEnteredAt;
+    const leftStage = entered || prior?.leftStage === true;
+    known.set(String(card.id), { stage: card.stage, stageEnteredAt: at, leftStage });
+    const clearBlock = leftStage && card.gateBlock !== undefined;
     if (at === card.stageEnteredAt && !clearBlock) return event;
     changed = true;
     const { stageEnteredAt: _stale, gateBlock, ...rest } = card;

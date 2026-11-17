@@ -300,6 +300,14 @@ it.layer(makeBoardStackTestLayer("t3o-board-ci-leave-"))("a card leaving CI", (i
       });
       yield* record({ kind: "finish-pass", runId: "run-a", result: "failed" });
       yield* record({ kind: "begin-fix", runId: "run-a" });
+      // T3o: the move's trailing CI event must not carry a stale gate block back (T3O-115).
+      yield* engine.dispatch({
+        type: "board.card.update",
+        commandId: id(),
+        cardId,
+        gateBlock: { gate: "build", reason: "fault", detail: null },
+        createdAt: at,
+      });
 
       yield* engine.dispatch({
         type: "board.card.move",
@@ -313,6 +321,7 @@ it.layer(makeBoardStackTestLayer("t3o-board-ci-leave-"))("a card leaving CI", (i
       const detail = yield* (yield* BoardQueries).boardCardDetail(cardId);
       assert.strictEqual(detail!.ciPasses[0]!.outcome, "cancelled");
       assert.isNull(detail!.card.ci);
+      assert.isUndefined(detail!.card.gateBlock);
 
       // A send-back counts a round trip; the board's own move keeps
       // the count, and a human's move starts it again.
