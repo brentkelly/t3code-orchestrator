@@ -118,6 +118,8 @@ export const WorkerTunnelHelloAck = Schema.Struct({
   gatewayFloor: Schema.optionalKey(NonNegativeInt),
   /** The T3o release that first met `gatewayFloor`. */
   gatewayFloorRelease: Schema.optionalKey(TrimmedNonEmptyString),
+  /** On `ok`: the board's own T3o release, so a worker on an older one updates to it. */
+  boardRelease: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type WorkerTunnelHelloAck = typeof WorkerTunnelHelloAck.Type;
 

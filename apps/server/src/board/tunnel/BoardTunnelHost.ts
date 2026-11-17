@@ -32,6 +32,7 @@ import {
 } from "../workers/WorkerConnections.ts";
 import { WorkerTransport } from "../workers/WorkerTransport.ts";
 import { BoardWorkerJoinStore, hashSecret } from "./BoardWorkerJoinStore.ts";
+import { readT3oRelease } from "./WorkerTunnels.ts";
 import { TunnelBoard, type TunnelPhase, type TunnelSessionDecision } from "./tunnelBoard.ts";
 import type { BoardTunnelSeamHandler } from "./upgradeSeam.ts";
 import { handleWorkerProxyRequest, handleWorkerProxyUpgrade } from "./workerProxy.ts";
@@ -227,6 +228,7 @@ export const makeBoardTunnelHost = Effect.gen(function* () {
     });
 
   const board: TunnelBoard = new TunnelBoard({
+    boardRelease: readT3oRelease(),
     verifyCredential: (credential) => run(store.verifyCredential(hashSecret(credential))),
     onHello: (workerId, hello) => {
       const endpoint = board.endpoint(workerId);

@@ -287,12 +287,16 @@ popover lists the cards each one has paused, with **Open Workers settings**.
 
 ## Keeping a worker up to date
 
-A worker learns from each board, every time it connects, whether the board can still use it. A
-board updated past what the worker speaks says so straight away, and `pnpm t3o-worker status`
-shows it as **needs update**.
+A worker learns from each board, every time it connects, whether the board can still use it and
+which T3o release the board runs. A board updated past what the worker speaks, or running a newer
+T3o release than the worker, says so straight away, and `pnpm t3o-worker status` shows it as
+**needs update**. Only the first stops the worker taking new cards; a worker that is just behind
+the board's release keeps working until it updates. Only tagged releases are compared: a board
+running a build past a tag, or a dev build, never asks its workers to update.
 
 `pnpm t3o-worker auto-update --install` adds a systemd timer that checks for that every two
-minutes and runs `pnpm t3o-update` when it's set. Checking only reads a file on the worker; GitHub
+minutes and runs `pnpm t3o-update` when it's set. So releasing T3o and updating the board's
+service is enough: its workers follow within a few minutes. Checking only reads a file on the worker; GitHub
 is contacted only when an update is due. `--check` reports without updating, and `--uninstall`
 removes the timer (`pnpm run uninstall-t3o-service` removes it too). Its runs are in
 `journalctl -u t3o-auto-update`.
@@ -312,6 +316,8 @@ removes the timer (`pnpm run uninstall-t3o-service` removes it too). Its runs ar
   worker on **Needs update** until that release is out; the timer then retries every 30 minutes.
 - Agent turns running on the worker are interrupted when the service restarts, as with any update.
 - Workers on a release from before auto-update never report the flag: update them by hand once.
+  Workers on a release from before boards sent their release only update for a protocol change:
+  update them by hand once to follow the board's releases.
 
 ## Threads on a worker
 
