@@ -512,6 +512,30 @@ describe("BoardSchedules", () => {
       assert.strictEqual(deleted.outcome.failures.length, 1);
     }));
 
+  test("adopting over a schedule whose task delete failed deletes that task first", () =>
+    Effect.gen(function* () {
+      const ctx = yield* setup;
+      yield* importFile(ctx, [nightly], { [nightly.id]: server });
+      const oldTask = (yield* rowOf(ctx)).taskId;
+      ctx.world.failDelete = "The task is locked.";
+      yield* importFile(ctx, []);
+      assert.isTrue((yield* rowOf(ctx)).tombstone);
+      ctx.world.tasks.set("hand-1", handMade("hand-1", nightly.title));
+      const refused = yield* importFile(ctx, [nightly], { [nightly.id]: server });
+      assert.strictEqual(refused.preview.entries[0]?.row.kind, "adopt");
+      assert.deepStrictEqual(
+        refused.outcome.failures.map((failure) => failure.reason),
+        ["The task is locked."],
+      );
+      assert.strictEqual((yield* rowOf(ctx)).taskId, oldTask);
+
+      ctx.world.failDelete = null;
+      const adopted = yield* importFile(ctx, [nightly], { [nightly.id]: server });
+      assert.deepStrictEqual(adopted.outcome.failures, []);
+      assert.deepStrictEqual(ctx.world.deletedTasks, [oldTask]);
+      assert.strictEqual((yield* rowOf(ctx)).taskId, "hand-1");
+    }));
+
   test("deletes a schedule that left the file, and only when the key is present", () =>
     Effect.gen(function* () {
       const ctx = yield* setup;
@@ -597,7 +621,14 @@ describe("BoardSchedules", () => {
         { ...nightly, prompt: "Changed." },
       ]);
       ctx.world.staleList = live;
-      yield* ctx.schedules.applyImport(projectId, preview, { [nightly.id]: server });
+      const outcome = yield* ctx.schedules.applyImport(projectId, preview, {
+        [nightly.id]: server,
+      });
+      assert.strictEqual(outcome.setUp, 0);
+      assert.deepStrictEqual(
+        outcome.failures.map((failure) => [failure.fileId, failure.environmentId]),
+        [[nightly.id, server]],
+      );
       assert.isTrue(ctx.world.upserts.at(-1)?.requireExisting);
       const row = yield* rowOf(ctx);
       assert.isTrue(row.missing);
@@ -884,6 +915,21 @@ describe("BoardSchedules runs", () => {
       assert.deepStrictEqual(ctx.world.launches, []);
       assert.deepStrictEqual(ctx.world.deletedTasks, [ctx.task.id]);
       assert.isTrue(ctx.world.tasks.has("hand-1"));
+      assert.deepStrictEqual(yield* ctx.store.rows(projectId), []);
+    }));
+
+  test("a deleted project's schedule whose task delete fails is kept to retry on the next fire", () =>
+    Effect.gen(function* () {
+      const ctx = yield* scheduled;
+      ctx.world.projectDeleted = true;
+      ctx.world.failDelete = "The task is locked.";
+      yield* Effect.flip(ctx.schedules.run(ctx.task));
+      assert.isTrue((yield* rowOf(ctx)).tombstone);
+      assert.isTrue(ctx.world.tasks.has(ctx.task.id));
+      ctx.world.failDelete = null;
+      const skipped = yield* Effect.flip(ctx.schedules.run(ctx.task));
+      assert.strictEqual(skipped.message, SKIPPED_PROJECT_DELETED);
+      assert.deepStrictEqual(ctx.world.deletedTasks, [ctx.task.id]);
       assert.deepStrictEqual(yield* ctx.store.rows(projectId), []);
     }));
 
@@ -1190,6 +1236,9 @@ describe("BoardScheduleRuns.orThread", () => {
       const sql = yield* SqlClient.SqlClient;
       const unlinked = handMade("hand-1", "Hand-made");
       assert.deepStrictEqual(yield* orThread(sql, unlinked, upstream), yield* upstream);
+      // A task the board created never runs as a hand-made one, even with no row linking it.
+      const orphan = handMade("scheduled-task:board:orphan", "Orphan");
+      assert.isTrue(Exit.isFailure(yield* orThread(sql, orphan, upstream)));
       yield* importFile(ctx, [nightly], { [nightly.id]: server });
       const linked = ctx.world.tasks.get((yield* rowOf(ctx)).taskId)!;
       const noRunner = yield* orThread(sql, linked, upstream);

@@ -44,7 +44,7 @@ import type {
   BoardScheduleStoreRow,
   BoardScheduleStoreShape,
 } from "./BoardScheduleStore.ts";
-import { BoardScheduleRunError } from "./scheduleRuns.ts";
+import { BOARD_SCHEDULE_TASK_ID_PREFIX, BoardScheduleRunError } from "./scheduleRuns.ts";
 import {
   scheduleRunBranch,
   scheduleRunThreadId,
@@ -243,6 +243,9 @@ export type RowOutcome =
   | { readonly kind: "set-up" | "stopped" | "deleted" | "missing" | "unchanged" }
   | { readonly kind: "failed"; readonly reason: string };
 
+const MISSING_AT_IMPORT =
+  "Its scheduled task was deleted while the import was open. Pick a machine on the Schedules tab to schedule it again.";
+
 const KIND_ORDER = { update: 0, adopt: 1, create: 2, delete: 3 } as const;
 
 const scheduleError = (message: string, cause?: unknown) =>
@@ -410,7 +413,13 @@ export const makeBoardSchedules = (deps: BoardSchedulesDeps): BoardSchedulesShap
       // task is still the human's.
       for (const row of rows) {
         if (!row.exportLinked && tasks.has(row.taskId)) {
-          yield* Effect.ignore(deleteTask(row.taskId));
+          const deleted = yield* Effect.result(deleteTask(row.taskId));
+          if (deleted._tag === "Failure") {
+            // Kept so the task's next fire retries, rather than leave it running unlinked.
+            yield* save(row, { tombstone: true, lastError: deleted.failure });
+            outcomes.set(row.fileId, { kind: "failed", reason: deleted.failure });
+            continue;
+          }
         }
         yield* store.remove(row.projectId, row.fileId);
         outcomes.set(row.fileId, { kind: "deleted" });
@@ -808,7 +817,7 @@ export const makeBoardSchedules = (deps: BoardSchedulesDeps): BoardSchedulesShap
   });
 
   const newTaskId = Effect.map(deps.uuid, (uuid) =>
-    ScheduledTaskId.make(`scheduled-task:board:${uuid}`),
+    ScheduledTaskId.make(`${BOARD_SCHEDULE_TASK_ID_PREFIX}${uuid}`),
   );
 
   const applyImport: BoardSchedulesShape["applyImport"] = Effect.fn("BoardSchedules.applyImport")(
@@ -818,6 +827,7 @@ export const makeBoardSchedules = (deps: BoardSchedulesDeps): BoardSchedulesShap
         projectId,
         Effect.gen(function* () {
           const reassert = new Set<string>();
+          const refused = new Map<string, string>();
           const placementOf = (fileId: string) =>
             Object.hasOwn(placements, fileId) ? (placements[fileId] ?? null) : null;
           for (const entry of preview.entries) {
@@ -831,6 +841,17 @@ export const makeBoardSchedules = (deps: BoardSchedulesDeps): BoardSchedulesShap
             const def = definition!;
             if (row.kind === "adopt") {
               const task = entry.adoptTask!;
+              if (existing !== null && !existing.exportLinked && existing.taskId !== task.id) {
+                // A tombstone's task goes first, or nothing would link it any more.
+                const live = yield* tasksById;
+                if (live.has(existing.taskId)) {
+                  const deleted = yield* Effect.result(deleteTask(existing.taskId));
+                  if (deleted._tag === "Failure") {
+                    refused.set(def.id, deleted.failure);
+                    continue;
+                  }
+                }
+              }
               // Exported under an id the file since renamed: that link gives way to this one.
               for (const stale of yield* store.rows(projectId)) {
                 if (stale.exportLinked && stale.taskId === task.id && stale.fileId !== def.id) {
@@ -879,10 +900,28 @@ export const makeBoardSchedules = (deps: BoardSchedulesDeps): BoardSchedulesShap
             deleted: rows.filter(
               (row) => row.kind === "delete" && outcomes.get(row.fileId)?.kind === "deleted",
             ).length,
-            failures: failuresOf(
-              outcomes,
-              storeRows.filter((stored) => rows.some((row) => row.fileId === stored.fileId)),
-            ),
+            failures: [
+              ...failuresOf(
+                outcomes,
+                storeRows.filter(
+                  (stored) =>
+                    !refused.has(stored.fileId) && rows.some((row) => row.fileId === stored.fileId),
+                ),
+              ),
+              ...rows.flatMap((row) => {
+                const environmentId = placementOf(row.fileId);
+                const reason =
+                  refused.get(row.fileId) ??
+                  (row.kind !== "delete" &&
+                  environmentId !== null &&
+                  outcomes.get(row.fileId)?.kind === "missing"
+                    ? MISSING_AT_IMPORT
+                    : undefined);
+                return reason === undefined
+                  ? []
+                  : [{ fileId: row.fileId, title: row.title, environmentId, reason }];
+              }),
+            ],
           };
         }),
       );
@@ -1167,15 +1206,16 @@ export const makeBoardSchedules = (deps: BoardSchedulesDeps): BoardSchedulesShap
     const row = yield* store
       .rowByTask(task.id)
       .pipe(Effect.mapError((error) => skip(error.message)));
-    if (row === null || row.tombstone || row.environmentId === null || row.missing) {
-      return yield* skip(SKIPPED_NOT_SCHEDULED);
-    }
+    if (row === null) return yield* skip(SKIPPED_NOT_SCHEDULED);
     const projects = yield* deps.projects().pipe(Effect.mapError((error) => skip(error.message)));
     const project = projects.find((candidate) => candidate.id === row.projectId);
     if (project === undefined || project.deleted) {
       // The timer firing is what notices a deleted project; reconcile clears its schedules.
       yield* Effect.ignore(reconcile(row.projectId));
       return yield* skip(SKIPPED_PROJECT_DELETED);
+    }
+    if (row.tombstone || row.environmentId === null || row.missing) {
+      return yield* skip(SKIPPED_NOT_SCHEDULED);
     }
     const { latestRun, latestState } = yield* latestOf(row).pipe(
       Effect.mapError((error) => skip(error.message)),

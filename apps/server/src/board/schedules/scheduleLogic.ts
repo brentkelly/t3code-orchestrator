@@ -305,8 +305,7 @@ export function retentionCandidates(
     .filter(
       (run, index) =>
         index >= RETENTION_KEEP_MAX ||
-        (index >= RETENTION_KEEP_RECENT &&
-          nowMs - Date.parse(run.startedAt) > RETENTION_WINDOW_MS),
+        (index >= RETENTION_KEEP_RECENT && nowMs - Date.parse(run.startedAt) > RETENTION_WINDOW_MS),
     )
     .filter((run) => !run.workspaceRemoved);
 }

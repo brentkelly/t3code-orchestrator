@@ -37,10 +37,14 @@ export const registerBoardScheduleRunner = (runner: BoardScheduleRunner) =>
 
 const NOT_RUNNING = "Board is not running on this server.";
 
+/** Every task the board creates has an id so; it is never a hand-made task's to run. */
+export const BOARD_SCHEDULE_TASK_ID_PREFIX = "scheduled-task:board:";
+
 /**
  * The run of a task a board schedule links, else `threadRun` unchanged. A task only an
  * export linked stays hand-made until an import adopts it. A linked task
  * with no runner fails rather than launch locally, and so does one whose link can't be read.
+ * A task the board created goes to the runner even once no row links it, which skips it.
  */
 export const orThread = Effect.fn("BoardScheduleRuns.orThread")(function* (
   sql: SqlClient.SqlClient,
@@ -59,7 +63,9 @@ export const orThread = Effect.fn("BoardScheduleRuns.orThread")(function* (
       }).pipe(Effect.as(null)),
     ),
   );
-  if (linked === false) return yield* threadRun;
+  if (linked === false && !task.id.startsWith(BOARD_SCHEDULE_TASK_ID_PREFIX)) {
+    return yield* threadRun;
+  }
   if (linked === null) {
     return Exit.fail(
       new BoardScheduleRunError({ message: "Couldn't read whether the board manages this task." }),
