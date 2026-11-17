@@ -303,15 +303,6 @@ export function boardScheduleWhenText(
     : `${when}, server time (${formatBoardUtcOffset(serverUtcOffsetMinutes)})`;
 }
 
-/** A machine's name: "This server" for the board server. Child B names workers. */
-export function boardScheduleMachineLabel(
-  environmentId: EnvironmentId | null,
-  serverEnvironmentId: EnvironmentId | null,
-): string | null {
-  if (environmentId === null) return null;
-  return environmentId === serverEnvironmentId ? "This server" : environmentId;
-}
-
 const IMPORT_KIND_ORDER: Readonly<Record<BoardScheduleImportKind, number>> = {
   update: 0,
   adopt: 1,

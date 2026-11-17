@@ -415,10 +415,10 @@ describe("a board's schedule run on the worker (T3O-118)", () => {
         },
       });
       relayStore = env.relayStore.store;
-      const run = (call: BoardGatewayCall, as = boardSession()) =>
-        workerGatewayRpcHandlers(as)
-          ["boardWorker.gateway.call"](call)
-          .pipe(Effect.provideService(WorkerGatewayHost, env.host));
+      const run = (call: BoardGatewayCall, as = boardSession()) => {
+        const handle = workerGatewayRpcHandlers(as)["boardWorker.gateway.call"];
+        return handle(call).pipe(Effect.provideService(WorkerGatewayHost, env.host));
+      };
       /** A refusal's kind and reason, or "answered". */
       const refusalOf = (call: BoardGatewayCall, as = boardSession()) =>
         run(call, as).pipe(

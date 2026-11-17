@@ -169,6 +169,8 @@ export const BoardScheduleLastResult = Schema.Struct({
   threadId: Schema.NullOr(ThreadId),
   /** The reason, for the amber kinds. */
   detail: Schema.NullOr(Schema.String),
+  /** T3o: the machine the run thread lives on, which a move doesn't change (T3O-118). */
+  ranOn: Schema.optionalKey(EnvironmentId),
 });
 export type BoardScheduleLastResult = typeof BoardScheduleLastResult.Type;
 

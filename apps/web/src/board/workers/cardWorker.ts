@@ -93,6 +93,8 @@ export interface BoardWorkerChoice {
   readonly canSetUp: boolean;
   /** A clone of the project is running there. */
   readonly cloning: boolean;
+  /** T3o: a status line under the label, amber when the machine can't run now (T3O-118). */
+  readonly sub?: { readonly text: string; readonly warning: boolean };
 }
 
 /** The checkout setup on a worker for a central project, if any. */

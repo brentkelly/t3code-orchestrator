@@ -444,7 +444,7 @@ export const makeBoardSchedules = (deps: BoardSchedulesDeps): BoardSchedulesShap
   ) {
     const { latestRun, latestState } = yield* latestOf(row);
     const scheduled = row.environmentId !== null && live !== null;
-    const lastResult = deriveLastResult({
+    const derived = deriveLastResult({
       lastError: row.lastError,
       scheduled,
       task: live,
@@ -453,6 +453,12 @@ export const makeBoardSchedules = (deps: BoardSchedulesDeps): BoardSchedulesShap
       latestState,
       now: yield* localNow,
     });
+    const lastResult =
+      derived.threadId !== null &&
+      latestRun !== undefined &&
+      derived.threadId === latestRun.threadId
+        ? { ...derived, ranOn: latestRun.environmentId }
+        : derived;
     return {
       projectId: row.projectId,
       fileId: row.fileId,

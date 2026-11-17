@@ -29,7 +29,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { describeBoardCommandFailure } from "../boardCommandFeedback";
 import { boardToast } from "../boardToast";
 import {
-  boardScheduleMachineNamer,
+  useBoardScheduleMachines,
   refreshBoardSchedules,
   useBoardSchedules,
   useCanOperateSchedules,
@@ -67,15 +67,20 @@ export function BoardImportConfirmDialog(props: {
   const canPlace = useCanOperateSchedules(environmentId);
   const [placements, setPlacements] = useState<BoardSchedulePlacements>({});
   const { candidate } = props;
+  // "This server" is the board server this client reads the board from.
+  const serverEnvironmentId = schedulesList?.serverEnvironmentId ?? environmentId;
+  const machines = useBoardScheduleMachines(
+    environmentId,
+    candidate.projectId,
+    serverEnvironmentId,
+  );
   const preview = candidate.preview;
   if (preview === null || candidate.blobSha === null) return null;
   const scheduleRows = preview.schedules ?? [];
   const summary = boardImportScheduleSummary(scheduleRows, placements);
   const scheduleChips = boardImportScheduleChips(summary);
   const footer = boardImportFooterText(summary);
-  // "This server" is the board server this client reads the board from.
-  const serverEnvironmentId = schedulesList?.serverEnvironmentId ?? environmentId;
-  const machineLabel = boardScheduleMachineNamer({ serverEnvironmentId });
+  const machineLabel = machines.name;
   const pipelineListed =
     preview.createStages.length +
       Object.keys(preview.delta.stageSwitches).length +
@@ -263,11 +268,11 @@ export function BoardImportConfirmDialog(props: {
           {scheduleRows.length > 0 ? (
             <BoardImportSchedulesSection
               canPlace={canPlace}
+              machines={machines}
               onPlace={place}
               placements={placements}
               projectTitle={props.projectTitle}
               rows={scheduleRows}
-              serverEnvironmentId={serverEnvironmentId}
               serverUtcOffsetMinutes={schedulesList?.serverUtcOffsetMinutes ?? null}
               summary={summary}
             />

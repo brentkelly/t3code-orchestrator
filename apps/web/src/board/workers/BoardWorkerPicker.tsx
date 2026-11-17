@@ -115,22 +115,37 @@ export function BoardWorkerPinMenu(props: {
         const row = (
           <div
             className={cn(
-              "flex h-7 items-center gap-1.5 rounded-md px-2 text-board-12-5",
+              "flex items-center gap-1.5 rounded-md px-2 text-board-12-5",
+              choice.sub === undefined ? "h-7" : "py-1",
               choice.selectable ? "cursor-pointer hover:bg-accent" : "text-muted-foreground",
             )}
             key={choice.workerId}
           >
             <button
-              className="flex min-w-0 flex-1 items-center gap-1.5 text-left disabled:cursor-default"
+              className="flex min-w-0 flex-1 flex-col items-stretch text-left disabled:cursor-default"
               disabled={!choice.selectable}
               onClick={() => props.onPick(choice.workerId)}
               type="button"
             >
-              <span className="min-w-0 flex-1 truncate">{choice.label}</span>
-              {props.pinnedWorkerId === choice.workerId ? (
-                <CheckIcon className="size-3 shrink-0 text-muted-foreground" />
-              ) : null}
-              <span className="shrink-0 text-board-11 text-muted-foreground">{choice.detail}</span>
+              <span className="flex min-w-0 items-center gap-1.5">
+                <span className="min-w-0 flex-1 truncate">{choice.label}</span>
+                {props.pinnedWorkerId === choice.workerId ? (
+                  <CheckIcon className="size-3 shrink-0 text-muted-foreground" />
+                ) : null}
+                <span className="shrink-0 text-board-11 text-muted-foreground">
+                  {choice.detail}
+                </span>
+              </span>
+              {choice.sub === undefined ? null : (
+                <span
+                  className={cn(
+                    "truncate text-board-11",
+                    choice.sub.warning ? "text-warning-foreground" : "text-muted-foreground",
+                  )}
+                >
+                  {choice.sub.text}
+                </span>
+              )}
             </button>
             {choice.canSetUp && props.onSetUp !== undefined ? (
               <button
