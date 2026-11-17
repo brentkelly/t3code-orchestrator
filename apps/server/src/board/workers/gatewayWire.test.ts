@@ -1,4 +1,9 @@
-import { BoardGatewaySignal, BoardWorkerGatewayError, ThreadId } from "@t3tools/contracts";
+import {
+  BoardGatewaySignal,
+  BoardGatewayThreadRecord,
+  BoardWorkerGatewayError,
+  ThreadId,
+} from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -104,6 +109,37 @@ it.effect("a finished turn's usage crosses the wire with the counts the board pr
 );
 
 const encodeGatewayError = Schema.encodeEffect(BoardWorkerGatewayError);
+// `threadRecords`' record as the build before T3O-121 declared it: no `title`.
+const PreviousThreadRecord = Schema.Struct({
+  threadId: ThreadId,
+  deleted: Schema.Boolean,
+  archived: Schema.Boolean,
+  settlementDecided: Schema.Boolean,
+});
+
+const decodeRecord = Schema.decodeUnknownEffect(BoardGatewayThreadRecord);
+const encodeRecord = Schema.encodeEffect(BoardGatewayThreadRecord);
+const decodePreviousRecord = Schema.decodeUnknownEffect(PreviousThreadRecord);
+
+it.effect("a thread record's title crosses the wire both ways between builds", () =>
+  Effect.gen(function* () {
+    const flags = { threadId, deleted: false, archived: false, settlementDecided: false };
+    // This worker to this central: the title arrives.
+    assert.strictEqual(
+      (yield* decodeRecord({ ...flags, title: "T3O-1 · Building" })).title,
+      "T3O-1 · Building",
+    );
+    // A previous worker sends none: the card falls back to its worker label.
+    assert.notProperty(yield* decodeRecord(flags), "title");
+    // This worker to a previous central: the extra key is ignored, not refused.
+    const encoded = yield* encodeRecord({
+      ...flags,
+      title: "T3O-1 · Building",
+    });
+    assert.deepStrictEqual(yield* decodePreviousRecord(encoded), flags);
+  }),
+);
+
 const decodeGatewayError = Schema.decodeUnknownEffect(BoardWorkerGatewayError);
 
 it.effect("a provider-disabled refusal keeps its reason across the wire", () =>

@@ -351,7 +351,8 @@ export const makeBoardWorkers = Effect.gen(function* () {
   const threadTitles: BoardWorkersShape["threadTitles"] = Effect.fn("BoardWorkers.threadTitles")(
     function* (cardId) {
       const card = (yield* readBoard).cards.find((candidate) => candidate.id === cardId);
-      if (card === undefined) return yield* actionError("not-found", "That card isn't on this board.");
+      if (card === undefined)
+        return yield* actionError("not-found", "That card isn't on this board.");
       const threadIds = card.threadLinks.flatMap((link) =>
         link.tombstonedAt === null && boardThreadLinkWorkerId(link) !== BOARD_LOCAL_WORKER_ID
           ? [link.threadId]

@@ -30,6 +30,8 @@ import { TestClock } from "effect/testing";
 
 import { ServerEnvironment } from "../../environment/ServerEnvironment.ts";
 import { BoardEngine, type BoardEngineShape } from "../BoardEngine.ts";
+import { ThreadGateway, ThreadReadError, type BoardThreadRecord } from "../ThreadGateway.ts";
+import { inertThreadGateway } from "../threadGateway.testkit.ts";
 import { BoardCommandInvariantError } from "../errors.ts";
 import { GitVcsDriver } from "../../vcs/GitVcsDriver.ts";
 import {
@@ -112,7 +114,11 @@ let projectCommands = 0;
 const setupWith = (
   options: {
     readonly dispatch?: (real: BoardEngineShape["dispatch"]) => BoardEngineShape["dispatch"];
+    readonly getReadModel?: (
+      real: BoardEngineShape["getReadModel"],
+    ) => BoardEngineShape["getReadModel"];
     readonly workspaces?: BoardWorkspacesShape;
+    readonly threads?: ThreadGateway["Service"];
   } = {},
 ) =>
   Effect.gen(function* () {
@@ -143,6 +149,7 @@ const setupWith = (
     const engineForTest = {
       ...boardEngine,
       dispatch: options.dispatch?.(boardEngine.dispatch) ?? boardEngine.dispatch,
+      getReadModel: options.getReadModel?.(boardEngine.getReadModel) ?? boardEngine.getReadModel,
     };
     const join = yield* makeBoardWorkerJoin.pipe(
       Effect.provideService(BoardEngine, engineForTest),
@@ -150,13 +157,17 @@ const setupWith = (
       Effect.provideService(BoardWorkerJoinStore, joinStore),
       Effect.provide(relay.layer.pipe(Layer.provideMerge(kit.layer))),
     );
-    const made = makeBoardWorkers.pipe(
+    const routed = makeBoardWorkers.pipe(
       Effect.provideService(WorkerConnections, connections),
       Effect.provideService(BoardEngine, engineForTest),
       Effect.provideService(BoardWorkerJoin, join),
       Effect.provideService(BoardWorkerJoinStore, joinStore),
       Effect.provide(relay.layer.pipe(Layer.provideMerge(kit.layer))),
     );
+    const made =
+      options.threads === undefined
+        ? routed
+        : routed.pipe(Effect.provideService(ThreadGateway, options.threads));
     const workers = yield* options.workspaces === undefined
       ? made
       : made.pipe(Effect.provideService(BoardWorkspaces, options.workspaces));
@@ -347,6 +358,70 @@ const removeWhileTurn = (turn: "ends" | "never ends", outcome: "reclaimed" | "or
       }
     }),
   );
+
+const TITLED_CARD = BoardCardId.make("card-titled");
+const ON_WORKER = ThreadId.make("thread-on-worker");
+const DELETED_ON_WORKER = ThreadId.make("thread-deleted-on-worker");
+const TOMBSTONED_ON_WORKER = ThreadId.make("thread-tombstoned-on-worker");
+const LOCAL_THREAD = ThreadId.make("thread-local");
+
+/** The service over a card with a live worker link, a deleted one, a tombstoned one and a local
+    one, its links overlaid on the read model because linking checks this server's own threads. */
+const titlesSetup = (
+  threadRecords: ThreadGateway["Service"]["threadRecords"],
+  links: "mixed" | "local only" = "mixed",
+) =>
+  Effect.gen(function* () {
+    const link = (threadId: ThreadId, workerId?: EnvironmentId, tombstoned = false) => ({
+      threadId,
+      role: "building",
+      linkedAt: t0,
+      tombstonedAt: tombstoned ? t0 : null,
+      ...(workerId === undefined ? {} : { workerId }),
+    });
+    const threadLinks =
+      links === "local only"
+        ? [link(LOCAL_THREAD)]
+        : [
+            link(ON_WORKER, WORKER_ID),
+            link(DELETED_ON_WORKER, WORKER_ID),
+            link(TOMBSTONED_ON_WORKER, WORKER_ID, true),
+            link(LOCAL_THREAD),
+          ];
+    const context = yield* setupWith({
+      threads: inertThreadGateway({ threadRecords }),
+      getReadModel: (real) =>
+        real.pipe(
+          Effect.map((model) => ({
+            ...model,
+            board: model.board && {
+              ...model.board,
+              cards: model.board.cards.map((card) =>
+                card.id === TITLED_CARD ? { ...card, threadLinks } : card,
+              ),
+            },
+          })),
+        ),
+    });
+    yield* (yield* boardStackEngine).dispatch({
+      type: "board.card.create",
+      commandId: CommandId.make("cmd-create-titled"),
+      cardId: TITLED_CARD,
+      projectId: PROJECT_ID,
+      title: "Worker thread titles",
+      orderKey: "m-titled",
+      createdAt: t0,
+    });
+    return context;
+  });
+
+const record = (
+  threadId: ThreadId,
+  extra: Partial<BoardThreadRecord> = {},
+): [ThreadId, BoardThreadRecord] => [
+  threadId,
+  { threadId, deleted: false, archived: false, settlementDecided: false, ...extra },
+];
 
 /** Each test on its own board: the stack's database is fresh per build. */
 const test = <A, E>(
@@ -589,6 +664,45 @@ describe("BoardWorkers", () => {
         assert.strictEqual(refused.code, "forbidden");
       }),
     ));
+  test("reads the titles of a card's live worker threads, never its local or tombstoned ones", () =>
+    Effect.gen(function* () {
+      const asked: Array<ReadonlyArray<ThreadId>> = [];
+      const { workers } = yield* titlesSetup((threadIds) =>
+        Effect.sync(() => {
+          asked.push(threadIds);
+          return new Map([
+            record(ON_WORKER, { title: "T3O-1 · Building" }),
+            record(DELETED_ON_WORKER, { deleted: true }),
+          ]);
+        }),
+      );
+      assert.deepStrictEqual(yield* workers.threadTitles(TITLED_CARD), {
+        [ON_WORKER]: "T3O-1 · Building",
+      });
+      assert.deepStrictEqual(asked, [[ON_WORKER, DELETED_ON_WORKER]]);
+    }));
+  test("worker thread titles: nothing asked without worker links, unknown card, no answer", () =>
+    Effect.gen(function* () {
+      let asked = 0;
+      const local = yield* titlesSetup(() => {
+        asked += 1;
+        return Effect.succeed(new Map());
+      }, "local only");
+      assert.deepStrictEqual(yield* local.workers.threadTitles(TITLED_CARD), {});
+      assert.strictEqual(asked, 0);
+      const missing = yield* Effect.flip(
+        local.workers.threadTitles(BoardCardId.make("card-missing")),
+      );
+      assert.strictEqual(missing.code, "not-found");
+    }));
+  test("worker thread titles fail, not empty, when no worker answered, so a client keeps its own", () =>
+    Effect.gen(function* () {
+      const { workers } = yield* titlesSetup(() =>
+        Effect.fail(new ThreadReadError({ operation: "threadRecords", detail: "offline" })),
+      );
+      const error = yield* Effect.flip(workers.threadTitles(TITLED_CARD));
+      assert.strictEqual(error.code, "not-online");
+    }));
   test("removes a worker: gives the session back, then forgets token and record", () =>
     Effect.scoped(
       Effect.gen(function* () {

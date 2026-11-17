@@ -392,6 +392,7 @@ it.layer(makeBoardStackTestLayer("t3o-thread-gateway-contract-"))(
           deleted: false,
           archived: false,
           settlementDecided: false,
+          title: "Contract spawned",
         });
         assert.deepStrictEqual([...(yield* threads.openThreadIds([threadId])).open], [threadId]);
         // Its waiting run makes it busy; an idle thread is not.
