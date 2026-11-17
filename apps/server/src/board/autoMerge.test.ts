@@ -1557,6 +1557,39 @@ it.effect("an exhausted ladder re-arms when someone else pushes, and only then",
   );
 });
 
+it.effect("a fix that starts while the refresh reads the head keeps its spent fix", () => {
+  let head = "sha-one";
+  let duringProbe: Effect.Effect<void> = Effect.void;
+  return withGovernor(
+    {
+      ...setup({
+        cards: [
+          {
+            ...cardAtMerge({ autoMerge: true }),
+            pullRequest: openLink,
+            autoMergeHold: hardHold(),
+            mergeStay: { stageEnteredAt: null, conflictFixes: 1, branchUpdates: 0 },
+          },
+        ],
+        mergeFailure: "Required status check 'test' has not passed.",
+      }),
+      mergeStateOf: () => probe({ passed: 1, pending: 1, headSha: head }),
+      mergeStateGate: Effect.suspend(() => duringProbe),
+    },
+    (h) =>
+      Effect.gen(function* () {
+        yield* h.reactor.drain;
+        // The board's own fix starts in the window between the refresh's read and its write.
+        head = "sha-theirs";
+        duringProbe = withRunningFix(h);
+        yield* TestClock.adjust(REFRESH);
+        yield* h.reactor.drain;
+        assert.strictEqual(holdOf(yield* h.board)?.headSha, "sha-one");
+        assert.strictEqual(cardOf(yield* h.board)?.mergeStay?.conflictFixes, 1);
+      }),
+  );
+});
+
 it.effect("a fix agent that pushed and then failed leaves a hold on the post-push head", () => {
   let head = "sha-one";
   return withGovernor(

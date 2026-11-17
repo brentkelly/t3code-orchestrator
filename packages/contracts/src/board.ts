@@ -1071,7 +1071,6 @@ export function isBoardCardAutoMergeSoft(
 export const BoardCardAutoMergeStop = Schema.Literals([
   "no-pull-request",
   "no-workspace",
-  "wrong-stage",
   "fix-failed",
 ]);
 export type BoardCardAutoMergeStop = typeof BoardCardAutoMergeStop.Type;

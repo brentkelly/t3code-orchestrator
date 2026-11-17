@@ -8281,8 +8281,26 @@ const make = Effect.gen(function* () {
       }
       const live = (yield* probeMergeState(fresh)).state?.headSha ?? null;
       if (live === null || live === hold.headSha) continue;
-      yield* clearAutoMergeHold(fresh);
-      yield* resetMergeFixes(fresh);
+      // Re-read past the probe: a Merge click or a fix that started meanwhile owns the card now.
+      const settled = yield* readBoard;
+      const now = settled.cards.find((candidate) => candidate.id === card.id);
+      const stillHeld = now?.autoMergeHold ?? null;
+      const step = boardCardStepState(settled, card.id);
+      if (
+        now === undefined ||
+        stillHeld === null ||
+        stillHeld.retryAt !== null ||
+        stillHeld.heldSince !== hold.heldSince ||
+        stillHeld.attempt !== hold.attempt ||
+        stillHeld.headSha !== hold.headSha ||
+        mergeAwaitingConflictFix.has(String(card.id)) ||
+        (step !== null && !isBoardTerminalStepStatus(step.status)) ||
+        hasLiveStageThread(now, now.stage)
+      ) {
+        continue;
+      }
+      yield* clearAutoMergeHold(now);
+      yield* resetMergeFixes(now);
     }
   });
 
@@ -8750,13 +8768,11 @@ const make = Effect.gen(function* () {
         }
         return { outcome: "conflict" as const, detail };
       }
-      // T3o: a branch behind its base, and only behind (its checks green), is updated once per
-      // stay through the conflict fix step, then the merge retries (T3O-116). An update would not
-      // clear running or failed checks, and behind again after it holds: a busy base must not loop.
+      // T3o: a branch behind its base is updated once per stay through the conflict fix step, then
+      // the merge retries (T3O-116). Not while checks run: the push would restart them for nothing.
+      // A failed check rides along, since no CI fix runs while behind. Behind again holds.
       if (
         state?.blockedReason === "behind" &&
-        !state.checksUnread &&
-        state.checks.failed === 0 &&
         state.checks.pending === 0 &&
         spent.branchUpdates === 0 &&
         pullRequest.headBranch === fresh.worktree?.branch

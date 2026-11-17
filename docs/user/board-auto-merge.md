@@ -30,8 +30,8 @@ children included. With it on, each card's Auto-merge switch shows on, locked an
 so you can tell where the decision came from.
 
 Switching it on also merges the cards **already** sitting in Ready for merge, within about half a
-minute, because a merge cannot be undone. A card you want parked there needs its own Auto-merge
-switch turned off first. Switching the setting back off restores each card's own switch exactly as
+minute. A merge cannot be undone, so turn off the Auto-merge switch of any card you want left
+parked there first. Switching the setting back off restores each card's own switch exactly as
 you left it, and any card that was only being retried because of the board-wide setting drops its
 hold with it.
 
