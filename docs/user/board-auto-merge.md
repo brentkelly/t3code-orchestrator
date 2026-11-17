@@ -53,7 +53,8 @@ auto-merge is looked at rather than given up on:
   happens whether or not the card is armed.
 - **The branch is behind its base** and your repository requires it to be up to date. The board
   brings it up to date once (an agent merges the base in and pushes), then merges. If the base
-  moves again before the merge lands, the card holds rather than chasing it.
+  moves again before the merge lands, the card holds rather than chasing it. Only GitHub says
+  whether being behind is the whole refusal; elsewhere a branch behind its base holds.
 - **Everything is green and the forge still says no** — a missing approval, a branch protection
   rule. That is a decision the board does not have, so it stops and says so.
 - **Conflicts**: an agent resolves them once, and the merge finishes itself if that works. A

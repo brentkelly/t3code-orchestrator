@@ -13,6 +13,8 @@ import {
   BOARD_CHECKS_FIX_STEP_LABEL,
   BOARD_CONFLICT_STEP_LABEL,
   DEFAULT_BOARD_CHECKS_FIX_PROMPT,
+  DEFAULT_BOARD_BRANCH_UPDATE_PROMPT,
+  BOARD_BRANCH_UPDATE_STEP_LABEL,
   BOARD_SEED_STAGE_IDS,
   EMPTY_BOARD_STATE,
   ProviderInstanceId,
@@ -51,6 +53,7 @@ const openPr: VcsStatusChangeRequest = {
 const refusal = (input: {
   readonly blockedReason?: BoardMergeState["blockedReason"];
   readonly failed?: number;
+  readonly updateRequired?: boolean;
 }): BoardMergeState => {
   const failed = input.failed ?? 0;
   return {
@@ -66,6 +69,7 @@ const refusal = (input: {
     },
     headSha: "sha-one",
     checksUnread: false,
+    ...(input.updateRequired === undefined ? {} : { updateRequired: input.updateRequired }),
   };
 };
 
@@ -1385,7 +1389,7 @@ describe("merging a card's pull request", () => {
         settings: settings(),
         pullRequest: openPr,
         mergeFailure: "the host refused",
-        mergeState: refusal({ blockedReason: "behind", failed: 1 }),
+        mergeState: refusal({ blockedReason: "behind", failed: 1, updateRequired: true }),
       },
       (h) =>
         Effect.gen(function* () {
@@ -1398,8 +1402,45 @@ describe("merging a card's pull request", () => {
           assert.include(String(started[0]?.commandId), "merge-branch-update");
           const card = (yield* h.board).cards.find((c) => c.id === cardInMerge().id);
           assert.equal(card?.mergeStay?.branchUpdates, 1);
+          // Its own step and prompt: not a conflict fix told there are conflicts.
+          yield* h.pumpDomain(stageThreadRequested(cardInMerge(), 1));
+          const selected = (yield* h.commands).filter(
+            (command) => command.type === "board.card.select-step",
+          ) as ReadonlyArray<{ readonly prompt: string; readonly stepLabel: string | null }>;
+          assert.equal(selected.length, 1);
+          assert.strictEqual(selected[0]!.stepLabel, BOARD_BRANCH_UPDATE_STEP_LABEL);
+          assert.include(selected[0]!.prompt, DEFAULT_BOARD_BRANCH_UPDATE_PROMPT);
+          assert.notInclude(selected[0]!.prompt, "conflicts with the base branch");
         }),
     ),
+  );
+
+  it.effect.each([false, undefined])(
+    "a behind branch the forge refuses for something else too is not updated: updateRequired %s",
+    (updateRequired) =>
+      withGovernor(
+        {
+          board: { nextCardNumberByProject: {}, cards: [cardInMerge()] },
+          settings: settings(),
+          pullRequest: openPr,
+          mergeFailure: "At least 1 approving review is required.",
+          mergeState: refusal({
+            blockedReason: "behind",
+            ...(updateRequired === undefined ? {} : { updateRequired }),
+          }),
+        },
+        (h) =>
+          Effect.gen(function* () {
+            const result = yield* h.reactor.mergePullRequest(cardInMerge().id);
+            assert.equal(result.outcome, "refused");
+            const started = (yield* h.commands).filter(
+              (command) => command.type === "board.card.start-stage-thread",
+            );
+            assert.equal(started.length, 0);
+            const card = (yield* h.board).cards.find((c) => c.id === cardInMerge().id);
+            assert.equal(card?.mergeStay?.branchUpdates ?? 0, 0);
+          }),
+      ),
   );
 
   it.effect("does not claim a conflict fix that never started", () =>

@@ -78,6 +78,7 @@ const probe = (input: {
   readonly mergeable?: "mergeable" | "blocked" | "unknown";
   readonly blockedReason?: BoardMergeState["blockedReason"];
   readonly headSha?: string;
+  readonly updateRequired?: boolean;
 }): BoardMergeState => {
   const passed = input.passed ?? 0;
   const pending = input.pending ?? 0;
@@ -95,6 +96,7 @@ const probe = (input: {
     },
     headSha: input.headSha ?? "sha-one",
     checksUnread: false,
+    ...(input.updateRequired === undefined ? {} : { updateRequired: input.updateRequired }),
   };
 };
 
@@ -1359,7 +1361,7 @@ it.effect("behind its base (no conflict): the branch is updated once, then the m
       ...setup({
         cards: [cardAtMerge({ autoMerge: true })],
         mergeOutcomes: ["The head branch is not up to date with the base branch.", null],
-        mergeState: probe({ blockedReason: "behind", passed: 2 }),
+        mergeState: probe({ blockedReason: "behind", passed: 2, updateRequired: true }),
       }),
       initialShells: new Map([
         ["thread-ci", fakeThreadState("thread-ci", { sessionStatus: "none" })],
@@ -1395,7 +1397,7 @@ it.effect("behind again after the update (a busy base) holds; no second update",
           },
         ],
         mergeFailure: "The head branch is not up to date with the base branch.",
-        mergeState: probe({ blockedReason: "behind", passed: 2 }),
+        mergeState: probe({ blockedReason: "behind", passed: 2, updateRequired: true }),
       }),
       initialShells: new Map([
         ["thread-ci", fakeThreadState("thread-ci", { sessionStatus: "none" })],
@@ -1425,7 +1427,7 @@ it.effect("behind with checks still running waits on the checks; no branch updat
     setup({
       cards: [cardAtMerge({ autoMerge: true })],
       mergeFailure: "The head branch is not up to date with the base branch.",
-      mergeState: probe({ blockedReason: "behind", passed: 1, pending: 1 }),
+      mergeState: probe({ blockedReason: "behind", passed: 1, pending: 1, updateRequired: true }),
     }),
     (h) =>
       Effect.gen(function* () {
@@ -1445,7 +1447,7 @@ it.effect.each(["behind", "conflict"] as const)(
         ...setup({
           cards: [cardAtMerge({ autoMerge: true })],
           mergeFailure: "the host refused",
-          mergeState: probe({ blockedReason, passed: 2 }),
+          mergeState: probe({ blockedReason, passed: 2, updateRequired: true }),
         }),
         onDispatch: (command) =>
           command.type === "board.card.start-stage-thread"

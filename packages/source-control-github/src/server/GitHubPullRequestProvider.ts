@@ -496,6 +496,10 @@ export const make = Effect.gen(function* () {
           ...(pullRequest.comparison?.behindBy == null
             ? {}
             : { behindBy: pullRequest.comparison.behindBy }),
+          // T3o (T3O-116)
+          ...(pullRequest.comparison?.updateRequired === undefined
+            ? {}
+            : { baseUpdateRequired: pullRequest.comparison.updateRequired }),
         })),
         Effect.mapError(fail("getChangeRequest")),
       ),

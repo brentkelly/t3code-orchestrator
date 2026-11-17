@@ -114,6 +114,7 @@ import {
   isBoardMergeStageExecution,
   isBoardReviewStageExecution,
   DEFAULT_BOARD_CHECKS_FIX_PROMPT,
+  DEFAULT_BOARD_BRANCH_UPDATE_PROMPT,
   type BoardMergeFixKind,
   isBoardCardScheduleDue,
   isBoardParkedStepStatus,
@@ -693,6 +694,25 @@ const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
     happily print several paragraphs. Long enough for the sentence that
     matters, short enough that it cannot bloat the log. */
 const MAX_AUTO_MERGE_REASON_LENGTH = 400;
+
+/** What each merge fix's agent was doing, for the hold a failed run records. */
+const MERGE_FIX_DOING: Record<BoardMergeFixKind, string> = {
+  conflict: "resolving the conflicts with its base",
+  checks: "fixing the failing checks",
+  update: "bringing the branch up to date with its base",
+};
+
+/** The card note for a merge a finished fix retried and the forge still refused. */
+function mergeFixRefusedNote(
+  fix: BoardMergeFixKind | null,
+  outcome: { readonly outcome: string; readonly detail?: string },
+): string {
+  const done =
+    fix === "update" ? "Branch updated" : fix === "checks" ? "Checks fixed" : "Conflicts resolved";
+  return outcome.outcome === "refused" && outcome.detail !== undefined
+    ? `${done}, but the merge was refused: ${outcome.detail}`
+    : `${done}, but the pull request could no longer be merged.`;
+}
 
 /** The board with the projects its cards live in. */
 interface BoardWorld {
@@ -4318,7 +4338,12 @@ const make = Effect.gen(function* () {
       config: {
         stepId: card.stage,
         stageLabel: stage.label,
-        prompt: armedFix === "checks" ? DEFAULT_BOARD_CHECKS_FIX_PROMPT : exec.prompt,
+        prompt:
+          armedFix === "checks"
+            ? DEFAULT_BOARD_CHECKS_FIX_PROMPT
+            : armedFix === "update"
+              ? DEFAULT_BOARD_BRANCH_UPDATE_PROMPT
+              : exec.prompt,
         model,
         timeoutMs: exec.timeoutMs,
         maxAttempts: exec.maxAttempts,
@@ -8472,10 +8497,7 @@ const make = Effect.gen(function* () {
     const probe = yield* probeMergeState(fresh);
     const previous = fresh.autoMergeHold;
     yield* recordAutoMergeHold(fresh.id, {
-      reason:
-        kind === "checks"
-          ? "The agent fixing the failing checks did not finish, so the merge waits for you."
-          : "The agent bringing the branch up to date with its base did not finish, so the merge waits for you.",
+      reason: `The agent ${MERGE_FIX_DOING[kind]} did not finish, so the merge waits for you.`,
       classification: "other",
       detail: null,
       attempt: previous?.attempt ?? 1,
@@ -8768,11 +8790,12 @@ const make = Effect.gen(function* () {
         }
         return { outcome: "conflict" as const, detail };
       }
-      // T3o: a branch behind its base is updated once per stay through the conflict fix step, then
-      // the merge retries (T3O-116). Not while checks run: the push would restart them for nothing.
+      // T3o: a branch the forge refuses only for being behind its base is updated once per stay by
+      // its own fix step, then the merge retries (T3O-116). A host that cannot say holds. Not while checks run: the push would restart them for nothing.
       // A failed check rides along, since no CI fix runs while behind. Behind again holds.
       if (
         state?.blockedReason === "behind" &&
+        state.updateRequired === true &&
         state.checks.pending === 0 &&
         spent.branchUpdates === 0 &&
         pullRequest.headBranch === fresh.worktree?.branch
@@ -8782,7 +8805,7 @@ const make = Effect.gen(function* () {
           hasLiveStageThread(fresh, fresh.stage) ||
           (liveStep !== null && !isBoardTerminalStepStatus(liveStep.status));
         if (!stageBusy) {
-          mergeAwaitingConflictFix.set(String(fresh.id), "conflict");
+          mergeAwaitingConflictFix.set(String(fresh.id), "update");
           yield* spendMergeFix(fresh, "branchUpdates");
           const started = yield* dispatchLanded({
             type: "board.card.start-stage-thread",
@@ -10326,11 +10349,12 @@ const make = Effect.gen(function* () {
             });
           }
           yield* schedule();
-          // Only a conflict fix passes the `viaConflictFix` bound (a CI fix's re-attempt may still
-          // need a conflict fix; its own bound is `checksFixSpent`). An unarmed card's CI fix hands
-          // its merge to the ladder to wait out the re-run checks.
+          // Only a conflict fix passes the `viaConflictFix` bound (a CI fix's or branch update's
+          // re-attempt may still need a conflict fix; their bounds are `checksFixSpent` and the
+          // stay's `branchUpdates`). An unarmed card's CI fix hands its merge to the ladder to wait
+          // out the re-run checks.
           if (finishedFix === "checks") mergeAwaitingChecks.add(String(card.id));
-          const outcome = yield* mergeCardPullRequest(card.id, finishedFix !== "checks");
+          const outcome = yield* mergeCardPullRequest(card.id, finishedFix === "conflict");
           // Record on the ladder only for armed cards. A re-conflict comes back `refused` (via
           // `viaConflictFix`), a hard stop: the fix already had its one attempt.
           const armed =
@@ -10351,14 +10375,9 @@ const make = Effect.gen(function* () {
               commandId: yield* commandId("merge-refused"),
               cardId: card.id,
               kind: "card-merge-refused",
-              // `conflict` is unreachable here: this call passes
-              // `viaConflictFix`, which is exactly what suppresses starting
-              // another conflict step, so a second conflict comes back as
-              // `refused` carrying the forge's text.
-              detail:
-                outcome.outcome === "refused"
-                  ? `Conflicts resolved, but the merge was refused: ${outcome.detail}`
-                  : "Conflicts resolved, but the pull request could no longer be merged.",
+              // After a conflict fix a second conflict comes back `refused` (it passes
+              // `viaConflictFix`), carrying the forge's text.
+              detail: mergeFixRefusedNote(finishedFix, outcome),
               createdAt: yield* nowIso,
             });
           }
