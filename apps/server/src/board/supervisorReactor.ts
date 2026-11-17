@@ -224,7 +224,10 @@ import {
 } from "./ThreadGateway.ts";
 import type { BoardCommand } from "./decider.ts";
 import { syncCardThreadPullRequests } from "./cardThreadPullRequests.ts";
-import { resolveCardPullRequestTarget } from "./cardPullRequestTarget.ts";
+import {
+  confirmsRenamedRepositoryTarget,
+  resolveCardPullRequestTarget,
+} from "./cardPullRequestTarget.ts";
 import {
   removeBoardCardAttachmentsDir,
   resolveBoardCardAttachmentPath,
@@ -7454,8 +7457,9 @@ const make = Effect.gen(function* () {
 
   /**
    * Resolve a pull request to link to a card in `projectId`, forced. Refuses one not on the
-   * project's repository or unknown to the forge, in words fit to show. Records nothing, so a
-   * caller can check it before the card exists.
+   * project's repository or unknown to the forge, in words fit to show; another repository's
+   * name is read by number and linked only if the forge returns it under that name (a rename).
+   * Records nothing, so a caller can check it before the card exists.
    */
   const resolvePullRequestLink = Effect.fn("board-supervisor-resolvePullRequestLink")(function* (
     workspace: BoardCardWorkspace,
@@ -7467,23 +7471,34 @@ const make = Effect.gen(function* () {
       .pullRequestRepository({})
       .pipe(Effect.orElseSucceed(() => null));
     const resolved = resolveCardPullRequestTarget(target, repository);
-    if ("refused" in resolved) {
+    // T3o (T3O-119): another repository's name may be this one's since a rename; the forge decides.
+    if ("refused" in resolved && resolved.reason !== "other-repository") {
       return { outcome: "refused", detail: resolved.refused } as const;
     }
     const found = yield* workspace.getPullRequest({ number: resolved.number, force: true }).pipe(
       Effect.map((summary) => ({ summary }) as const),
-      Effect.catch((error) =>
-        Effect.succeed({
-          failure: `Could not find pull request #${resolved.number}: ${error.detail}`,
-        } as const),
-      ),
+      Effect.catch((error) => Effect.succeed({ failure: error.detail } as const)),
       Effect.catchCause(() =>
-        Effect.succeed({
-          failure: `Could not find pull request #${resolved.number}: the lookup failed unexpectedly.`,
-        } as const),
+        Effect.succeed({ failure: "the lookup failed unexpectedly." } as const),
       ),
     );
-    if ("failure" in found) return { outcome: "refused", detail: found.failure } as const;
+    if ("refused" in resolved) {
+      if ("failure" in found) {
+        return {
+          outcome: "refused",
+          detail: `${resolved.refused} Could not check whether this card's repository was renamed to it: ${found.failure}`,
+        } as const;
+      }
+      if (!confirmsRenamedRepositoryTarget(resolved, found.summary.url)) {
+        return { outcome: "refused", detail: resolved.refused } as const;
+      }
+    }
+    if ("failure" in found) {
+      return {
+        outcome: "refused",
+        detail: `Could not find pull request #${resolved.number}: ${found.failure}`,
+      } as const;
+    }
     const summary = found.summary;
     const pullRequest = {
       number: summary.number,
