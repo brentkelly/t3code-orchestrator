@@ -382,7 +382,7 @@ const askingBoard = (autoAnswers?: number) => ({
   stepStates: [
     planningStep("asking", {
       status: "awaiting-input",
-      ...(autoAnswers === undefined ? {} : { autoAnswers, autoAnsweredAt: EARLIER }),
+      ...(autoAnswers === undefined ? {} : { autoAnswers }),
     }),
   ],
   nextCardNumberByProject: {},

@@ -20,6 +20,7 @@ import {
   unmetBoardCardDependencies,
   type BoardCard,
   type BoardCardPlanReview,
+  type BoardGate,
   type BoardCardStepState,
   type BoardPlan,
   type BoardResolvedAutomation,
@@ -28,17 +29,6 @@ import {
 } from "./board.ts";
 import { boardCardGroupOf } from "./boardGroups.ts";
 
-/** Pipeline order: `boardGateDue` returns the first one due. */
-export const BOARD_GATES = [
-  "plan",
-  "answer",
-  "review-start",
-  "sign-off",
-  "split-sign-off",
-  "split",
-  "build",
-] as const;
-export type BoardGate = (typeof BOARD_GATES)[number];
 export type BoardGateDue = { readonly gate: BoardGate } | null;
 
 /** How many questions the board answers on one planning step before the next waits for a person. */
@@ -160,8 +150,8 @@ export function boardGateDue(input: BoardGateInput): BoardGateDue {
       const unattended =
         automation.autoPlan.value ||
         (planReview.enabled && planReview.unattended === true && isBoardPlanReviewRunning(stay));
-      const answeredThisWait =
-        stay.autoAnsweredAt !== undefined && stay.autoAnsweredAt >= stay.updatedAt;
+      // Parking clears the mark, so it is present only once this wait was answered.
+      const answeredThisWait = stay.autoAnsweredAt !== undefined;
       return unattended &&
         stay.awaitingReason === "question" &&
         stay.threadId !== null &&

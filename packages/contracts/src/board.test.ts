@@ -6,6 +6,7 @@ import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  BOARD_GATES,
   boardCardEffectivePriority,
   BoardStageExecution,
   resolveBoardReviewTierModel,
@@ -106,7 +107,7 @@ import {
   BoardShellSnapshot,
 } from "./board.ts";
 import { defaultBoardCardGroup } from "./boardGroups.ts";
-import { BOARD_GATES, boardGateDue } from "./boardGates.ts";
+import { boardGateDue } from "./boardGates.ts";
 import { BoardWorkerId } from "./boardWorkers.ts";
 import type {
   BoardCardAutoMergeHold,
@@ -3133,6 +3134,9 @@ describe("automation (T3O-38)", () => {
       expect(due({ card: reviewed, step: finished, plans: 1 })).toBe(null);
       const autoPlanned = planning({ autoPlanSetting: true });
       expect(due({ card: autoPlanned, step: step(autoPlanned, asked) })).toBe("answer");
+      // Answered this wait, then another write bumped the row: still answered.
+      const answered = step(autoPlanned, { ...asked, autoAnswers: 1, autoAnsweredAt: NOW });
+      expect(due({ card: autoPlanned, step: { ...answered, updatedAt: ENTERED } })).toBe(null);
     });
 
     it("review-start: a review enabled only by the Settings default is due", () => {
