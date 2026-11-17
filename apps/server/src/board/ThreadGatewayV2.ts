@@ -1382,7 +1382,11 @@ export const BoardScheduleLauncherLive = Layer.effect(
               branch: input.branch,
               startFromOrigin: true,
             },
-            initialMessage: { scheduledTaskId: input.taskId, text: input.prompt, attachments: [] },
+            initialMessage: {
+              ...(input.taskId === undefined ? {} : { scheduledTaskId: input.taskId }),
+              text: input.prompt,
+              attachments: [],
+            },
             createdBy: "system",
             creationSource: "server",
           })

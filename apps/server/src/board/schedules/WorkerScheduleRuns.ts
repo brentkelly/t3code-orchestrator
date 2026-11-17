@@ -10,8 +10,9 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import type * as Scope from "effect/Scope";
 
-import { ThreadLaunchService } from "../../orchestration-v2/ThreadLaunchService.ts";
+import { BoardScheduleLauncherLive } from "../ThreadGatewayV2.ts";
 import { BoardWorkspaces } from "../workspace/BoardWorkspace.ts";
+import { BoardScheduleLauncher } from "./BoardScheduleLauncher.ts";
 import { makeRemoveRunWorktree, type RunWorktreeInput } from "./runWorktree.ts";
 
 export interface WorkerScheduleLaunchInput {
@@ -65,7 +66,7 @@ export const WorkerScheduleRunsSlotLive = Layer.sync(
 );
 
 const make = Effect.gen(function* () {
-  const launcher = yield* ThreadLaunchService;
+  const launcher = yield* BoardScheduleLauncher;
   const workspaces = yield* BoardWorkspaces;
   const removeRunWorktree = yield* makeRemoveRunWorktree;
   return {
@@ -80,27 +81,16 @@ const make = Effect.gen(function* () {
           message: "Couldn't resolve the project's default branch on the worker.",
         });
       }
-      yield* launcher
-        .launch({
-          commandId: input.commandId,
-          threadId: input.threadId,
-          projectId: input.projectId,
-          title: input.title,
-          modelSelection: input.modelSelection,
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          workspaceStrategy: {
-            type: "worktree",
-            baseRef: resolved.defaultBranch,
-            branch: input.branch,
-            startFromOrigin: true,
-          },
-          // No scheduled task id: the schedule's timer is the board's, not this worker's.
-          initialMessage: { text: input.prompt, attachments: [] },
-          createdBy: "system",
-          creationSource: "server",
-        })
-        .pipe(Effect.mapError((error) => ({ message: error.message })));
+      yield* launcher.launch({
+        commandId: input.commandId,
+        threadId: input.threadId,
+        projectId: input.projectId,
+        title: input.title,
+        prompt: input.prompt,
+        modelSelection: input.modelSelection,
+        baseRef: resolved.defaultBranch,
+        branch: input.branch,
+      });
     }),
     removeRunWorktree,
   } satisfies WorkerScheduleRunsShape;
@@ -112,4 +102,4 @@ export const WorkerScheduleRunsLive = Layer.effectDiscard(
     const slot = yield* WorkerScheduleRunsSlot;
     yield* slot.register(yield* make);
   }),
-);
+).pipe(Layer.provide(BoardScheduleLauncherLive));
