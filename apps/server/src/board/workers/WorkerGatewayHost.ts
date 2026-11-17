@@ -527,8 +527,9 @@ export const makeWorkerGatewayHost = Effect.gen(function* () {
 
   /**
    * Retention for a board's schedule (T3O-118): the board can't remove a worktree it doesn't
-   * hold, so the worker removes each settled previous run that touched no card. Only threads
-   * this board placed here, or that are already gone, and only the branch that thread's run made.
+   * hold, so the worker removes each settled previous run's worktree and branch, and its thread
+   * unless the run touched a card. Only threads this board placed here, or that are already
+   * gone, and only the branch that thread's run made.
    */
   const pruneRuns = Effect.fn("WorkerGatewayHost.pruneRuns")(function* (
     input: BoardGatewayPruneScheduleRunsInput,
@@ -540,15 +541,14 @@ export const makeWorkerGatewayHost = Effect.gen(function* () {
     if (project === null) return [];
     const pruned: Array<ThreadId> = [];
     for (const run of input.previousRuns) {
-      if (run.touchedCard) continue;
       if (run.branch !== null && run.branch !== scheduleRunBranchOf(run.threadId)) continue;
       const read = yield* local.threadState(run.threadId).pipe(Effect.result);
       const state = read._tag === "Failure" ? ("unknown" as const) : read.success;
-      if (retentionKeeps(state, false)) continue;
-      let worktreePath: string | null = null;
-      if (state !== null && state !== "unknown" && !state.deleted) {
-        if (!(yield* placedByCaller(caller, run.threadId))) continue;
-        worktreePath = state.worktreePath;
+      if (retentionKeeps(state)) continue;
+      const live = state !== null && state !== "unknown" && !state.deleted;
+      if (live && !(yield* placedByCaller(caller, run.threadId))) continue;
+      const worktreePath = live ? state.worktreePath : null;
+      if (live && !run.touchedCard) {
         const deleted = yield* local
           .delete({
             // Fresh per attempt: the engine replays a rejected command id's refusal for good.

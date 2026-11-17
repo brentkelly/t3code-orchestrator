@@ -4,8 +4,10 @@
  * off and move it up to Planning, and later runs may change the cards earlier ones made.
  */
 import {
+  BOARD_SEED_STAGE_IDS,
   BoardCardId,
   CommandId,
+  DEFAULT_BOARD_MERGE_STAGE_EXECUTION,
   EnvironmentId,
   ProjectId,
   ProviderInstanceId,
@@ -219,5 +221,25 @@ describe("a schedule run's board tools", () => {
       assert.isUndefined(
         model.board?.cards.find((card) => card.title === "Child" && card.archivedAt === null),
       );
+    }));
+
+  test("keeps a card on a board with Auto-merge on for every card", () =>
+    Effect.gen(function* () {
+      yield* seed;
+      const settings = yield* ServerSettings.ServerSettingsService;
+      yield* settings.updateSettings({
+        board: {
+          pipeline: {
+            [BOARD_SEED_STAGE_IDS.merge]: {
+              ...DEFAULT_BOARD_MERGE_STAGE_EXECUTION,
+              autoMerge: true,
+            },
+          },
+        },
+      } as never);
+      const created = yield* boardHandlers
+        .board_create_card({ title: "Nightly: board-wide merge" })
+        .pipe(as(firstRun));
+      assert.strictEqual((yield* cardById(created.cardId))?.archivedAt, null);
     }));
 });

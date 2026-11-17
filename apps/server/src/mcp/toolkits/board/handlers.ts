@@ -2396,13 +2396,16 @@ const scheduleGuarded =
         const { cardId, key } = result as { readonly cardId: BoardCardId; readonly key: string };
         const after = (yield* engine.getReadModel).board ?? EMPTY_BOARD_STATE;
         const created = after.cards.find((card) => card.id === cardId);
-        const autoMergeOn =
-          created !== undefined &&
-          resolveBoardCardAutomationIn({
-            board: after,
-            card: created,
-            boardWideAutoMerge: yield* boardWideAutoMergeNow(after),
-          }).autoMerge.value;
+        const autoMerge =
+          created === undefined
+            ? null
+            : resolveBoardCardAutomationIn({
+                board: after,
+                card: created,
+                boardWideAutoMerge: yield* boardWideAutoMergeNow(after),
+              }).autoMerge;
+        // Board-wide Auto-merge is a human's standing choice for every card, not one this run armed.
+        const autoMergeOn = autoMerge !== null && autoMerge.value && autoMerge.source !== "board";
         const refusal = created === undefined ? null : createdCardRefusal(created, autoMergeOn);
         if (refusal !== null) {
           // Inheriting from a human's started group must never arm unreviewed work.

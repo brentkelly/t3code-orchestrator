@@ -117,7 +117,8 @@ A `t3o.json` can also declare recurring runs. Each entry needs an `id` (letters,
   you pick a machine for it.
 - **`fixed_time` follows the board server's clock**, whatever machine runs it.
 - **A run's board tools are limited to its project.** It can file cards there, and arm, move (up to
-  Planning) or update only the cards that schedule's runs created. It can never turn Auto-merge on.
+  Planning) or update only the cards that schedule's runs created. It can never turn Auto-merge on, though
+  on a board with Auto-merge on for every card, the cards it files follow that setting.
 - **Import never moves or stops a schedule whose definition didn't change.** Use the Schedules tab
   for that. An import that changes a schedule, or removes it from the file, shows what stops running
   before you confirm. Leaving the `schedules` key out leaves the board's schedules alone; an empty

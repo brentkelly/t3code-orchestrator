@@ -989,7 +989,8 @@ export const makeBoardSchedules = (deps: BoardSchedulesDeps): BoardSchedulesShap
       if (project === undefined) return;
       for (const run of candidates) {
         const state = yield* deps.threadState(run.threadId);
-        if (retentionKeeps(state, yield* store.threadTouchedCard(run.threadId))) continue;
+        if (retentionKeeps(state)) continue;
+        const touchedCard = yield* store.threadTouchedCard(run.threadId);
         let worktreePath = run.worktreePath;
         if (worktreePath === null && run.launchError === null) {
           // Kept on the run before the thread goes, so a retry after a refused removal has it.
@@ -999,7 +1000,7 @@ export const makeBoardSchedules = (deps: BoardSchedulesDeps): BoardSchedulesShap
             read.success ?? (state !== null && state !== "unknown" ? state.worktreePath : null);
           if (worktreePath !== null) yield* store.setRunWorktree(run.threadId, worktreePath);
         }
-        if (state !== null && state !== "unknown" && !state.deleted) {
+        if (!touchedCard && state !== null && state !== "unknown" && !state.deleted) {
           const deleted = yield* Effect.result(deps.deleteThread(run.threadId));
           if (deleted._tag === "Failure") continue;
         }
@@ -1009,7 +1010,10 @@ export const makeBoardSchedules = (deps: BoardSchedulesDeps): BoardSchedulesShap
           branch: run.branch,
         });
         if (!removed) continue;
-        yield* store.deleteRun(run.threadId);
+        // The thread of a run that touched a card stays as that card's record.
+        yield* touchedCard
+          ? store.markRunWorkspaceRemoved(run.threadId)
+          : store.deleteRun(run.threadId);
       }
     },
     (effect, projectId, fileId, _except) =>
@@ -1034,14 +1038,19 @@ export const makeBoardSchedules = (deps: BoardSchedulesDeps): BoardSchedulesShap
       ),
     );
 
-  /** Forget the runs the worker confirms removed; only those the board sent. */
+  /**
+   * Forget the runs the worker confirms removed, only those the board sent; one that touched
+   * a card kept its thread, so it is only marked.
+   */
   const forgetPruned = Effect.fn("BoardSchedules.forgetPruned")(function* (
-    sent: ReadonlyArray<BoardScheduleRun>,
+    sent: ReadonlyArray<BoardSchedulePreviousRun>,
     pruned: ReadonlyArray<ThreadId>,
   ) {
-    const ids = new Set<string>(sent.map((run) => run.threadId));
+    const touched = new Map<string, boolean>(sent.map((run) => [run.threadId, run.touchedCard]));
     for (const threadId of pruned) {
-      if (ids.has(threadId)) yield* store.deleteRun(threadId);
+      const touchedCard = touched.get(threadId);
+      if (touchedCard === undefined) continue;
+      yield* touchedCard ? store.markRunWorkspaceRemoved(threadId) : store.deleteRun(threadId);
     }
   });
 
@@ -1052,7 +1061,8 @@ export const makeBoardSchedules = (deps: BoardSchedulesDeps): BoardSchedulesShap
     runs: ReadonlyArray<BoardScheduleRun>,
   ) {
     if (deps.workers === undefined) return;
-    const pruned = yield* deps.workers.prune(workerId, projectId, yield* previousRunsOf(runs)).pipe(
+    const previousRuns = yield* previousRunsOf(runs);
+    const pruned = yield* deps.workers.prune(workerId, projectId, previousRuns).pipe(
       Effect.catch((error) =>
         Effect.logWarning("Schedule run retention on a worker failed", {
           projectId,
@@ -1061,7 +1071,7 @@ export const makeBoardSchedules = (deps: BoardSchedulesDeps): BoardSchedulesShap
         }).pipe(Effect.as([] as ReadonlyArray<ThreadId>)),
       ),
     );
-    yield* forgetPruned(runs, pruned);
+    yield* forgetPruned(previousRuns, pruned);
   });
 
   /**
@@ -1133,7 +1143,7 @@ export const makeBoardSchedules = (deps: BoardSchedulesDeps): BoardSchedulesShap
           );
         }
       } else {
-        yield* forgetPruned(candidates, launched.success);
+        yield* forgetPruned(previousRuns, launched.success);
       }
       yield* retain(row.projectId, row.fileId, workerId);
     }).pipe(

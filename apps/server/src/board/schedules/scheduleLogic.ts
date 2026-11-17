@@ -299,12 +299,15 @@ export function retentionCandidates(
   const newestFirst = runs.toSorted((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt));
   return newestFirst
     .slice(RETENTION_KEEP_RECENT)
-    .filter((run) => nowMs - Date.parse(run.startedAt) > RETENTION_WINDOW_MS);
+    .filter((run) => nowMs - Date.parse(run.startedAt) > RETENTION_WINDOW_MS)
+    .filter((run) => !run.workspaceRemoved);
 }
 
-/** Whether retention must keep a run whatever its age. */
-export const retentionKeeps = (state: RunState, touchedCard: boolean): boolean =>
-  touchedCard ||
+/**
+ * Whether retention must leave a run alone whatever its age. A settled run that touched a card
+ * keeps its thread but still loses its worktree and branch.
+ */
+export const retentionKeeps = (state: RunState): boolean =>
   state === "unknown" ||
   (isLiveState(state) && (state.activeTurnRef !== null || awaitingHuman(state)));
 

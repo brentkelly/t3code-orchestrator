@@ -35,5 +35,12 @@ it.effect("creates the schedule store, its run threads and the cards its runs to
       columns.map((column) => column.name),
       ["task_id", "applied_json", "environment_id", "missing", "tombstone", "export_linked"],
     );
+    const runColumns = yield* sql<{
+      readonly name: string;
+    }>`PRAGMA boards.table_info(schedule_run_threads)`;
+    assert.includeMembers(
+      runColumns.map((column) => column.name),
+      ["branch", "worktree_path", "workspace_removed"],
+    );
   }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
 );

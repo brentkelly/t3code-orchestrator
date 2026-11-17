@@ -54,6 +54,8 @@ export interface BoardScheduleRun {
   readonly branch: string | null;
   /** The run's worktree, recorded the first time retention reads it from the thread. */
   readonly worktreePath: string | null;
+  /** Retention removed the worktree and branch of a run it keeps for the card it touched. */
+  readonly workspaceRemoved: boolean;
 }
 
 export interface BoardScheduleStoreShape {
@@ -75,7 +77,7 @@ export interface BoardScheduleStoreShape {
     fileId: string,
   ) => Effect.Effect<void, BoardScheduleError>;
   readonly recordRun: (
-    run: Omit<BoardScheduleRun, "worktreePath">,
+    run: Omit<BoardScheduleRun, "worktreePath" | "workspaceRemoved">,
   ) => Effect.Effect<void, BoardScheduleError>;
   readonly setRunWorktree: (
     threadId: ThreadId,
@@ -94,6 +96,7 @@ export interface BoardScheduleStoreShape {
     threadId: ThreadId,
   ) => Effect.Effect<BoardScheduleRun | null, BoardScheduleError>;
   readonly deleteRun: (threadId: ThreadId) => Effect.Effect<void, BoardScheduleError>;
+  readonly markRunWorkspaceRemoved: (threadId: ThreadId) => Effect.Effect<void, BoardScheduleError>;
   readonly recordCreatedCard: (input: {
     readonly cardId: string;
     readonly projectId: ProjectId;
@@ -146,6 +149,7 @@ interface RunRecord {
   readonly launch_error: string | null;
   readonly branch: string | null;
   readonly worktree_path: string | null;
+  readonly workspace_removed: number;
 }
 
 const parseApplied = (json: string | null): BoardScheduleApplied | null => {
@@ -167,6 +171,7 @@ const toRun = (record: RunRecord): BoardScheduleRun => ({
   launchError: record.launch_error,
   branch: record.branch,
   worktreePath: record.worktree_path,
+  workspaceRemoved: record.workspace_removed === 1,
 });
 
 export const BoardScheduleStoreLive = Layer.effect(
@@ -300,6 +305,13 @@ export const BoardScheduleStoreLive = Layer.effect(
         Effect.mapError(failed("forget the run")),
       );
 
+    const markRunWorkspaceRemoved: BoardScheduleStoreShape["markRunWorkspaceRemoved"] = (
+      threadId,
+    ) =>
+      sql`
+        UPDATE boards.schedule_run_threads SET workspace_removed = 1 WHERE thread_id = ${threadId}
+      `.pipe(Effect.asVoid, Effect.mapError(failed("record the run's worktree removed")));
+
     const recordCreatedCard: BoardScheduleStoreShape["recordCreatedCard"] = (input) =>
       sql`
         INSERT INTO boards.schedule_created_cards (card_id, project_id, file_id, thread_id, created_at)
@@ -346,6 +358,7 @@ export const BoardScheduleStoreLive = Layer.effect(
       runs,
       runByThread,
       deleteRun,
+      markRunWorkspaceRemoved,
       recordCreatedCard,
       createdCards,
       threadTouchedCard,

@@ -324,13 +324,13 @@ const makeWorld = () => {
           if (world.workerLaunchUnanswered) {
             return yield* Effect.fail({ message: "Lost.", agentCap: false, answered: false });
           }
-          // The worker prunes every settled run it was sent that touched no card.
-          return input.previousRuns.filter((run) => !run.touchedCard).map((run) => run.threadId);
+          // The worker prunes every settled run it was sent, keeping the threads that touched a card.
+          return input.previousRuns.map((run) => run.threadId);
         }),
       prune: (_workerId, _projectId, previousRuns) =>
         Effect.sync(() => {
           world.workerPrunes.push(previousRuns);
-          return previousRuns.filter((run) => !run.touchedCard).map((run) => run.threadId);
+          return previousRuns.map((run) => run.threadId);
         }),
     },
   });
@@ -896,10 +896,14 @@ describe("BoardSchedules runs", () => {
       });
       yield* ctx.schedules.retain(projectId, nightly.id);
       assert.deepStrictEqual(ctx.world.deletedThreads, ["run-8", "run-9"]);
-      assert.deepStrictEqual(ctx.world.removed, [
+      // A run that touched a card keeps its thread but not its worktree and branch.
+      const removedOnce = [
+        { worktreePath: "/worktrees/run-6", branch: "t3o/schedule-run-6" },
+        { worktreePath: "/worktrees/run-7", branch: "t3o/schedule-run-7" },
         { worktreePath: "/worktrees/run-8", branch: "t3o/schedule-run-8" },
         { worktreePath: "/worktrees/run-9", branch: "t3o/schedule-run-9" },
-      ]);
+      ];
+      assert.deepStrictEqual(ctx.world.removed, removedOnce);
       const kept = (yield* ctx.store.runs(projectId, nightly.id)).map((run) => run.threadId);
       assert.deepStrictEqual(kept, [
         "run-0",
@@ -911,6 +915,11 @@ describe("BoardSchedules runs", () => {
         "run-6",
         "run-7",
       ]);
+      assert.isTrue((yield* ctx.store.runByThread(ThreadId.make("run-6")))?.workspaceRemoved);
+      // The next pass leaves the kept threads' runs alone.
+      yield* ctx.schedules.retain(projectId, nightly.id);
+      assert.deepStrictEqual(ctx.world.removed, removedOnce);
+      assert.deepStrictEqual(ctx.world.deletedThreads, ["run-8", "run-9"]);
     }));
 
   test("retention forgets a run only once its worktree and launch branch are removed", () =>
@@ -1118,6 +1127,10 @@ describe("BoardSchedules runs on a worker (T3O-118)", () => {
         "old-2",
         "old-4",
       ]);
+      // Its thread stays for the card it touched; the run is only marked, and isn't sent again.
+      assert.isTrue((yield* ctx.store.runByThread(ThreadId.make("old-4")))?.workspaceRemoved);
+      yield* ctx.schedules.retain(projectId, nightly.id);
+      assert.strictEqual(ctx.world.workerPrunes.length, 1);
     }));
 });
 

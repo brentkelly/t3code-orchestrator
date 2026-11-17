@@ -485,56 +485,65 @@ describe("a board's schedule run on the worker (T3O-118)", () => {
     ),
   );
 
-  it.effect("removes the board's old settled runs and keeps those that touched a card", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const { env, removed, run } = yield* workerWithRuns();
-        const settled = ThreadId.make("thread-schedule-settled");
-        const touched = ThreadId.make("thread-schedule-touched");
-        const turning = ThreadId.make("thread-schedule-turning");
-        const foreign = ThreadId.make("thread-schedule-other-board");
-        const gone = ThreadId.make("thread-schedule-gone");
-        yield* Ref.update(env.threads.states, (states) =>
-          new Map(states)
-            .set(settled, fakeThreadState(settled, { worktreePath: "/home/worker/run-settled" }))
-            .set(touched, fakeThreadState(touched))
-            .set(turning, aliveThread(turning))
-            .set(foreign, fakeThreadState(foreign)),
-        );
-        for (const threadId of [settled, touched, turning]) {
-          yield* env.relayStore.store.recordRelayedThread(threadId, CENTRAL);
-        }
-        yield* env.relayStore.store.recordRelayedThread(foreign, EnvironmentId.make("env-other"));
-        const previous = (threadId: ThreadId, touchedCard = false) => ({
-          threadId,
-          branch: scheduleRunBranchOf(threadId),
-          touchedCard,
-        });
-        const encoded = yield* run(
-          launchCall([
-            previous(settled),
-            previous(touched, true),
-            previous(turning),
-            previous(foreign),
-            previous(gone),
-            // Never a branch that thread's run didn't make.
-            { threadId: ThreadId.make("thread-schedule-odd"), branch: "main", touchedCard: false },
-            { threadId: gone, branch: "t3o/schedule-run-other", touchedCard: false },
-          ]),
-        );
-        const { pruned } = yield* decodeGatewayCallResult("launchScheduleRun", encoded);
-        assert.deepStrictEqual(pruned, [settled, gone]);
-        assert.deepStrictEqual(removed, [
-          { worktreePath: "/home/worker/run-settled", branch: "t3o/schedule-run-settled" },
-          { worktreePath: null, branch: "t3o/schedule-run-gone" },
-        ]);
-        const deletes = (yield* env.threads.calls).filter((call) => call.type === "thread.delete");
-        assert.deepStrictEqual(
-          deletes.map((call) => call.threadId),
-          [settled],
-        );
-      }),
-    ),
+  it.effect(
+    "removes the board's old settled runs, keeping the threads of those that touched a card",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { env, removed, run } = yield* workerWithRuns();
+          const settled = ThreadId.make("thread-schedule-settled");
+          const touched = ThreadId.make("thread-schedule-touched");
+          const turning = ThreadId.make("thread-schedule-turning");
+          const foreign = ThreadId.make("thread-schedule-other-board");
+          const gone = ThreadId.make("thread-schedule-gone");
+          yield* Ref.update(env.threads.states, (states) =>
+            new Map(states)
+              .set(settled, fakeThreadState(settled, { worktreePath: "/home/worker/run-settled" }))
+              .set(touched, fakeThreadState(touched, { worktreePath: "/home/worker/run-touched" }))
+              .set(turning, aliveThread(turning))
+              .set(foreign, fakeThreadState(foreign)),
+          );
+          for (const threadId of [settled, touched, turning]) {
+            yield* env.relayStore.store.recordRelayedThread(threadId, CENTRAL);
+          }
+          yield* env.relayStore.store.recordRelayedThread(foreign, EnvironmentId.make("env-other"));
+          const previous = (threadId: ThreadId, touchedCard = false) => ({
+            threadId,
+            branch: scheduleRunBranchOf(threadId),
+            touchedCard,
+          });
+          const encoded = yield* run(
+            launchCall([
+              previous(settled),
+              previous(touched, true),
+              previous(turning),
+              previous(foreign),
+              previous(gone),
+              // Never a branch that thread's run didn't make.
+              {
+                threadId: ThreadId.make("thread-schedule-odd"),
+                branch: "main",
+                touchedCard: false,
+              },
+              { threadId: gone, branch: "t3o/schedule-run-other", touchedCard: false },
+            ]),
+          );
+          const { pruned } = yield* decodeGatewayCallResult("launchScheduleRun", encoded);
+          assert.deepStrictEqual(pruned, [settled, touched, gone]);
+          assert.deepStrictEqual(removed, [
+            { worktreePath: "/home/worker/run-settled", branch: "t3o/schedule-run-settled" },
+            { worktreePath: "/home/worker/run-touched", branch: "t3o/schedule-run-touched" },
+            { worktreePath: null, branch: "t3o/schedule-run-gone" },
+          ]);
+          const deletes = (yield* env.threads.calls).filter(
+            (call) => call.type === "thread.delete",
+          );
+          assert.deepStrictEqual(
+            deletes.map((call) => call.threadId),
+            [settled],
+          );
+        }),
+      ),
   );
 
   it.effect("prunes a run on a later pass after its first delete is refused", () =>
