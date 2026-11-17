@@ -8459,7 +8459,7 @@ const make = Effect.gen(function* () {
   const checksFixSpent = new Set<string>();
 
   /**
-   * Unarmed cards whose merge waits on the checks their own CI fix re-ran: the human asked for that
+   * Unarmed cards whose merge waits on the checks their own CI fix or branch update re-ran: the human asked for that
    * merge, so it rides the retry ladder for this one wait instead of refusing on pending CI.
    * Dropped on leaving the merge stage or a new Merge click; in memory, so a restart waits a click.
    */
@@ -10351,9 +10351,11 @@ const make = Effect.gen(function* () {
           yield* schedule();
           // Only a conflict fix passes the `viaConflictFix` bound (a CI fix's or branch update's
           // re-attempt may still need a conflict fix; their bounds are `checksFixSpent` and the
-          // stay's `branchUpdates`). An unarmed card's CI fix hands its merge to the ladder to wait
-          // out the re-run checks.
-          if (finishedFix === "checks") mergeAwaitingChecks.add(String(card.id));
+          // stay's `branchUpdates`). An unarmed card's CI fix or branch update hands its merge to
+          // the ladder to wait out the checks its push re-ran.
+          if (finishedFix === "checks" || finishedFix === "update") {
+            mergeAwaitingChecks.add(String(card.id));
+          }
           const outcome = yield* mergeCardPullRequest(card.id, finishedFix === "conflict");
           // Record on the ladder only for armed cards. A re-conflict comes back `refused` (via
           // `viaConflictFix`), a hard stop: the fix already had its one attempt.

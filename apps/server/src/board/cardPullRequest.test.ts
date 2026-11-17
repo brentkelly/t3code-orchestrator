@@ -1415,6 +1415,60 @@ describe("merging a card's pull request", () => {
     ),
   );
 
+  it.effect("an unarmed card's branch update waits for its re-run checks, not a refusal note", () =>
+    Effect.gen(function* () {
+      const card = cardInMerge();
+      let updated = false;
+      yield* withGovernor(
+        {
+          board: { nextCardNumberByProject: {}, cards: [card] },
+          settings: settings(),
+          pullRequest: openPr,
+          mergeFailure: "the host refused",
+          // The update's push restarts CI, so the re-attempt meets pending checks.
+          mergeStateOf: () =>
+            updated
+              ? {
+                  ...refusal({}),
+                  checks: {
+                    total: 1,
+                    passed: 0,
+                    pending: 1,
+                    failed: 0,
+                    failing: [],
+                    running: ["ci"],
+                  },
+                }
+              : refusal({ blockedReason: "behind", updateRequired: true }),
+          initialShells: new Map([
+            ["thread-1", fakeThreadState("thread-1", { sessionStatus: "none" })],
+          ]),
+        },
+        (h) =>
+          Effect.gen(function* () {
+            yield* h.reactor.drain;
+            assert.equal((yield* h.reactor.mergePullRequest(card.id)).outcome, "conflict");
+            updated = true;
+            yield* Ref.update(h.model, (model) => ({
+              ...model,
+              board: {
+                ...(model.board ?? EMPTY_BOARD_STATE),
+                stepStates: [runningMergeStep(card.id)],
+              },
+            }));
+            yield* h.pumpDomain(mergeStepCompleted(card.id, 2));
+            const notes = (yield* h.commands).filter(
+              (command) =>
+                command.type === "board.card.record-note" && command.kind === "card-merge-refused",
+            );
+            assert.deepStrictEqual(notes, []);
+            const held = (yield* h.board).cards.find((c) => c.id === card.id);
+            assert.equal(held?.autoMergeHold?.classification, "soft");
+          }),
+      );
+    }),
+  );
+
   it.effect.each([false, undefined])(
     "a behind branch the forge refuses for something else too is not updated: updateRequired %s",
     (updateRequired) =>
