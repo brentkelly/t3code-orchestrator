@@ -881,48 +881,29 @@ it.effect("retries a merge refused for a check that is STILL RUNNING (T3O-38)", 
   ),
 );
 
-it.effect("does not merge a child a human pulled BACK out of Done", () =>
-  withGovernor(
-    {
-      board: {
-        cards: [parentCard(), childAtMerge("card-one")],
-        nextCardNumberByProject: {},
-      },
-      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
-      pullRequest: openPr,
-    },
-    (h) =>
-      Effect.gen(function* () {
-        // A backward drag is an UNDO. Answering it by immediately re-merging on
-        // the forge is both surprising and irreversible, so the hook takes
-        // forward arrivals only — the same condition the crossing gate
-        // applies just above it.
-        yield* h.pumpDomain(cardMoved(childAtMerge("card-one"), DONE, MERGE, 1));
-        assert.deepStrictEqual(yield* h.mergeAttempts, []);
-        assert.strictEqual(cardStage(yield* h.board, BoardCardId.make("card-one")), MERGE);
-      }),
-  ),
-);
-
-it.effect("does not merge a child a human dragged straight from Building, skipping review", () =>
-  withGovernor(
-    {
-      board: {
-        cards: [parentCard(), childAtMerge("card-one")],
-        nextCardNumberByProject: {},
-      },
-      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
-      pullRequest: openPr,
-    },
-    (h) =>
-      Effect.gen(function* () {
-        // A forward JUMP is a human overriding the pipeline, not the pipeline
-        // delivering the card. Merging here would land a diff no review round
-        // has ever seen — irreversibly, off one drag.
-        yield* h.pumpDomain(cardMoved(childAtMerge("card-one"), "building", MERGE, 1));
-        assert.deepStrictEqual(yield* h.mergeAttempts, []);
-        assert.strictEqual(cardStage(yield* h.board, BoardCardId.make("card-one")), MERGE);
-      }),
+it.effect("T3O-116: an armed child merges however it reached the merge stage", () =>
+  Effect.forEach(
+    [DONE, "building"],
+    (from) =>
+      withGovernor(
+        {
+          board: {
+            cards: [parentCard(), childAtMerge("card-one")],
+            nextCardNumberByProject: {},
+          },
+          settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+          pullRequest: openPr,
+        },
+        (h) =>
+          Effect.gen(function* () {
+            // The merge gate is a question about the card at rest, not about the move that put it
+            // there: a backward drag or a jump over review lands it in Ready for merge all the
+            // same, and the contract merges every armed card there.
+            yield* h.pumpDomain(cardMoved(childAtMerge("card-one"), from, MERGE, 1));
+            assert.deepStrictEqual(yield* h.mergeAttempts, [{ number: 284 }], from);
+          }),
+      ),
+    { discard: true },
   ),
 );
 

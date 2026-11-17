@@ -226,11 +226,9 @@ export function boardCardAutoMergeOn(input: {
 }
 
 /**
- * The merge gates (T3O-116), on a card in Ready for merge. merged-done first: a pull request
- * already merged (cached state, kept current by the merge-stage refresh) moves the card on and is
- * never merged again. Then merge: Auto-merge on, not blocked, nothing running on the stage, and no
- * hold that still applies. A hard hold applies until a human or someone else's push revives it,
- * except a no-pull-request stop, which a linked pull request clears. A soft hold waits its rung.
+ * The merge gates (T3O-116). merged-done first, off the cached pull request, so a merged one is
+ * never merged again. A hard hold applies until a person or someone else's push clears it, except
+ * a no-pull-request stop, which a linked pull request clears; a soft hold waits its rung.
  */
 function boardMergeGateDue(input: BoardGateInput, index: BoardGateIndex): BoardGateDue {
   const { board, card } = input;
@@ -245,7 +243,9 @@ function boardMergeGateDue(input: BoardGateInput, index: BoardGateIndex): BoardG
   if (!boardCardAutoMergeOn(input)) return null;
   const step = index.stepByCard.get(String(card.id)) ?? null;
   if (step !== null && !isBoardTerminalStepStatus(step.status)) return null;
-  if (card.threadLinks.some((link) => link.role === card.stage && isLiveBoardCardThreadLink(link))) {
+  if (
+    card.threadLinks.some((link) => link.role === card.stage && isLiveBoardCardThreadLink(link))
+  ) {
     return null;
   }
   const hold = card.autoMergeHold;

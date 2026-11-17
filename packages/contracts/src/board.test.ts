@@ -3137,7 +3137,10 @@ describe("automation (T3O-38)", () => {
           ...DEFAULT_BOARD_SETTINGS,
           pipeline: {
             ...DEFAULT_BOARD_SETTINGS.pipeline,
-            [BOARD_SEED_STAGE_IDS.merge]: { ...DEFAULT_BOARD_MERGE_STAGE_EXECUTION, autoMerge: true },
+            [BOARD_SEED_STAGE_IDS.merge]: {
+              ...DEFAULT_BOARD_MERGE_STAGE_EXECUTION,
+              autoMerge: true,
+            },
           },
         };
         expect(due({ card: atMerge({ autoMergeSetting: null }), settings: boardWide })).toBe(
@@ -3150,9 +3153,7 @@ describe("automation (T3O-38)", () => {
         expect(due({ card: soft, nowMs: at })).toBe(null);
         expect(due({ card: soft })).toBe(null);
         expect(due({ card: soft, nowMs: at + 5 * 60_000 })).toBe("merge");
-        expect(due({ card: atMerge({ autoMergeHold: hold() }), nowMs: at + 3_600_000 })).toBe(
-          null,
-        );
+        expect(due({ card: atMerge({ autoMergeHold: hold() }), nowMs: at + 3_600_000 })).toBe(null);
       });
 
       it("merge: a no-pull-request hold clears once a pull request is linked", () => {

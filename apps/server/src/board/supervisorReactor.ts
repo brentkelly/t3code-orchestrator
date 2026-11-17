@@ -8240,12 +8240,10 @@ const make = Effect.gen(function* () {
     });
 
   /**
-   * T3o: keep the cached pull request of every Auto-merge card in Ready for merge current, so the
-   * merged-done gate sees a PR merged outside the board, and revive a hard hold when someone else
-   * pushed to the PR while it was held (T3O-116). The board pushes nothing to a held card, and
-   * every hold records its head from a live read taken after the board's own pushes, so a
-   * different head is someone else's. Off the reactor's worker and outside the tick: it reads the
-   * forge. Records state only; the gates act on it from their own pass.
+   * T3o: keep Auto-merge cards' cached pull requests current for merged-done, and revive a hard
+   * hold whose live head moved (T3O-116). Every hold's head is read after the board's own pushes,
+   * and the board pushes nothing to a held card, so a new head is someone else's. Off the worker:
+   * it reads the forge. It records state; the gates act on it.
    */
   const refreshMergeStageCards = Effect.fn("board-supervisor-refreshMergeStageCards")(function* () {
     const board = yield* readBoard;

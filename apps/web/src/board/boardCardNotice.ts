@@ -158,6 +158,9 @@ const GATE_LABELS: Readonly<Record<BoardGate, string>> = {
   "split-sign-off": "Auto sign-off",
   split: "The approved split",
   build: "Auto-build",
+  // T3o: the merge gates hold through `autoMergeHold`; only a refused move to Done lands here (T3O-116).
+  "merged-done": "Moving the merged card to Done",
+  merge: "Auto-merge",
 };
 
 /** T3o: why an automation gate is held, in the card's words (T3O-115). */

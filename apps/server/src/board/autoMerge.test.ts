@@ -34,6 +34,7 @@ import {
   readyWorktree,
   settingsWith,
   withGovernor,
+  type Harness,
   type HarnessCommand,
   type HarnessEvent,
 } from "./supervisorHarness.testkit.ts";
@@ -274,7 +275,12 @@ it.effect("a card pulled BACK out of Done whose pull request merged goes straigh
     (h) =>
       Effect.gen(function* () {
         yield* h.pumpDomain(
-          cardMoved({ ...cardAtMerge({ autoMerge: true }), pullRequest: mergedLink }, DONE, MERGE, 1),
+          cardMoved(
+            { ...cardAtMerge({ autoMerge: true }), pullRequest: mergedLink },
+            DONE,
+            MERGE,
+            1,
+          ),
         );
         // Merged is merged: never merged again, and the card does not sit in Ready for merge.
         assert.deepStrictEqual(yield* h.mergeAttempts, []);
@@ -1183,8 +1189,8 @@ const mergeFixCompleted = (sequence: number, outcome: "succeeded" | "failed" = "
   }) as unknown as HarnessEvent;
 
 /** Put a running fix step on the card, as the start-stage-thread the reactor asked for would. */
-const withRunningFix = (h: { readonly model: Ref.Ref<{ readonly board?: BoardState | null }> }) =>
-  Ref.update(h.model as Ref.Ref<{ board?: BoardState | null }>, (model) => ({
+const withRunningFix = (h: Harness) =>
+  Ref.update(h.model, (model) => ({
     ...model,
     board: { ...(model.board ?? EMPTY_BOARD_STATE), stepStates: [runningMergeFix()] },
   }));
