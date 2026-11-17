@@ -13,6 +13,7 @@ import {
   boardStageById,
   boardStages,
   effectiveBoardStageRole,
+  isBoardPlanReviewRunning,
   resolveBoardCardAutomation,
   resolveBoardCardPlanReview,
   resolveBoardStageExecution,
@@ -154,7 +155,11 @@ export function boardGateDue(input: BoardGateInput): BoardGateDue {
     if (stay.status === "awaiting-input") {
       // A question (or a blocked completion) on an unattended run: the board answers it, once per
       // wait and at most `BOARD_AUTO_ANSWER_LIMIT` times a step. A Stop is a person's.
-      const unattended = automation.autoPlan.value || planReview.unattended === true;
+      // An unattended review counts only while it runs on this step; before it starts the
+      // questions are the attended planning run's.
+      const unattended =
+        automation.autoPlan.value ||
+        (planReview.enabled && planReview.unattended === true && isBoardPlanReviewRunning(stay));
       const answeredThisWait =
         stay.autoAnsweredAt !== undefined && stay.autoAnsweredAt >= stay.updatedAt;
       return unattended &&

@@ -3118,6 +3118,23 @@ describe("automation (T3O-38)", () => {
       expect(due({ card: unattended, step: step(unattended), plans: 1 })).toBe("review-start");
     });
 
+    it("answer: an unattended review counts only while it runs", () => {
+      const asked = {
+        status: "awaiting-input",
+        awaitingReason: "question" as const,
+        threadId: ThreadId.make("thread-asked"),
+      };
+      const reviewed = planning({ planReview: { enabled: true, rounds: 1, unattended: true } });
+      // Attended planning before the review starts: the question is the person's.
+      expect(due({ card: reviewed, step: step(reviewed, asked), plans: 1 })).toBe(null);
+      const reviewing = step(reviewed, { ...asked, planReviewStartedAt: ENTERED });
+      expect(due({ card: reviewed, step: reviewing, plans: 1 })).toBe("answer");
+      const finished = step(reviewed, { ...reviewing, planReviewDoneAt: NOW });
+      expect(due({ card: reviewed, step: finished, plans: 1 })).toBe(null);
+      const autoPlanned = planning({ autoPlanSetting: true });
+      expect(due({ card: autoPlanned, step: step(autoPlanned, asked) })).toBe("answer");
+    });
+
     it("review-start: a review enabled only by the Settings default is due", () => {
       const settings = decodeSettings({
         pipeline: {
