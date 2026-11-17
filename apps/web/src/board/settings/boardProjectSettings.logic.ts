@@ -4,6 +4,15 @@
  * Pipeline tab shows, and the import summary chips.
  */
 import {
+  BOARD_SCHEDULE_AMBER_RESULTS,
+  describeScheduleWhen,
+  type BoardScheduleImportKind,
+  type BoardScheduleImportOutcome,
+  type BoardScheduleImportRow,
+  type BoardScheduleLastResult,
+  type BoardScheduleRow,
+  type BoardScheduleWhen,
+  type EnvironmentId,
   BOARD_CI_MAX_STEPS,
   BOARD_SEED_STAGE_IDS,
   DEFAULT_BOARD_CI_FORGE_APPEAR_TIMEOUT_MINUTES,
@@ -21,7 +30,13 @@ import {
 } from "@t3tools/contracts";
 
 /** The tabs of a project's settings page, in order. */
-export const BOARD_PROJECT_SETTINGS_TABS = ["pipeline", "ci", "resources", "import"] as const;
+export const BOARD_PROJECT_SETTINGS_TABS = [
+  "pipeline",
+  "ci",
+  "schedules",
+  "resources",
+  "import",
+] as const;
 export type BoardProjectSettingsTab = (typeof BOARD_PROJECT_SETTINGS_TABS)[number];
 
 export function parseBoardProjectSettingsTab(value: string): BoardProjectSettingsTab {
@@ -260,4 +275,403 @@ export function boardImportSummaryChips(
   const ignored = preview.delta.warnings.length;
   if (ignored > 0) chips.push(plural(ignored, "ignored entry").replace("entrys", "entries"));
   return chips;
+}
+
+// ── T3o: t3o.json schedules (T3O-117) ───────────────────────────────────
+
+const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+/** "UTC", "UTC+1", "UTC-5:30". */
+export function formatBoardUtcOffset(minutes: number): string {
+  if (minutes === 0) return "UTC";
+  const sign = minutes > 0 ? "+" : "-";
+  const abs = Math.abs(minutes);
+  const hours = Math.floor(abs / 60);
+  const rest = abs % 60;
+  return `UTC${sign}${hours}${rest === 0 ? "" : `:${String(rest).padStart(2, "0")}`}`;
+}
+
+/** The readable "when". Every timer fires on the board server's clock, so a
+    time of day always says so; an interval needs no zone. */
+export function boardScheduleWhenText(
+  schedule: BoardScheduleWhen,
+  serverUtcOffsetMinutes: number | null,
+): string {
+  const when = describeScheduleWhen(schedule);
+  return schedule.type === "interval" || serverUtcOffsetMinutes === null
+    ? when
+    : `${when}, server time (${formatBoardUtcOffset(serverUtcOffsetMinutes)})`;
+}
+
+/** A machine's name: "This server" for the board server. Child B names workers. */
+export function boardScheduleMachineLabel(
+  environmentId: EnvironmentId | null,
+  serverEnvironmentId: EnvironmentId | null,
+): string | null {
+  if (environmentId === null) return null;
+  return environmentId === serverEnvironmentId ? "This server" : environmentId;
+}
+
+const IMPORT_KIND_ORDER: Readonly<Record<BoardScheduleImportKind, number>> = {
+  update: 0,
+  adopt: 1,
+  create: 2,
+  delete: 3,
+};
+
+/** Updates, Adopts existing, Creates, Will be deleted. */
+export function orderBoardImportSchedules(
+  rows: ReadonlyArray<BoardScheduleImportRow>,
+): ReadonlyArray<BoardScheduleImportRow> {
+  return [...rows].sort((a, b) => IMPORT_KIND_ORDER[a.kind] - IMPORT_KIND_ORDER[b.kind]);
+}
+
+export const BOARD_IMPORT_SCHEDULE_KIND_LABELS: Readonly<Record<BoardScheduleImportKind, string>> =
+  {
+    create: "Creates",
+    update: "Updates",
+    adopt: "Adopts existing",
+    delete: "Will be deleted",
+  };
+
+export const boardImportScheduleMark = (kind: BoardScheduleImportKind) =>
+  kind === "create" ? "+" : kind === "delete" ? "\u2212" : "\u00b1";
+
+export type BoardSchedulePlacements = Readonly<Record<string, EnvironmentId | null>>;
+
+/** Own keys only: an id like `constructor` must not read the prototype. */
+export const boardSchedulePlacement = (
+  placements: BoardSchedulePlacements,
+  fileId: string,
+): EnvironmentId | null =>
+  Object.hasOwn(placements, fileId) ? (placements[fileId] ?? null) : null;
+
+/** What an import does to its schedules given the machines picked so far. */
+export interface BoardImportScheduleSummary {
+  /** Rows that will run, with their machine. */
+  readonly scheduled: ReadonlyArray<BoardScheduleImportRow>;
+  /** Updates and adoptions running somewhere today that stop with no machine. */
+  readonly stops: ReadonlyArray<BoardScheduleImportRow>;
+  readonly deletes: ReadonlyArray<BoardScheduleImportRow>;
+  /** Rows a machine can be picked for (not deletions). */
+  readonly placeable: number;
+}
+
+export function boardImportScheduleSummary(
+  rows: ReadonlyArray<BoardScheduleImportRow>,
+  placements: BoardSchedulePlacements,
+): BoardImportScheduleSummary {
+  const placeable = rows.filter((row) => row.kind !== "delete");
+  const placed = (row: BoardScheduleImportRow) =>
+    boardSchedulePlacement(placements, row.fileId) !== null;
+  return {
+    scheduled: placeable.filter(placed),
+    stops: placeable.filter(
+      (row) =>
+        (row.kind === "update" || row.kind === "adopt") &&
+        (row.currentEnvironmentId ?? null) !== null &&
+        !placed(row),
+    ),
+    deletes: rows.filter((row) => row.kind === "delete"),
+    placeable: placeable.length,
+  };
+}
+
+/** "Replace and import", "Import and schedule 2", "Import and stop 1",
+    "Import and schedule 2, stop 1". */
+export function boardImportPrimaryLabel(summary: BoardImportScheduleSummary): string {
+  const scheduled = summary.scheduled.length;
+  const stops = summary.stops.length;
+  if (scheduled > 0 && stops > 0) return `Import and schedule ${scheduled}, stop ${stops}`;
+  if (scheduled > 0) return `Import and schedule ${scheduled}`;
+  if (stops > 0) return `Import and stop ${stops}`;
+  return "Replace and import";
+}
+
+/** The footer's grey count. */
+export function boardImportFooterText(summary: BoardImportScheduleSummary): string | null {
+  if (summary.placeable === 0) return null;
+  const scheduled = summary.scheduled.length;
+  const base =
+    scheduled === 0
+      ? "No schedules will run"
+      : `${scheduled} of ${plural(summary.placeable, "schedule")} will run`;
+  return summary.stops.length === 0 ? base : `${base} · ${summary.stops.length} will stop`;
+}
+
+/** The schedule chips: "3 schedules", "1 removed", then the live chip. */
+export function boardImportScheduleChips(summary: BoardImportScheduleSummary): {
+  readonly counts: ReadonlyArray<string>;
+  readonly live: string | null;
+} {
+  if (summary.placeable === 0 && summary.deletes.length === 0) return { counts: [], live: null };
+  const counts: string[] = [];
+  if (summary.placeable > 0) counts.push(plural(summary.placeable, "schedule"));
+  if (summary.deletes.length > 0) counts.push(`${summary.deletes.length} removed`);
+  return {
+    counts,
+    live:
+      summary.placeable === 0
+        ? null
+        : summary.scheduled.length === 0
+          ? "None scheduled"
+          : `${summary.scheduled.length} will run`,
+  };
+}
+
+/** The verdict box under the Schedules header. */
+export function boardImportScheduleVerdict(input: {
+  readonly summary: BoardImportScheduleSummary;
+  readonly placements: BoardSchedulePlacements;
+  readonly projectTitle: string;
+  readonly machineLabel: (environmentId: EnvironmentId | null) => string;
+}): {
+  readonly tone: "neutral" | "warning";
+  readonly text: string;
+  readonly stops: ReadonlyArray<string>;
+  readonly deletes: ReadonlyArray<string>;
+} {
+  const { summary } = input;
+  const scheduled = summary.scheduled;
+  const text =
+    scheduled.length === 0
+      ? `Nothing will be scheduled. The file's ${plural(summary.placeable, "schedule")} ${summary.placeable === 1 ? "is" : "are"} listed under ${input.projectTitle} › Schedules as Not scheduled; pick a machine below, or there later.`
+      : `${plural(scheduled.length, "schedule")} will run unattended, with full access to the machine: ${scheduled
+          .map(
+            (row) =>
+              `'${row.title}' on ${input.machineLabel(boardSchedulePlacement(input.placements, row.fileId))}`,
+          )
+          .join(", ")}.`;
+  return {
+    tone: scheduled.length === 0 ? "neutral" : "warning",
+    text,
+    stops: summary.stops.map(
+      (row) =>
+        `'${row.title}' runs on ${input.machineLabel(row.currentEnvironmentId ?? null)} today. With no machine picked, it stops running there.`,
+    ),
+    deletes: summary.deletes.map(
+      (row) =>
+        `'${row.title}' is deleted${(row.currentEnvironmentId ?? null) === null ? "" : ` from ${input.machineLabel(row.currentEnvironmentId ?? null)}`}.`,
+    ),
+  };
+}
+
+/** The grey explanation line under a schedule row in the import dialog. */
+export function boardImportScheduleExplanation(
+  row: BoardScheduleImportRow,
+  machineLabel: (environmentId: EnvironmentId | null) => string,
+): string {
+  const current = row.currentEnvironmentId ?? null;
+  const where = current === null ? "isn't scheduled anywhere" : `runs on ${machineLabel(current)}`;
+  switch (row.kind) {
+    case "create":
+      return "New task from the file. Imported as Not scheduled unless you pick a machine.";
+    case "update":
+      return `Set up by an earlier import · ${current === null ? "not scheduled today" : `runs on ${machineLabel(current)} today`}.`;
+    case "adopt":
+      return `A hand-made task with this title ${where}. After import, t3o.json manages it. Board tools limited to this schedule's own cards.`;
+    case "delete":
+      return `'${row.fileId}' is no longer in the file. Set up by an earlier import${current === null ? "" : ` on ${machineLabel(current)}`}.`;
+  }
+}
+
+/** The Import tab's one-line reason per schedule, when only schedules differ. */
+export function boardImportScheduleReason(row: BoardScheduleImportRow): string {
+  switch (row.kind) {
+    case "create":
+      return `'${row.title}': new`;
+    case "adopt":
+      return `'${row.title}': takes over the hand-made task with this title`;
+    case "delete":
+      return `'${row.title}': no longer in the file, so it's deleted`;
+    case "update": {
+      const parts = row.changes
+        .filter((change) => change.label !== "Machine")
+        .map((change) =>
+          change.label === "Prompt"
+            ? "prompt changed"
+            : `${change.label.toLowerCase()}: ${change.from} → ${change.to}`,
+        );
+      return `'${row.title}': ${parts.length === 0 ? "updated" : parts.join("; ")}`;
+    }
+  }
+}
+
+export interface BoardPromptDiffLine {
+  readonly kind: "same" | "add" | "remove";
+  readonly text: string;
+}
+
+/** A line diff (longest common subsequence) of an old prompt against a new one. */
+export function boardPromptLineDiff(
+  before: string,
+  after: string,
+): ReadonlyArray<BoardPromptDiffLine> {
+  const a = before.split("\n");
+  const b = after.split("\n");
+  const lcs: number[][] = Array.from({ length: a.length + 1 }, () =>
+    Array.from({ length: b.length + 1 }, () => 0),
+  );
+  for (let i = a.length - 1; i >= 0; i--) {
+    for (let j = b.length - 1; j >= 0; j--) {
+      lcs[i]![j] =
+        a[i] === b[j] ? lcs[i + 1]![j + 1]! + 1 : Math.max(lcs[i + 1]![j]!, lcs[i]![j + 1]!);
+    }
+  }
+  const out: BoardPromptDiffLine[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < a.length && j < b.length) {
+    if (a[i] === b[j]) {
+      out.push({ kind: "same", text: a[i]! });
+      i++;
+      j++;
+    } else if (lcs[i + 1]![j]! >= lcs[i]![j + 1]!) {
+      out.push({ kind: "remove", text: a[i++]! });
+    } else {
+      out.push({ kind: "add", text: b[j++]! });
+    }
+  }
+  while (i < a.length) out.push({ kind: "remove", text: a[i++]! });
+  while (j < b.length) out.push({ kind: "add", text: b[j++]! });
+  return out;
+}
+
+/** "52 words → 89 words · 3 lines added, 1 removed". */
+export function boardPromptChangeSummary(before: string, after: string): string {
+  const words = (text: string) => text.split(/\s+/).filter((word) => word.length > 0).length;
+  const diff = boardPromptLineDiff(before, after);
+  const added = diff.filter((line) => line.kind === "add").length;
+  const removed = diff.filter((line) => line.kind === "remove").length;
+  return `${plural(words(before), "word")} → ${plural(words(after), "word")} · ${plural(added, "line")} added, ${removed} removed`;
+}
+
+// Zero-width, joiner, bidi embedding/override/isolate marks, and the BOM: invisible, yet they
+// change what an agent reads, so a prompt shows each one as its code point.
+const INVISIBLE_CHARS = /[\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF]/g;
+
+export function revealBoardPromptInvisibles(text: string): string {
+  return text.replace(
+    INVISIBLE_CHARS,
+    (char) => `\u27e8U+${char.codePointAt(0)!.toString(16).toUpperCase().padStart(4, "0")}\u27e9`,
+  );
+}
+
+export type BoardScheduleResultTone = "running" | "attention" | "warning" | "neutral" | "muted";
+
+const shortTime = (iso: string, now: number) => {
+  const date = new Date(iso);
+  const sameDay = new Date(now).toDateString() === date.toDateString();
+  const time = date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return sameDay ? `${time} today` : `${date.toLocaleDateString([], { weekday: "short" })} ${time}`;
+};
+
+/** A schedule's Last result: its dot tone and text. Green is never used: a
+    finished turn can't be told apart as a success. */
+export function boardScheduleLastResultView(
+  row: Pick<BoardScheduleRow, "lastResult" | "missing" | "lastError" | "environmentId">,
+  machineLabel: string | null,
+  now: number,
+): { readonly tone: BoardScheduleResultTone; readonly text: string } {
+  if (row.missing) return { tone: "warning", text: "Stopped: its task was deleted by hand" };
+  const result: BoardScheduleLastResult = row.lastResult;
+  const at = result.at === null ? "" : ` · ${shortTime(result.at, now)}`;
+  switch (result.kind) {
+    case "never":
+      return { tone: "muted", text: row.environmentId === null ? "Never run" : "Not run yet" };
+    case "running":
+      return {
+        tone: "running",
+        text: `Running${machineLabel === null ? "" : ` on ${machineLabel}`}${result.at === null ? "" : ` · started ${shortTime(result.at, now)}`}`,
+      };
+    case "waiting":
+      return { tone: "attention", text: `Waiting on you${at}` };
+    case "ran":
+      return { tone: "neutral", text: `Ran${at}` };
+    case "unknown":
+      return { tone: "muted", text: `Unknown${at}` };
+    case "failed-to-start":
+      return {
+        tone: "warning",
+        text: `Failed to start${at}${result.detail ? ` · ${result.detail}` : ""}`,
+      };
+    case "missed":
+      return {
+        tone: "warning",
+        text: `Missed${result.at === null ? "" : ` ${shortTime(result.at, now)}`} (server was off)`,
+      };
+    case "skipped":
+      return { tone: "warning", text: `${result.detail ?? "Skipped"}${at}` };
+    case "schedule-failed":
+      return {
+        tone: "warning",
+        text: `Couldn't be scheduled${machineLabel === null ? "" : ` on ${machineLabel}`}${result.detail ? `: ${result.detail}` : ""}`,
+      };
+  }
+}
+
+/** Whether a row's last result is amber, for the tab badge and the projects chip. */
+export function boardScheduleNeedsAttention(
+  row: Pick<BoardScheduleRow, "lastResult" | "missing" | "lastError">,
+): boolean {
+  return (
+    row.missing || row.lastError !== null || BOARD_SCHEDULE_AMBER_RESULTS.has(row.lastResult.kind)
+  );
+}
+
+/** "in 7 h 18 min", "in 3 min", "now". Read at most once a minute. */
+export function boardScheduleRelative(iso: string, now: number): string {
+  const minutes = Math.round((Date.parse(iso) - now) / 60_000);
+  if (minutes <= 0) return "now";
+  if (minutes < 60) return `in ${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 48) return `in ${hours} h${minutes % 60 === 0 ? "" : ` ${minutes % 60} min`}`;
+  return `in ${Math.round(hours / 24)} days`;
+}
+
+/** The import result toast: main line, second line, and whether it stays. */
+export function boardImportResultToast(input: {
+  readonly projectTitle: string;
+  readonly outcome: BoardScheduleImportOutcome | undefined;
+  readonly machineLabel: (environmentId: EnvironmentId | null) => string;
+}): { readonly title: string; readonly description: string | null; readonly failed: boolean } {
+  const outcome = input.outcome;
+  if (outcome === undefined) {
+    return {
+      title: `Imported ${input.projectTitle}'s t3o.json.`,
+      description: null,
+      failed: false,
+    };
+  }
+  const tail = [
+    outcome.setUp > 0 ? `${plural(outcome.setUp, "schedule")} set up` : null,
+    outcome.stopped > 0 ? `${plural(outcome.stopped, "schedule")} stopped` : null,
+    outcome.deleted > 0 ? `${plural(outcome.deleted, "schedule")} deleted` : null,
+  ].filter((part) => part !== null);
+  const failures = outcome.failures;
+  if (failures.length === 0) {
+    return {
+      title: `Imported ${input.projectTitle}'s t3o.json.`,
+      description: tail.length === 0 ? "No schedules set up." : `${tail.join(" · ")}.`,
+      failed: false,
+    };
+  }
+  if (failures.length === 1) {
+    const failure = failures[0]!;
+    return {
+      title: `Imported; 1 schedule failed on ${input.machineLabel(failure.environmentId)}: ${failure.reason}`,
+      description: `'${failure.title}' is listed as Not scheduled. Everything else was imported${tail.length === 0 ? "" : ` · ${tail.join(" · ")}`}.`,
+      failed: true,
+    };
+  }
+  return {
+    title: `Imported; ${failures.length} schedules failed.`,
+    description: failures
+      .map(
+        (failure) =>
+          `'${failure.title}' on ${input.machineLabel(failure.environmentId)}: ${failure.reason}.`,
+      )
+      .join(" "),
+    failed: true,
+  };
 }
