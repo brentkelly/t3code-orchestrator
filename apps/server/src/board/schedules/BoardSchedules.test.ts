@@ -550,6 +550,15 @@ describe("BoardSchedules", () => {
       assert.isNull(yield* ctx.store.row(projectId, nightly.id));
     }));
 
+  test("leaves a schedule whose file entry no longer decodes, rather than deleting it", () =>
+    Effect.gen(function* () {
+      const ctx = yield* setup;
+      yield* importFile(ctx, [nightly], { [nightly.id]: server });
+      const preview = yield* ctx.schedules.previewImport(projectId, [], [nightly.id]);
+      assert.deepStrictEqual(preview.entries, []);
+      assert.isNotNull(yield* ctx.store.row(projectId, nightly.id));
+    }));
+
   test("never touches a task no row links", () =>
     Effect.gen(function* () {
       const ctx = yield* setup;

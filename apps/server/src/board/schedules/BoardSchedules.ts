@@ -200,10 +200,12 @@ export interface BoardSchedulesShape {
     projectId: ProjectId,
     reassert?: ReadonlySet<string>,
   ) => Effect.Effect<ReadonlyMap<string, RowOutcome>, BoardScheduleError>;
-  /** What importing the file's schedules (null: key absent) would change. */
+  /** What importing the file's schedules (null: key absent) would change; `kept` ids
+      (entries the file has but couldn't decode) are left unchanged, never deleted. */
   readonly previewImport: (
     projectId: ProjectId,
     schedules: ReadonlyArray<T3oFileSchedule> | null,
+    kept?: ReadonlyArray<string>,
   ) => Effect.Effect<BoardSchedulePreview, BoardScheduleError>;
   /** Why a placement can't be used, or null. */
   readonly placementRefusal: (environmentId: EnvironmentId | null) => Effect.Effect<string | null>;
@@ -668,11 +670,12 @@ export const makeBoardSchedules = (deps: BoardSchedulesDeps): BoardSchedulesShap
 
   const previewImport: BoardSchedulesShape["previewImport"] = Effect.fn(
     "BoardSchedules.previewImport",
-  )(function* (projectId, schedules) {
+  )(function* (projectId, schedules, kept = []) {
     if (schedules === null) return { entries: [], warnings: [] };
     const rows = yield* store.rows(projectId);
     const byFile = new Map(rows.map((row) => [row.fileId, row]));
     const fileIds = new Set(schedules.map((schedule) => schedule.id));
+    const keptIds = new Set(kept);
     // An export-linked task is open to a title match unless its exported id is still in the file.
     const linked = boardLinked(yield* store.rows());
     for (const row of rows) {
@@ -777,7 +780,9 @@ export const makeBoardSchedules = (deps: BoardSchedulesDeps): BoardSchedulesShap
     }
     for (const row of rows) {
       // An export-linked row is still a hand-made task, which a file never deletes.
-      if (row.tombstone || row.exportLinked || fileIds.has(row.fileId)) continue;
+      if (row.tombstone || row.exportLinked || fileIds.has(row.fileId) || keptIds.has(row.fileId)) {
+        continue;
+      }
       entries.push({
         row: {
           fileId: row.fileId,

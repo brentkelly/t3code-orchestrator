@@ -739,8 +739,8 @@ describe("schedules (T3O-117)", () => {
     expect(resolve({ schedules: [] }).schedules).toEqual([]);
   });
 
-  it("trims, defaults enabled to true, and keeps freshSession silently", () => {
-    const resolved = resolve({ schedules: [{ ...nightly, freshSession: false }] });
+  it("trims, defaults enabled to true, and keeps freshSession: true silently", () => {
+    const resolved = resolve({ schedules: [{ ...nightly, freshSession: true }] });
     expect(resolved.schedules).toEqual([
       {
         id: "nightly-tests",
@@ -751,6 +751,9 @@ describe("schedules (T3O-117)", () => {
       },
     ]);
     expect(resolved.delta.warnings).toEqual([]);
+    expect(
+      resolve({ schedules: [{ ...nightly, freshSession: false }] }).delta.warnings.join("\n"),
+    ).toContain("false has no effect");
   });
 
   it.each([
@@ -778,6 +781,19 @@ describe("schedules (T3O-117)", () => {
     const resolved = resolve({ schedules: [nightly, entry] });
     expect(resolved.schedules?.map((schedule) => schedule.id)).toEqual(["nightly-tests"]);
     expect(resolved.delta.warnings.join("\n")).toContain(warning);
+  });
+
+  it("keeps the id of a malformed entry so an import leaves its schedule alone", () => {
+    const resolved = resolve({
+      schedules: [
+        { ...nightly, id: "typo", schedule: { type: "fixed_time", timeOfDay: "noon" } },
+        { ...nightly, id: "has space" },
+        { ...nightly, title: "" },
+        nightly,
+      ],
+    });
+    expect(resolved.schedules?.map((schedule) => schedule.id)).toEqual(["nightly-tests"]);
+    expect(resolved.keptScheduleIds).toEqual(["typo", "nightly-tests"]);
   });
 
   it("warns about a block that is not a list", () => {

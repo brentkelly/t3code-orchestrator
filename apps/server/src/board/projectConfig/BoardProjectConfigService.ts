@@ -87,10 +87,11 @@ export const make = Effect.gen(function* () {
   const schedulePreview = (
     projectId: ProjectId,
     fileSchedules: ReadonlyArray<T3oFileSchedule> | null,
+    kept: ReadonlyArray<string>,
   ) =>
     schedules === null || fileSchedules === null
       ? Effect.succeed(emptyPreview)
-      : schedules.previewImport(projectId, fileSchedules);
+      : schedules.previewImport(projectId, fileSchedules, kept);
 
   const readBoard = engine.getReadModel.pipe(
     Effect.map((model): BoardState => model.board ?? EMPTY_BOARD_STATE),
@@ -150,7 +151,12 @@ export const make = Effect.gen(function* () {
       delta: resolved.delta,
       extraStages: resolved.createStages,
     });
-    return { delta, createStages: resolved.createStages, schedules: resolved.schedules };
+    return {
+      delta,
+      createStages: resolved.createStages,
+      schedules: resolved.schedules,
+      keptScheduleIds: resolved.keptScheduleIds,
+    };
   };
 
   const candidateFor = Effect.fn("BoardProjectConfigService.candidateFor")(function* (
@@ -186,7 +192,11 @@ export const make = Effect.gen(function* () {
     });
     const pipelineMatches =
       next.createStages.length === 0 && boardProjectDeltasEqual(next.delta, currentNormalized);
-    const scheduleDiff = yield* schedulePreview(projectId, next.schedules).pipe(
+    const scheduleDiff = yield* schedulePreview(
+      projectId,
+      next.schedules,
+      next.keptScheduleIds,
+    ).pipe(
       Effect.catch((error) =>
         Effect.logWarning("Couldn't compare the file's schedules", { projectId, error }).pipe(
           Effect.as(emptyPreview),
@@ -261,9 +271,11 @@ export const make = Effect.gen(function* () {
     }
     const now = yield* nowIso;
     const next = resolveRead(board, yield* settings, input.projectId, read, now);
-    const preview = yield* schedulePreview(input.projectId, next.schedules).pipe(
-      Effect.mapError((error) => toSettingsError(error)),
-    );
+    const preview = yield* schedulePreview(
+      input.projectId,
+      next.schedules,
+      next.keptScheduleIds,
+    ).pipe(Effect.mapError((error) => toSettingsError(error)));
     // Placements apply only to the rows the import changes; omitted is Don't schedule.
     const placements = Object.fromEntries(
       preview.entries.map((entry) => {

@@ -125,7 +125,8 @@ A `t3o.json` can also declare recurring runs. Each entry needs an `id` (letters,
 - **Import never moves or stops a schedule whose definition didn't change.** Use the Schedules tab
   for that. An import that changes a schedule, or removes it from the file, shows what stops running
   before you confirm. Leaving the `schedules` key out leaves the board's schedules alone; an empty
-  list removes them all.
+  list removes them all. An entry the import can't read (a typo in its schedule, say) is skipped
+  with a warning, and the schedule it set up before is left as it was.
 - **Hand edits are overwritten by the next import** that changes that schedule. Tasks a file manages
   are marked **From t3o.json** on the **Scheduled tasks** page; you can edit or pause them there,
   but to change one for good, edit `t3o.json`, commit and import.
@@ -133,7 +134,8 @@ A `t3o.json` can also declare recurring runs. Each entry needs an `id` (letters,
   **Export** brings the project's hand-made interval and time-of-day tasks into the file. They
   keep running as hand-made tasks until you import the file and pick where each one runs; after
   that the file manages them. **Export again without them** takes out the ones not yet imported.
-- `once` and webhook schedules can't be declared in the file.
+- `once` and webhook schedules can't be declared in the file. Every run starts a new thread, so
+  `freshSession` has no effect.
 
 ## Permissions
 

@@ -45,6 +45,8 @@ export interface ResolvedT3oProjectFile {
   /** T3o: the file's schedules (T3O-117). Null when the key is absent, which
       leaves schedules alone; `[]` deletes every schedule the file set up. */
   readonly schedules: ReadonlyArray<T3oFileSchedule> | null;
+  /** Ids of entries dropped as malformed: an import leaves their schedules unchanged. */
+  readonly keptScheduleIds: ReadonlyArray<string>;
 }
 
 const STAGE_FILE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
@@ -301,6 +303,7 @@ export function resolveT3oProjectFile(input: {
   let stopOnFailure = true;
   let resources: BoardProjectResources | undefined;
   let schedules: ReadonlyArray<T3oFileSchedule> | null = null;
+  const keptScheduleIds: string[] = [];
   const result = (createStages: ReadonlyArray<BoardStageDefinition> = []) => ({
     delta: {
       stageSwitches,
@@ -311,6 +314,7 @@ export function resolveT3oProjectFile(input: {
     },
     createStages,
     schedules,
+    keptScheduleIds,
   });
   if (input.raw === null || input.raw === undefined) return result();
   if (!isRecord(input.raw)) {
@@ -326,7 +330,7 @@ export function resolveT3oProjectFile(input: {
     resources = decodeResources(input.raw.resources, warnings);
   }
   if (input.raw.schedules !== undefined) {
-    schedules = decodeSchedules(input.raw.schedules, warnings);
+    schedules = decodeSchedules(input.raw.schedules, warnings, keptScheduleIds);
   }
   const stagesBlock = input.raw.stages ?? {};
   if (!isRecord(stagesBlock)) {
@@ -585,13 +589,13 @@ function decodeResources(value: unknown, warnings: string[]): BoardProjectResour
 const decodeScheduleWhen = Schema.decodeUnknownOption(BoardScheduleWhen);
 const SCHEDULE_KEYS = new Set(["id", "title", "schedule", "enabled", "prompt", "freshSession"]);
 
-/** T3o: the file's `schedules` block (T3O-117). A bad entry or a repeated id is
-    dropped with a warning and the rest still apply. A value that isn't a list is
-    null (leave schedules alone), never `[]`, which would delete them all.
-    `freshSession` is accepted and reserved: every run is already a new thread. */
+/** T3o: the file's `schedules` block (T3O-117). A bad entry is dropped with a warning;
+    one with a valid id goes in `kept`, so its schedule isn't deleted. A value that
+    isn't a list is null (leave schedules alone), never `[]`, which deletes them all. */
 function decodeSchedules(
   value: unknown,
   warnings: string[],
+  kept: string[],
 ): ReadonlyArray<T3oFileSchedule> | null {
   if (!Array.isArray(value)) {
     warnings.push("schedules: expected a list of schedules; ignored.");
@@ -618,27 +622,31 @@ function decodeSchedules(
       warnings.push(`${named}: the id is used twice; the later one is ignored.`);
       return;
     }
+    const drop = (warning: string) => {
+      warnings.push(warning);
+      kept.push(id);
+    };
     const title = typeof entry.title === "string" ? entry.title.trim() : "";
     if (title.length === 0) {
-      warnings.push(`${named}.title: required; schedule ignored.`);
+      drop(`${named}.title: required; schedule ignored.`);
       return;
     }
     const prompt = typeof entry.prompt === "string" ? entry.prompt.trim() : "";
     if (prompt.length === 0) {
-      warnings.push(`${named}.prompt: required; schedule ignored.`);
+      drop(`${named}.prompt: required; schedule ignored.`);
       return;
     }
     const rawWhen = entry.schedule;
     const kind = isRecord(rawWhen) ? rawWhen.type : undefined;
     if (kind === "once" || kind === "webhook") {
-      warnings.push(
+      drop(
         `${named}.schedule: ${kind} schedules can't be declared in ${T3O_PROJECT_FILE_NAME}; schedule ignored.`,
       );
       return;
     }
     const when = Option.getOrNull(decodeScheduleWhen(rawWhen));
     if (when === null) {
-      warnings.push(
+      drop(
         `${named}.schedule: expected { "type": "interval", "everyMs": 60000 or more } or { "type": "fixed_time", "timeOfDay": "HH:MM", "weekdays"?: [0-6] }; schedule ignored.`,
       );
       return;
@@ -648,7 +656,11 @@ function decodeSchedules(
       if (typeof entry.enabled === "boolean") enabled = entry.enabled;
       else warnings.push(`${named}.enabled: expected true or false; treated as true.`);
     }
-    if (entry.freshSession !== undefined && typeof entry.freshSession !== "boolean") {
+    if (entry.freshSession === false) {
+      warnings.push(
+        `${named}.freshSession: every run starts a new thread, so false has no effect.`,
+      );
+    } else if (entry.freshSession !== undefined && entry.freshSession !== true) {
       warnings.push(`${named}.freshSession: expected true or false; ignored.`);
     }
     ids.add(id);
