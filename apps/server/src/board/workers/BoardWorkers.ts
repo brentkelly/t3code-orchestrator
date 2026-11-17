@@ -348,6 +348,10 @@ export const makeBoardWorkers = Effect.gen(function* () {
     Effect.map((model) => model.board ?? EMPTY_BOARD_STATE),
   );
 
+  /** Titles read before, kept because a worker's titles are fixed at spawn: a thread on a worker
+      that did not answer this read keeps the one it had. */
+  const knownTitles = yield* Ref.make(new Map<ThreadId, string>());
+
   const threadTitles: BoardWorkersShape["threadTitles"] = Effect.fn("BoardWorkers.threadTitles")(
     function* (cardId) {
       const card = (yield* readBoard).cards.find((candidate) => candidate.id === cardId);
@@ -366,11 +370,23 @@ export const makeBoardWorkers = Effect.gen(function* () {
             actionError("not-online", "No worker holding this card's threads answered."),
           ),
         );
-      const titles: Record<ThreadId, string> = {};
-      for (const record of records.values()) {
-        if (!record.deleted && record.title !== undefined) titles[record.threadId] = record.title;
-      }
-      return titles;
+      return yield* Ref.modify(knownTitles, (known) => {
+        const next = new Map(known);
+        const titles: Record<ThreadId, string> = {};
+        for (const threadId of threadIds) {
+          const record = records.get(threadId);
+          if (record === undefined) {
+            const title = known.get(threadId);
+            if (title !== undefined) titles[threadId] = title;
+          } else if (record.deleted || record.title === undefined) {
+            next.delete(threadId);
+          } else {
+            titles[threadId] = record.title;
+            next.set(threadId, record.title);
+          }
+        }
+        return [titles, next] as const;
+      });
     },
   );
 

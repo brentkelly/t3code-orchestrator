@@ -681,6 +681,19 @@ describe("BoardWorkers", () => {
       });
       assert.deepStrictEqual(asked, [[ON_WORKER, DELETED_ON_WORKER]]);
     }));
+  test("a worker thread keeps its known title when its worker misses a partial answer", () =>
+    Effect.gen(function* () {
+      const answers = [
+        new Map([record(ON_WORKER, { title: "T3O-1 · Building" })]),
+        new Map([record(DELETED_ON_WORKER, { deleted: true })]),
+        new Map([record(ON_WORKER, { deleted: true })]),
+      ];
+      const { workers } = yield* titlesSetup(() => Effect.sync(() => answers.shift()!));
+      const expected = { [ON_WORKER]: "T3O-1 · Building" };
+      assert.deepStrictEqual(yield* workers.threadTitles(TITLED_CARD), expected);
+      assert.deepStrictEqual(yield* workers.threadTitles(TITLED_CARD), expected);
+      assert.deepStrictEqual(yield* workers.threadTitles(TITLED_CARD), {});
+    }));
   test("worker thread titles: nothing asked without worker links, unknown card, no answer", () =>
     Effect.gen(function* () {
       let asked = 0;

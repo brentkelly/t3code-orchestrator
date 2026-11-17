@@ -930,7 +930,8 @@ export function createBoardEnvironmentAtoms<R, ER>(
   );
 
   /** What re-reads a card's worker thread titles: its worker threads changing, or one of their
-      workers coming online. Titles are fixed at spawn, so nothing else does. */
+      workers going online or offline. Titles are fixed at spawn, so nothing else does. A re-read
+      on going offline loses nothing: the board answers with the titles it already read. */
   const workerThreadTitlesSignalAtom = Atom.family((key: string) => {
     const [environmentId, cardId] = JSON.parse(key) as [EnvironmentId, BoardCardId];
     return Atom.make((get) => {
