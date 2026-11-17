@@ -37,6 +37,15 @@ import {
 } from "./WorkerConnections.ts";
 import { hostForSession, makeWorkerGatewayHost } from "./WorkerGatewayHost.ts";
 import { makeFakeWorkerLayer } from "./workers.testkit.ts";
+import {
+  BoardWorkerCapacity,
+  type BoardWorkerCapacityShape,
+} from "../capacity/BoardWorkerCapacity.ts";
+import {
+  makeWorkerScheduleRunsSlot,
+  WorkerScheduleRunsSlot,
+  type WorkerScheduleRunsShape,
+} from "../schedules/WorkerScheduleRuns.ts";
 
 export const CENTRAL_ID = EnvironmentId.make("env-central");
 export const WORKER_ID = EnvironmentId.make("env-w1");
@@ -91,6 +100,10 @@ export const makeInProcessWorker = (
       readonly projectId: ProjectId;
       readonly canonicalKey: string;
     }>;
+    /** The worker's side of a board's schedule runs; absent, it can't run them. */
+    readonly scheduleRuns?: WorkerScheduleRunsShape;
+    /** The worker's agent cap: why a new turn can't start now, or null. */
+    readonly agentCapRefusal?: () => string | null;
   } = {},
 ) =>
   Effect.gen(function* () {
@@ -122,8 +135,22 @@ export const makeInProcessWorker = (
     const relayHost = yield* makeMcpRelayHost(options.relayTimeout).pipe(
       Effect.provide(workerContext),
     );
+    const slot = makeWorkerScheduleRunsSlot();
+    if (options.scheduleRuns !== undefined) yield* slot.register(options.scheduleRuns);
+    const agentCapRefusal = options.agentCapRefusal;
     const host = yield* makeWorkerGatewayHost.pipe(
       Effect.provideService(McpRelayHost, relayHost),
+      Effect.provideService(WorkerScheduleRunsSlot, slot),
+      agentCapRefusal === undefined
+        ? (effect) => effect
+        : Effect.provideService(
+            BoardWorkerCapacity,
+            // Only the agent cap: the rest of capacity is not this harness's concern.
+            {
+              reserveAgent: () => Effect.sync(agentCapRefusal),
+              releaseAgent: () => Effect.void,
+            } as unknown as BoardWorkerCapacityShape,
+          ),
       Effect.provide(workerContext),
     );
     const workerConfig = yield* ServerConfig.ServerConfig.pipe(Effect.provide(workerContext));

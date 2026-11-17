@@ -985,8 +985,8 @@ describe("BoardSchedules runs on a worker (T3O-118)", () => {
       assert.strictEqual(sent?.branch, "t3o/schedule-run-uuid-2");
       // Only this worker's runs past retention, each with whether it touched a card.
       assert.deepStrictEqual(sent?.previousRuns, [
-        { threadId: "old-3", branch: "t3o/schedule-run-old-3", touchedCard: false },
-        { threadId: "old-4", branch: "t3o/schedule-run-old-4", touchedCard: true },
+        { threadId: ThreadId.make("old-3"), branch: "t3o/schedule-run-old-3", touchedCard: false },
+        { threadId: ThreadId.make("old-4"), branch: "t3o/schedule-run-old-4", touchedCard: true },
       ]);
       const runs = yield* ctx.store.runs(projectId, nightly.id);
       assert.deepStrictEqual(

@@ -187,12 +187,10 @@ export const runRelayedBoardTool = Effect.fn("BoardMcpRelay.runRelayedBoardTool"
     }
     const name = request.toolName as BoardToolName;
 
-    // Authorised twice: linked to a card, and placed on THIS worker. A
-    // write naming another card is bound the same way in its handler
-    // (`refuseOtherWorkersCard`), so one worker never acts on another's cards.
-    // T3o: a t3o.json schedule's run has no card; the board's own record of the run, on
-    // THIS worker, stands in for the link (T3O-118). Its handlers then narrow it to the
-    // schedule's project (`scheduleThreadPolicy`).
+    // Authorised twice: linked to a card, and placed on THIS worker. A write naming another
+    // card is bound the same way in its handler (`refuseOtherWorkersCard`).
+    // T3o: a schedule run has no card; the board's record of it on THIS worker stands in for
+    // the link, and `scheduleThreadPolicy` narrows it to the schedule's project (T3O-118).
     const queries = yield* BoardQueries;
     const linkedTo = yield* queries.boardThreadWorker(request.threadId);
     const ranOn =
