@@ -29,6 +29,19 @@ describe("how a card's cost is written", () => {
     expect(formatBoardUsageCost(input).text).toBe(text);
   });
 
+  it.each([
+    ["keeps cents under $10", usage({ costUsd: 9.99 }), "$9.99"],
+    ["judges the threshold on the cents it would print", usage({ costUsd: 9.996 }), "$10"],
+    ["drops cents at $10", usage({ costUsd: 10 }), "$10"],
+    ["rounds to whole dollars", usage({ costUsd: 28.84 }), "$29"],
+    ["rounds up into thousands", usage({ costUsd: 999.5 }), "$1,000"],
+    ["separates thousands", usage({ costUsd: 1234.5 }), "$1,235"],
+    ["keeps ≈ and +", usage({ costUsd: 28.84, estimated: true, partial: true }), "≈$29+"],
+    ["keeps under a cent", usage({ costUsd: 0.001 }), "<$0.01"],
+  ])("on the card face, %s", (_name, input, text) => {
+    expect(formatBoardUsageCost(input, { wholeDollarsFrom: 10 }).text).toBe(text);
+  });
+
   it("never writes $0 for a card that reported nothing, and the face may say so in words", () => {
     const empty = usage({
       tokens: 0,

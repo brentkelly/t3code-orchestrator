@@ -77,6 +77,8 @@ export interface BoardColumnProps extends BoardColumnDragProps {
       does an armed card wear the grey `Auto` glyph — everywhere else an armed
       card is an ordinary card and should look like one. */
   readonly atMergeStage?: boolean | undefined;
+  /** Whether this column IS the done-role stage, where a card's worker shows as an icon only. */
+  readonly atDoneStage?: boolean | undefined;
   /** Each card's resolved auto-merge arm, read with `atMergeStage`
       to draw the `Auto` glyph. */
   readonly autoMergeArmedFor?: ((card: BoardCardShell) => boolean) | undefined;
@@ -212,6 +214,7 @@ function ExpandedColumn(props: BoardColumnProps) {
   const {
     stage,
     atMergeStage,
+    atDoneStage,
     autoMergeArmedFor,
     autoBuildArmedFor,
     label,
@@ -390,6 +393,7 @@ function ExpandedColumn(props: BoardColumnProps) {
                   parentKey={parentKeyFor(card.cardId)}
                   attention={attentionFor(card)}
                   atMergeStage={atMergeStage === true}
+                  atDoneStage={atDoneStage === true}
                   autoMergeArmed={autoMergeArmedFor?.(card)}
                   autoBuildArmed={autoBuildArmedFor?.(card)}
                   childAttention={childAttentionFor(card)}
