@@ -60,6 +60,16 @@ export function formatBoardUsd(costUsd: number): string {
   return `$${costUsd.toFixed(2)}`;
 }
 
+const WHOLE_DOLLARS = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
+
+/** `$29`, `$1,235` once the cents-rounded cost reaches `wholeDollarsFrom`; cents below. */
+function formatBoardUsdFace(costUsd: number, wholeDollarsFrom: number | undefined): string {
+  if (wholeDollarsFrom === undefined || Math.round(costUsd * 100) / 100 < wholeDollarsFrom) {
+    return formatBoardUsd(costUsd);
+  }
+  return `$${WHOLE_DOLLARS.format(Math.round(costUsd))}`;
+}
+
 /** `1.24M`, `12.4k`, `812`. */
 export function formatBoardTokens(tokens: number | null): string {
   if (tokens === null) return BOARD_USAGE_UNKNOWN;
@@ -74,10 +84,15 @@ const listSteps = (steps: ReadonlyArray<string> | undefined): string =>
 /**
  * The figure for a card, a group or the cards in view. `noUsageWord` writes `no usage`
  * instead of `—` when every turn reported nothing, as the Done card face does.
+ * `wholeDollarsFrom` drops the cents at and above that many dollars, for the card face.
  */
 export function formatBoardUsageCost(
   usage: BoardUsageMarks | null | undefined,
-  options: { readonly steps?: BoardUsageFigureSteps; readonly noUsageWord?: boolean } = {},
+  options: {
+    readonly steps?: BoardUsageFigureSteps;
+    readonly noUsageWord?: boolean;
+    readonly wholeDollarsFrom?: number;
+  } = {},
 ): BoardUsageFigure {
   if (usage == null) {
     return { text: BOARD_USAGE_UNKNOWN, known: false, tooltip: "No usage recorded yet." };
@@ -111,7 +126,7 @@ export function formatBoardUsageCost(
       : "",
   ].filter((note) => note.length > 0);
   return {
-    text: `${estimated ? "≈" : ""}${formatBoardUsd(usage.costUsd)}${partial ? "+" : ""}`,
+    text: `${estimated ? "≈" : ""}${formatBoardUsdFace(usage.costUsd, options.wholeDollarsFrom)}${partial ? "+" : ""}`,
     known: true,
     tooltip: notes.length === 0 ? "Exact: every priced turn has a set price." : notes.join(" "),
   };

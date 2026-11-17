@@ -730,6 +730,8 @@ export function BoardCardContent({
       {isGroup ? null : (
         <BoardCardMetaRow
           cost={costSlot}
+          // BoardPage hands a cost slot only to the Done column, so it is the Done signal.
+          compactWorker={costSlot != null}
           meta={boardCardMeta(card, todoThreads.length)}
           worker={boardCardWorkerChip(card, workers)}
         />
