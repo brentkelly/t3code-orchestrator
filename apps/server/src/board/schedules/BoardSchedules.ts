@@ -39,11 +39,7 @@ import * as Effect from "effect/Effect";
 import * as Semaphore from "effect/Semaphore";
 
 import type { BoardProject, BoardThreadState, UnknownThreadState } from "../ThreadGateway.ts";
-import type {
-  BoardScheduleApplied,
-  BoardScheduleStoreRow,
-  BoardScheduleStoreShape,
-} from "./BoardScheduleStore.ts";
+import type { BoardScheduleStoreRow, BoardScheduleStoreShape } from "./BoardScheduleStore.ts";
 import { BoardScheduleRunError } from "./scheduleRuns.ts";
 import {
   SKIPPED_NOT_SCHEDULED,
@@ -197,498 +193,493 @@ const localNow = DateTime.withCurrentZoneLocal(DateTime.nowInCurrentZone);
 const machineName = (serverEnvironmentId: EnvironmentId, environmentId: EnvironmentId) =>
   environmentId === serverEnvironmentId ? "This server" : environmentId;
 
-export const makeBoardSchedules = Effect.fn("BoardSchedules.make")(
-  function* (deps: BoardSchedulesDeps) {
-    const { store } = deps;
-    const locks = new Map<string, Semaphore.Semaphore>();
-    const withProjectLock = <A, E, R>(projectId: ProjectId, effect: Effect.Effect<A, E, R>) => {
-      let lock = locks.get(projectId);
-      if (lock === undefined) {
-        lock = Semaphore.makeUnsafe(1);
-        locks.set(projectId, lock);
-      }
-      return lock.withPermits(1)(effect);
-    };
-    const nowIso = DateTime.now.pipe(Effect.map(DateTime.formatIso));
-    const listTasks = deps.tasks
-      .list()
-      .pipe(Effect.mapError((cause) => scheduleError("Couldn't read the scheduled tasks.", cause)));
-    const tasksById = listTasks.pipe(
-      Effect.map((tasks) => new Map(tasks.map((task) => [task.id as string, task]))),
-    );
+export const makeBoardSchedules = (deps: BoardSchedulesDeps): BoardSchedulesShape => {
+  const { store } = deps;
+  const locks = new Map<string, Semaphore.Semaphore>();
+  const withProjectLock = <A, E, R>(projectId: ProjectId, effect: Effect.Effect<A, E, R>) => {
+    let lock = locks.get(projectId);
+    if (lock === undefined) {
+      lock = Semaphore.makeUnsafe(1);
+      locks.set(projectId, lock);
+    }
+    return lock.withPermits(1)(effect);
+  };
+  const nowIso = DateTime.now.pipe(Effect.map(DateTime.formatIso));
+  const listTasks = deps.tasks
+    .list()
+    .pipe(Effect.mapError((cause) => scheduleError("Couldn't read the scheduled tasks.", cause)));
+  const tasksById = listTasks.pipe(
+    Effect.map((tasks) => new Map(tasks.map((task) => [task.id as string, task]))),
+  );
 
-    const placementRefusal: BoardSchedulesShape["placementRefusal"] = (environmentId) =>
-      environmentId === null || environmentId === deps.serverEnvironmentId
-        ? null
-        : `${environmentId} isn't a machine this board can run schedules on.`;
+  const placementRefusal: BoardSchedulesShape["placementRefusal"] = (environmentId) =>
+    environmentId === null || environmentId === deps.serverEnvironmentId
+      ? null
+      : `${environmentId} isn't a machine this board can run schedules on.`;
 
-    const upsertInput = (
-      row: BoardScheduleStoreRow,
-      live: ScheduledTask | null,
-      baseRef: string,
-      modelSelection: ModelSelection,
-    ): ScheduledTaskUpsertInput => ({
-      id: row.taskId,
-      ...(row.applied === null ? {} : { requireExisting: true }),
-      title: row.definition.title,
-      prompt: row.definition.prompt,
-      enabled: row.definition.enabled,
-      schedule: row.definition.schedule,
-      projectId: row.projectId,
-      threadId: null,
-      threadMode: "new_thread",
-      // An update keeps the task's model and workspace; runs never use them anyway.
-      workspaceStrategy: live?.workspaceStrategy ?? {
-        type: "worktree",
-        baseRef,
-        startFromOrigin: true,
-      },
-      modelSelection: live?.modelSelection ?? modelSelection,
-      runtimeMode: "full-access",
-      interactionMode: "default",
-      createdBy: "system",
-      // Upstream defaults it to "web" on any save that omits it.
-      creationSource: "server",
-    });
+  const upsertInput = (
+    row: BoardScheduleStoreRow,
+    live: ScheduledTask | null,
+    baseRef: string,
+    modelSelection: ModelSelection,
+  ): ScheduledTaskUpsertInput => ({
+    id: row.taskId,
+    ...(row.applied === null ? {} : { requireExisting: true }),
+    title: row.definition.title,
+    prompt: row.definition.prompt,
+    enabled: row.definition.enabled,
+    schedule: row.definition.schedule,
+    projectId: row.projectId,
+    threadId: null,
+    threadMode: "new_thread",
+    // An update keeps the task's model and workspace; runs never use them anyway.
+    workspaceStrategy: live?.workspaceStrategy ?? {
+      type: "worktree",
+      baseRef,
+      startFromOrigin: true,
+    },
+    modelSelection: live?.modelSelection ?? modelSelection,
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    createdBy: "system",
+    // Upstream defaults it to "web" on any save that omits it.
+    creationSource: "server",
+  });
 
-    const save = (row: BoardScheduleStoreRow, patch: Partial<BoardScheduleStoreRow>) =>
-      Effect.flatMap(nowIso, (updatedAt) => store.put({ ...row, ...patch, updatedAt }));
+  const save = (row: BoardScheduleStoreRow, patch: Partial<BoardScheduleStoreRow>) =>
+    Effect.flatMap(nowIso, (updatedAt) => store.put({ ...row, ...patch, updatedAt }));
 
-    const deleteTask = (taskId: ScheduledTaskId) =>
-      deps.tasks.delete(taskId).pipe(Effect.mapError((error) => error.message));
+  const deleteTask = (taskId: ScheduledTaskId) =>
+    deps.tasks.delete(taskId).pipe(Effect.mapError((error) => error.message));
 
-    const reconcileRow = Effect.fn("BoardSchedules.reconcileRow")(function* (
-      row: BoardScheduleStoreRow,
-      live: ScheduledTask | null,
-      reassert: boolean,
-    ) {
-      if (row.tombstone) {
-        if (live !== null) {
-          const deleted = yield* Effect.result(deleteTask(row.taskId));
-          if (deleted._tag === "Failure") {
-            yield* save(row, { lastError: deleted.failure });
-            return { kind: "failed", reason: deleted.failure } satisfies RowOutcome;
-          }
-        }
-        yield* store.remove(row.projectId, row.fileId);
-        return { kind: "deleted" } satisfies RowOutcome;
-      }
-      if (row.environmentId === null) {
-        if (live === null) {
-          if (row.applied !== null || row.lastError !== null) {
-            yield* save(row, { applied: null, lastError: null });
-          }
-          return { kind: "unchanged" } satisfies RowOutcome;
-        }
+  const reconcileRow = Effect.fn("BoardSchedules.reconcileRow")(function* (
+    row: BoardScheduleStoreRow,
+    live: ScheduledTask | null,
+    reassert: boolean,
+  ) {
+    if (row.tombstone) {
+      if (live !== null) {
         const deleted = yield* Effect.result(deleteTask(row.taskId));
         if (deleted._tag === "Failure") {
           yield* save(row, { lastError: deleted.failure });
           return { kind: "failed", reason: deleted.failure } satisfies RowOutcome;
         }
-        yield* save(row, { applied: null, lastError: null });
-        return { kind: "stopped" } satisfies RowOutcome;
       }
-      if (row.applied !== null && live === null) {
-        // Deleted by hand on upstream's page: an Unschedule, never recreated silently.
+      yield* store.remove(row.projectId, row.fileId);
+      return { kind: "deleted" } satisfies RowOutcome;
+    }
+    if (row.environmentId === null) {
+      if (live === null) {
+        if (row.applied !== null || row.lastError !== null) {
+          yield* save(row, { applied: null, lastError: null });
+        }
+        return { kind: "unchanged" } satisfies RowOutcome;
+      }
+      const deleted = yield* Effect.result(deleteTask(row.taskId));
+      if (deleted._tag === "Failure") {
+        yield* save(row, { lastError: deleted.failure });
+        return { kind: "failed", reason: deleted.failure } satisfies RowOutcome;
+      }
+      yield* save(row, { applied: null, lastError: null });
+      return { kind: "stopped" } satisfies RowOutcome;
+    }
+    if (row.applied !== null && live === null) {
+      // Deleted by hand on upstream's page: an Unschedule, never recreated silently.
+      yield* save(row, { environmentId: null, missing: true, applied: null, lastError: null });
+      return { kind: "missing" } satisfies RowOutcome;
+    }
+    const desired = desiredFields(row.definition);
+    if (
+      row.applied !== null &&
+      !reassert &&
+      row.lastError === null &&
+      sameFields(desired, row.applied)
+    ) {
+      return { kind: "unchanged" } satisfies RowOutcome;
+    }
+    const baseRef = live === null ? ((yield* deps.defaultBranch(row.projectId)) ?? "main") : "";
+    const model = live === null ? yield* deps.modelFor(row.projectId) : live.modelSelection;
+    const upserted = yield* Effect.result(
+      deps.tasks.upsert(upsertInput(row, live, baseRef, model)),
+    );
+    if (upserted._tag === "Failure") {
+      const stillThere = yield* listTasks.pipe(
+        Effect.map((tasks) => tasks.some((task) => task.id === row.taskId)),
+        Effect.orElseSucceed(() => true),
+      );
+      if (row.applied !== null && !stillThere) {
         yield* save(row, { environmentId: null, missing: true, applied: null, lastError: null });
         return { kind: "missing" } satisfies RowOutcome;
       }
-      const desired = desiredFields(row.definition);
-      if (
-        row.applied !== null &&
-        !reassert &&
-        row.lastError === null &&
-        sameFields(desired, row.applied)
-      ) {
-        return { kind: "unchanged" } satisfies RowOutcome;
-      }
-      const baseRef = live === null ? ((yield* deps.defaultBranch(row.projectId)) ?? "main") : "";
-      const model = live === null ? yield* deps.modelFor(row.projectId) : live.modelSelection;
-      const upserted = yield* Effect.result(
-        deps.tasks.upsert(upsertInput(row, live, baseRef, model)),
-      );
-      if (upserted._tag === "Failure") {
-        const stillThere = yield* listTasks.pipe(
-          Effect.map((tasks) => tasks.some((task) => task.id === row.taskId)),
-          Effect.orElseSucceed(() => true),
-        );
-        if (row.applied !== null && !stillThere) {
-          yield* save(row, { environmentId: null, missing: true, applied: null, lastError: null });
-          return { kind: "missing" } satisfies RowOutcome;
-        }
-        const reason = upserted.failure.message;
-        yield* save(row, { lastError: reason });
-        return { kind: "failed", reason } satisfies RowOutcome;
-      }
-      yield* save(row, { applied: desired, lastError: null, missing: false });
-      return { kind: "set-up" } satisfies RowOutcome;
-    });
+      const reason = upserted.failure.message;
+      yield* save(row, { lastError: reason });
+      return { kind: "failed", reason } satisfies RowOutcome;
+    }
+    yield* save(row, { applied: desired, lastError: null, missing: false });
+    return { kind: "set-up" } satisfies RowOutcome;
+  });
 
-    const reconcileUnlocked = Effect.fn("BoardSchedules.reconcile")(function* (
-      projectId: ProjectId,
-      reassert: ReadonlySet<string>,
-      only?: ReadonlySet<string>,
-    ) {
-      const outcomes = new Map<string, RowOutcome>();
-      const rows = yield* store.rows(projectId);
-      if (rows.length === 0) return outcomes;
-      const tasks = yield* tasksById;
-      const projects = yield* deps.projects();
-      const project = projects.find((candidate) => candidate.id === projectId);
-      if (project === undefined || project.deleted) {
-        // A deleted project clears its rows, and the tasks they link.
-        for (const row of rows) {
-          if (tasks.has(row.taskId)) yield* Effect.ignore(deleteTask(row.taskId));
-          yield* store.remove(row.projectId, row.fileId);
-          outcomes.set(row.fileId, { kind: "deleted" });
-        }
-        return outcomes;
-      }
+  const reconcileUnlocked = Effect.fn("BoardSchedules.reconcile")(function* (
+    projectId: ProjectId,
+    reassert: ReadonlySet<string>,
+    only?: ReadonlySet<string>,
+  ) {
+    const outcomes = new Map<string, RowOutcome>();
+    const rows = yield* store.rows(projectId);
+    if (rows.length === 0) return outcomes;
+    const tasks = yield* tasksById;
+    const projects = yield* deps.projects();
+    const project = projects.find((candidate) => candidate.id === projectId);
+    if (project === undefined || project.deleted) {
+      // A deleted project clears its rows, and the tasks they link.
       for (const row of rows) {
-        if (only !== undefined && !only.has(row.fileId)) continue;
-        outcomes.set(
-          row.fileId,
-          yield* reconcileRow(row, tasks.get(row.taskId) ?? null, reassert.has(row.fileId)),
-        );
+        if (tasks.has(row.taskId)) yield* Effect.ignore(deleteTask(row.taskId));
+        yield* store.remove(row.projectId, row.fileId);
+        outcomes.set(row.fileId, { kind: "deleted" });
       }
       return outcomes;
-    });
-
-    const reconcile: BoardSchedulesShape["reconcile"] = (projectId, reassert = new Set()) =>
-      withProjectLock(projectId, reconcileUnlocked(projectId, reassert));
-
-    const linkedTaskIds = store
-      .rows()
-      .pipe(Effect.map((rows) => new Set<string>(rows.map((row) => row.taskId))));
-
-    const handMadeOf = (
-      tasks: ReadonlyArray<ScheduledTask>,
-      linked: ReadonlySet<string>,
-      projectId: ProjectId | undefined,
-    ): ReadonlyArray<BoardScheduleHandMadeTask> =>
-      tasks
-        .filter(
-          (task) =>
-            !linked.has(task.id) && (projectId === undefined || task.projectId === projectId),
-        )
-        .map((task) => ({
-          taskId: task.id,
-          projectId: task.projectId,
-          title: task.title,
-          schedule: scheduledTaskThreadMode(task) === "new_thread" ? fileScheduleOf(task) : null,
-          environmentId: deps.serverEnvironmentId,
-        }));
-
-    const latestOf = Effect.fn("BoardSchedules.latestRun")(function* (row: BoardScheduleStoreRow) {
-      const runs = yield* store.runs(row.projectId, row.fileId);
-      const latestRun = runs[0];
-      const latestState =
-        latestRun === undefined || latestRun.launchError !== null
-          ? null
-          : yield* deps.threadState(latestRun.threadId);
-      return { latestRun, latestState };
-    });
-
-    const toListRow = Effect.fn("BoardSchedules.toListRow")(function* (
-      row: BoardScheduleStoreRow,
-      live: ScheduledTask | null,
-    ) {
-      const { latestRun, latestState } = yield* latestOf(row);
-      const scheduled = row.environmentId !== null && live !== null;
-      const lastResult = deriveLastResult({
-        lastError: row.lastError,
-        scheduled,
-        task: live,
-        latestRun,
-        latestState,
-        now: yield* localNow,
-      });
-      return {
-        projectId: row.projectId,
-        fileId: row.fileId,
-        title: row.definition.title,
-        schedule: row.definition.schedule,
-        enabled: row.definition.enabled,
-        prompt: row.definition.prompt,
-        environmentId: row.environmentId,
-        taskId: row.taskId,
-        missing: row.missing,
-        lastError: row.lastError,
-        editedByHand:
-          live !== null && row.applied !== null && !sameFields(appliedFromTask(live), row.applied),
-        nextRunAt: scheduled && live.enabled ? live.nextRunAt : null,
-        running: lastResult.kind === "running",
-        lastResult,
-      } satisfies BoardScheduleRow;
-    });
-
-    /** Rows whose task was deleted by hand become Not scheduled and missing when read. */
-    const settleMissing = Effect.fn("BoardSchedules.settleMissing")(function* (
-      rows: ReadonlyArray<BoardScheduleStoreRow>,
-      tasks: ReadonlyMap<string, ScheduledTask>,
-    ) {
-      const gone = rows.filter(
-        (row) =>
-          !row.tombstone &&
-          row.environmentId !== null &&
-          row.applied !== null &&
-          !tasks.has(row.taskId),
+    }
+    for (const row of rows) {
+      if (only !== undefined && !only.has(row.fileId)) continue;
+      outcomes.set(
+        row.fileId,
+        yield* reconcileRow(row, tasks.get(row.taskId) ?? null, reassert.has(row.fileId)),
       );
-      const projectIds = [...new Set(gone.map((row) => row.projectId))];
-      for (const projectId of projectIds) yield* reconcile(projectId);
-      return projectIds.length === 0 ? rows : yield* store.rows();
+    }
+    return outcomes;
+  });
+
+  const reconcile: BoardSchedulesShape["reconcile"] = (projectId, reassert = new Set()) =>
+    withProjectLock(projectId, reconcileUnlocked(projectId, reassert));
+
+  const linkedTaskIds = store
+    .rows()
+    .pipe(Effect.map((rows) => new Set<string>(rows.map((row) => row.taskId))));
+
+  const handMadeOf = (
+    tasks: ReadonlyArray<ScheduledTask>,
+    linked: ReadonlySet<string>,
+    projectId: ProjectId | undefined,
+  ): ReadonlyArray<BoardScheduleHandMadeTask> =>
+    tasks
+      .filter(
+        (task) => !linked.has(task.id) && (projectId === undefined || task.projectId === projectId),
+      )
+      .map((task) => ({
+        taskId: task.id,
+        projectId: task.projectId,
+        title: task.title,
+        schedule: scheduledTaskThreadMode(task) === "new_thread" ? fileScheduleOf(task) : null,
+        environmentId: deps.serverEnvironmentId,
+      }));
+
+  const latestOf = Effect.fn("BoardSchedules.latestRun")(function* (row: BoardScheduleStoreRow) {
+    const runs = yield* store.runs(row.projectId, row.fileId);
+    const latestRun = runs[0];
+    const latestState =
+      latestRun === undefined || latestRun.launchError !== null
+        ? null
+        : yield* deps.threadState(latestRun.threadId);
+    return { latestRun, latestState };
+  });
+
+  const toListRow = Effect.fn("BoardSchedules.toListRow")(function* (
+    row: BoardScheduleStoreRow,
+    live: ScheduledTask | null,
+  ) {
+    const { latestRun, latestState } = yield* latestOf(row);
+    const scheduled = row.environmentId !== null && live !== null;
+    const lastResult = deriveLastResult({
+      lastError: row.lastError,
+      scheduled,
+      task: live,
+      latestRun,
+      latestState,
+      now: yield* localNow,
     });
+    return {
+      projectId: row.projectId,
+      fileId: row.fileId,
+      title: row.definition.title,
+      schedule: row.definition.schedule,
+      enabled: row.definition.enabled,
+      prompt: row.definition.prompt,
+      environmentId: row.environmentId,
+      taskId: row.taskId,
+      missing: row.missing,
+      lastError: row.lastError,
+      editedByHand:
+        live !== null && row.applied !== null && !sameFields(appliedFromTask(live), row.applied),
+      nextRunAt: scheduled && live.enabled ? live.nextRunAt : null,
+      running: lastResult.kind === "running",
+      lastResult,
+    } satisfies BoardScheduleRow;
+  });
 
-    const list: BoardSchedulesShape["list"] = Effect.fn("BoardSchedules.list")(function* (input) {
-      const all = yield* store.rows();
-      const tasks = yield* listTasks;
-      const byId = new Map(tasks.map((task) => [task.id as string, task]));
-      const rows = (yield* settleMissing(all, byId)).filter(
-        (row) =>
-          !row.tombstone && (input.projectId === undefined || row.projectId === input.projectId),
-      );
-      const linked = new Set<string>(all.map((row) => row.taskId));
-      return {
-        schedules: yield* Effect.forEach(rows, (row) => toListRow(row, byId.get(row.taskId) ?? null)),
-        handMade: handMadeOf(tasks, linked, input.projectId),
-        serverEnvironmentId: deps.serverEnvironmentId,
-        serverUtcOffsetMinutes: yield* deps.utcOffsetMinutes,
-      };
-    });
+  /** Rows whose task was deleted by hand become Not scheduled and missing when read. */
+  const settleMissing = Effect.fn("BoardSchedules.settleMissing")(function* (
+    rows: ReadonlyArray<BoardScheduleStoreRow>,
+    tasks: ReadonlyMap<string, ScheduledTask>,
+  ) {
+    const gone = rows.filter(
+      (row) =>
+        !row.tombstone &&
+        row.environmentId !== null &&
+        row.applied !== null &&
+        !tasks.has(row.taskId),
+    );
+    const projectIds = [...new Set(gone.map((row) => row.projectId))];
+    for (const projectId of projectIds) yield* reconcile(projectId);
+    return projectIds.length === 0 ? rows : yield* store.rows();
+  });
 
-    const requireRow = (projectId: ProjectId, fileId: string) =>
-      store
-        .row(projectId, fileId)
-        .pipe(
-          Effect.filterOrFail(
-            (row): row is BoardScheduleStoreRow => row !== null && !row.tombstone,
-            () => scheduleError(`No schedule '${fileId}' in this project.`),
-          ),
-        );
+  const list: BoardSchedulesShape["list"] = Effect.fn("BoardSchedules.list")(function* (input) {
+    const all = yield* store.rows();
+    const tasks = yield* listTasks;
+    const byId = new Map(tasks.map((task) => [task.id as string, task]));
+    const rows = (yield* settleMissing(all, byId)).filter(
+      (row) =>
+        !row.tombstone && (input.projectId === undefined || row.projectId === input.projectId),
+    );
+    const linked = new Set<string>(all.map((row) => row.taskId));
+    return {
+      schedules: yield* Effect.forEach(rows, (row) => toListRow(row, byId.get(row.taskId) ?? null)),
+      handMade: handMadeOf(tasks, linked, input.projectId),
+      serverEnvironmentId: deps.serverEnvironmentId,
+      serverUtcOffsetMinutes: yield* deps.utcOffsetMinutes,
+    };
+  });
 
-    const setMachine: BoardSchedulesShape["setMachine"] = Effect.fn("BoardSchedules.setMachine")(
-      function* (input) {
-        const refusal = placementRefusal(input.environmentId);
-        if (refusal !== null) return yield* scheduleError(refusal);
-        yield* withProjectLock(
-          input.projectId,
-          Effect.gen(function* () {
-            const row = yield* requireRow(input.projectId, input.fileId);
-            const placed = input.environmentId !== null;
-            yield* save(row, {
-              environmentId: input.environmentId,
-              ...(placed && row.missing ? { missing: false, applied: null } : {}),
-              lastError: null,
-            });
-            yield* reconcileUnlocked(input.projectId, new Set(), new Set([input.fileId]));
-          }),
-        );
-        const row = yield* requireRow(input.projectId, input.fileId);
-        const live = (yield* tasksById).get(row.taskId) ?? null;
-        return yield* toListRow(row, live);
-      },
+  const requireRow = (projectId: ProjectId, fileId: string) =>
+    store.row(projectId, fileId).pipe(
+      Effect.filterOrFail(
+        (row): row is BoardScheduleStoreRow => row !== null && !row.tombstone,
+        () => scheduleError(`No schedule '${fileId}' in this project.`),
+      ),
     );
 
-    const runNow: BoardSchedulesShape["runNow"] = Effect.fn("BoardSchedules.runNow")(
-      function* (input) {
-        const row = yield* requireRow(input.projectId, input.fileId);
-        if (row.environmentId === null) return yield* scheduleError("Pick a machine first.");
-        const ran = yield* deps.tasks
-          .runNow(row.taskId)
-          .pipe(Effect.mapError((error) => scheduleError(error.message, error)));
-        if (ran.threadId === null && ran.task.lastRunStatus === "failed") {
-          return yield* scheduleError(ran.task.lastRunError ?? "The run didn't start.");
-        }
-        return { threadId: ran.threadId };
-      },
-    );
-
-    const failuresOf = (
-      outcomes: ReadonlyMap<string, RowOutcome>,
-      rows: ReadonlyArray<BoardScheduleStoreRow>,
-    ): ReadonlyArray<BoardScheduleImportFailure> =>
-      rows.flatMap((row) => {
-        const outcome = outcomes.get(row.fileId);
-        return outcome?.kind === "failed"
-          ? [
-              {
-                fileId: row.fileId,
-                title: row.definition.title,
-                environmentId: row.environmentId,
-                reason: outcome.reason,
-              },
-            ]
-          : [];
-      });
-
-    const retry: BoardSchedulesShape["retry"] = Effect.fn("BoardSchedules.retry")(function* (input) {
-      const only = new Set(input.fileIds);
-      const outcomes = yield* withProjectLock(
+  const setMachine: BoardSchedulesShape["setMachine"] = Effect.fn("BoardSchedules.setMachine")(
+    function* (input) {
+      const refusal = placementRefusal(input.environmentId);
+      if (refusal !== null) return yield* scheduleError(refusal);
+      yield* withProjectLock(
         input.projectId,
-        reconcileUnlocked(input.projectId, new Set(), only),
-      );
-      const rows = (yield* store.rows(input.projectId)).filter((row) => only.has(row.fileId));
-      return {
-        setUp: [...outcomes.values()].filter((outcome) => outcome.kind === "set-up").length,
-        failures: failuresOf(outcomes, rows),
-      };
-    });
-
-    const managedTasks: BoardSchedulesShape["managedTasks"] = Effect.fn(
-      "BoardSchedules.managedTasks",
-    )(function* () {
-      const all = yield* store.rows();
-      const tasks = yield* listTasks;
-      const byId = new Map(tasks.map((task) => [task.id as string, task]));
-      const rows = (yield* settleMissing(all, byId)).filter((row) => !row.tombstone);
-      const managed = yield* Effect.forEach(
-        rows.filter((row) => byId.has(row.taskId)),
-        (row) =>
-          Effect.map(toListRow(row, byId.get(row.taskId)!), (listed) => ({
-            environmentId: deps.serverEnvironmentId,
-            taskId: row.taskId,
-            projectId: row.projectId,
-            fileId: row.fileId,
-            targetEnvironmentId: row.environmentId,
-            editedByHand: listed.editedByHand,
-            lastResult: listed.lastResult,
-          })),
-      );
-      return {
-        tasks: managed,
-        handMade: handMadeOf(tasks, new Set<string>(all.map((row) => row.taskId)), undefined),
-      };
-    });
-
-    const previewImport: BoardSchedulesShape["previewImport"] = Effect.fn(
-      "BoardSchedules.previewImport",
-    )(function* (projectId, schedules) {
-      if (schedules === null) return { entries: [], warnings: [] };
-      const rows = yield* store.rows(projectId);
-      const byFile = new Map(rows.map((row) => [row.fileId, row]));
-      const linked = yield* linkedTaskIds;
-      const tasks = yield* listTasks;
-      const byId = new Map(tasks.map((task) => [task.id as string, task]));
-      const adopted = new Set<string>();
-      const entries: BoardScheduleImportEntry[] = [];
-      const warnings: string[] = [];
-      const base = (definition: T3oFileSchedule) => ({
-        fileId: definition.id,
-        title: definition.title,
-        schedule: definition.schedule,
-        enabled: definition.enabled,
-        prompt: definition.prompt,
-      });
-      for (const definition of schedules) {
-        const existing = byFile.get(definition.id);
-        if (existing !== undefined && !existing.tombstone) {
-          if (sameDefinition(existing.definition, definition)) continue;
-          const live = byId.get(existing.taskId) ?? null;
-          const current =
-            live === null
-              ? (existing.applied ?? desiredFields(existing.definition))
-              : appliedFromTask(live);
-          entries.push({
-            row: {
-              ...base(definition),
-              kind: "update",
-              ...(current.prompt === definition.prompt ? {} : { previousPrompt: current.prompt }),
-              currentEnvironmentId: existing.environmentId,
-              changes: fieldChanges(current, definition, {
-                pausedByHand: live !== null && !live.enabled && existing.applied?.enabled === true,
-              }),
-            },
-            definition,
-            existing,
-            adoptTask: null,
+        Effect.gen(function* () {
+          const row = yield* requireRow(input.projectId, input.fileId);
+          const placed = input.environmentId !== null;
+          yield* save(row, {
+            environmentId: input.environmentId,
+            ...(placed && row.missing ? { missing: false, applied: null } : {}),
+            lastError: null,
           });
-          continue;
-        }
-        const candidates = tasks.filter(
-          (task) =>
-            task.projectId === projectId &&
-            !linked.has(task.id) &&
-            !adopted.has(task.id) &&
-            isAdoptable(task) &&
-            task.title.trim() === definition.title,
-        );
-        if (candidates.length === 1) {
-          const task = candidates[0]!;
-          adopted.add(task.id);
-          entries.push({
-            row: {
-              ...base(definition),
-              kind: "adopt",
-              ...(task.prompt === definition.prompt ? {} : { previousPrompt: task.prompt }),
-              currentEnvironmentId: deps.serverEnvironmentId,
-              changes: adoptChanges(task, definition),
-            },
-            definition,
-            existing: existing ?? null,
-            adoptTask: task,
-          });
-          continue;
-        }
-        if (candidates.length > 1) {
-          warnings.push(
-            `schedules ("${definition.id}"): ${candidates.length} hand-made tasks are titled "${definition.title}", so it is created new rather than adopting one.`,
-          );
-        }
-        entries.push({
-          row: { ...base(definition), kind: "create", changes: [] },
-          definition,
-          existing: existing ?? null,
-          adoptTask: null,
-        });
+          yield* reconcileUnlocked(input.projectId, new Set(), new Set([input.fileId]));
+        }),
+      );
+      const row = yield* requireRow(input.projectId, input.fileId);
+      const live = (yield* tasksById).get(row.taskId) ?? null;
+      return yield* toListRow(row, live);
+    },
+  );
+
+  const runNow: BoardSchedulesShape["runNow"] = Effect.fn("BoardSchedules.runNow")(
+    function* (input) {
+      const row = yield* requireRow(input.projectId, input.fileId);
+      if (row.environmentId === null) return yield* scheduleError("Pick a machine first.");
+      const ran = yield* deps.tasks
+        .runNow(row.taskId)
+        .pipe(Effect.mapError((error) => scheduleError(error.message, error)));
+      if (ran.threadId === null && ran.task.lastRunStatus === "failed") {
+        return yield* scheduleError(ran.task.lastRunError ?? "The run didn't start.");
       }
-      const fileIds = new Set(schedules.map((schedule) => schedule.id));
-      for (const row of rows) {
-        if (row.tombstone || fileIds.has(row.fileId)) continue;
+      return { threadId: ran.threadId };
+    },
+  );
+
+  const failuresOf = (
+    outcomes: ReadonlyMap<string, RowOutcome>,
+    rows: ReadonlyArray<BoardScheduleStoreRow>,
+  ): ReadonlyArray<BoardScheduleImportFailure> =>
+    rows.flatMap((row) => {
+      const outcome = outcomes.get(row.fileId);
+      return outcome?.kind === "failed"
+        ? [
+            {
+              fileId: row.fileId,
+              title: row.definition.title,
+              environmentId: row.environmentId,
+              reason: outcome.reason,
+            },
+          ]
+        : [];
+    });
+
+  const retry: BoardSchedulesShape["retry"] = Effect.fn("BoardSchedules.retry")(function* (input) {
+    const only = new Set(input.fileIds);
+    const outcomes = yield* withProjectLock(
+      input.projectId,
+      reconcileUnlocked(input.projectId, new Set(), only),
+    );
+    const rows = (yield* store.rows(input.projectId)).filter((row) => only.has(row.fileId));
+    return {
+      setUp: [...outcomes.values()].filter((outcome) => outcome.kind === "set-up").length,
+      failures: failuresOf(outcomes, rows),
+    };
+  });
+
+  const managedTasks: BoardSchedulesShape["managedTasks"] = Effect.fn(
+    "BoardSchedules.managedTasks",
+  )(function* () {
+    const all = yield* store.rows();
+    const tasks = yield* listTasks;
+    const byId = new Map(tasks.map((task) => [task.id as string, task]));
+    const rows = (yield* settleMissing(all, byId)).filter((row) => !row.tombstone);
+    const managed = yield* Effect.forEach(
+      rows.filter((row) => byId.has(row.taskId)),
+      (row) =>
+        Effect.map(toListRow(row, byId.get(row.taskId)!), (listed) => ({
+          environmentId: deps.serverEnvironmentId,
+          taskId: row.taskId,
+          projectId: row.projectId,
+          fileId: row.fileId,
+          targetEnvironmentId: row.environmentId,
+          editedByHand: listed.editedByHand,
+          lastResult: listed.lastResult,
+        })),
+    );
+    return {
+      tasks: managed,
+      handMade: handMadeOf(tasks, new Set<string>(all.map((row) => row.taskId)), undefined),
+    };
+  });
+
+  const previewImport: BoardSchedulesShape["previewImport"] = Effect.fn(
+    "BoardSchedules.previewImport",
+  )(function* (projectId, schedules) {
+    if (schedules === null) return { entries: [], warnings: [] };
+    const rows = yield* store.rows(projectId);
+    const byFile = new Map(rows.map((row) => [row.fileId, row]));
+    const linked = yield* linkedTaskIds;
+    const tasks = yield* listTasks;
+    const byId = new Map(tasks.map((task) => [task.id as string, task]));
+    const adopted = new Set<string>();
+    const entries: BoardScheduleImportEntry[] = [];
+    const warnings: string[] = [];
+    const base = (definition: T3oFileSchedule) => ({
+      fileId: definition.id,
+      title: definition.title,
+      schedule: definition.schedule,
+      enabled: definition.enabled,
+      prompt: definition.prompt,
+    });
+    for (const definition of schedules) {
+      const existing = byFile.get(definition.id);
+      if (existing !== undefined && !existing.tombstone) {
+        if (sameDefinition(existing.definition, definition)) continue;
+        const live = byId.get(existing.taskId) ?? null;
+        const current =
+          live === null
+            ? (existing.applied ?? desiredFields(existing.definition))
+            : appliedFromTask(live);
         entries.push({
           row: {
-            fileId: row.fileId,
-            kind: "delete",
-            title: row.definition.title,
-            schedule: row.definition.schedule,
-            enabled: row.definition.enabled,
-            prompt: row.definition.prompt,
-            currentEnvironmentId: row.environmentId,
-            changes: [],
+            ...base(definition),
+            kind: "update",
+            ...(current.prompt === definition.prompt ? {} : { previousPrompt: current.prompt }),
+            currentEnvironmentId: existing.environmentId,
+            changes: fieldChanges(current, definition, {
+              pausedByHand: live !== null && !live.enabled && existing.applied?.enabled === true,
+            }),
           },
-          definition: null,
-          existing: row,
+          definition,
+          existing,
           adoptTask: null,
         });
+        continue;
       }
-      entries.sort((a, b) => KIND_ORDER[a.row.kind] - KIND_ORDER[b.row.kind]);
-      return { entries, warnings };
-    });
+      const candidates = tasks.filter(
+        (task) =>
+          task.projectId === projectId &&
+          !linked.has(task.id) &&
+          !adopted.has(task.id) &&
+          isAdoptable(task) &&
+          task.title.trim() === definition.title,
+      );
+      if (candidates.length === 1) {
+        const task = candidates[0]!;
+        adopted.add(task.id);
+        entries.push({
+          row: {
+            ...base(definition),
+            kind: "adopt",
+            ...(task.prompt === definition.prompt ? {} : { previousPrompt: task.prompt }),
+            currentEnvironmentId: deps.serverEnvironmentId,
+            changes: adoptChanges(task, definition),
+          },
+          definition,
+          existing: existing ?? null,
+          adoptTask: task,
+        });
+        continue;
+      }
+      if (candidates.length > 1) {
+        warnings.push(
+          `schedules ("${definition.id}"): ${candidates.length} hand-made tasks are titled "${definition.title}", so it is created new rather than adopting one.`,
+        );
+      }
+      entries.push({
+        row: { ...base(definition), kind: "create", changes: [] },
+        definition,
+        existing: existing ?? null,
+        adoptTask: null,
+      });
+    }
+    const fileIds = new Set(schedules.map((schedule) => schedule.id));
+    for (const row of rows) {
+      if (row.tombstone || fileIds.has(row.fileId)) continue;
+      entries.push({
+        row: {
+          fileId: row.fileId,
+          kind: "delete",
+          title: row.definition.title,
+          schedule: row.definition.schedule,
+          enabled: row.definition.enabled,
+          prompt: row.definition.prompt,
+          currentEnvironmentId: row.environmentId,
+          changes: [],
+        },
+        definition: null,
+        existing: row,
+        adoptTask: null,
+      });
+    }
+    entries.sort((a, b) => KIND_ORDER[a.row.kind] - KIND_ORDER[b.row.kind]);
+    return { entries, warnings };
+  });
 
-    const blankRow = (
-      projectId: ProjectId,
-      definition: T3oFileSchedule,
-      taskId: ScheduledTaskId,
-    ): BoardScheduleStoreRow => ({
-      projectId,
-      fileId: definition.id,
-      definition,
-      environmentId: null,
-      taskId,
-      applied: null,
-      lastError: null,
-      missing: false,
-      tombstone: false,
-      exportLinked: false,
-      updatedAt: "",
-    });
+  const blankRow = (
+    projectId: ProjectId,
+    definition: T3oFileSchedule,
+    taskId: ScheduledTaskId,
+  ): BoardScheduleStoreRow => ({
+    projectId,
+    fileId: definition.id,
+    definition,
+    environmentId: null,
+    taskId,
+    applied: null,
+    lastError: null,
+    missing: false,
+    tombstone: false,
+    exportLinked: false,
+    updatedAt: "",
+  });
 
-    const newTaskId = Effect.map(deps.uuid, (uuid) =>
-      ScheduledTaskId.make(`scheduled-task:board:${uuid}`),
-    );
+  const newTaskId = Effect.map(deps.uuid, (uuid) =>
+    ScheduledTaskId.make(`scheduled-task:board:${uuid}`),
+  );
 
-    const applyImport: BoardSchedulesShape["applyImport"] = Effect.fn(
-      "BoardSchedules.applyImport",
-    )(function* (projectId, preview, placements) {
+  const applyImport: BoardSchedulesShape["applyImport"] = Effect.fn("BoardSchedules.applyImport")(
+    function* (projectId, preview, placements) {
       if (preview.entries.length === 0) return { setUp: 0, stopped: 0, deleted: 0, failures: [] };
       return yield* withProjectLock(
         projectId,
@@ -718,7 +709,9 @@ export const makeBoardSchedules = Effect.fn("BoardSchedules.make")(
                 environmentId: placement,
                 lastError: null,
                 exportLinked: false,
-                ...(placement !== null && existing.missing ? { missing: false, applied: null } : {}),
+                ...(placement !== null && existing.missing
+                  ? { missing: false, applied: null }
+                  : {}),
               });
               continue;
             }
@@ -726,7 +719,9 @@ export const makeBoardSchedules = Effect.fn("BoardSchedules.make")(
             const taskId = existing?.taskId ?? (yield* newTaskId);
             yield* save(blankRow(projectId, def, taskId), {
               environmentId: placement,
-              ...(existing === null ? {} : { applied: existing.tombstone ? null : existing.applied }),
+              ...(existing === null
+                ? {}
+                : { applied: existing.tombstone ? null : existing.applied }),
             });
           }
           const outcomes = yield* reconcileUnlocked(projectId, reassert);
@@ -750,199 +745,196 @@ export const makeBoardSchedules = Effect.fn("BoardSchedules.make")(
           };
         }),
       );
-    });
+    },
+  );
 
-    const exportSchedules: BoardSchedulesShape["exportSchedules"] = Effect.fn(
-      "BoardSchedules.exportSchedules",
-    )(function* (projectId, options) {
-      return yield* withProjectLock(
-        projectId,
-        Effect.gen(function* () {
-          const rows = yield* store.rows(projectId);
-          if (options.excludeHandMade) {
-            // The tasks keep running, hand-made again.
-            for (const row of rows) {
-              if (row.exportLinked) yield* store.remove(row.projectId, row.fileId);
-            }
-            const kept = rows.filter((row) => !row.tombstone && !row.exportLinked);
-            return {
-              schedules: kept.length === 0 ? undefined : kept.map((row) => row.definition),
-              handMade: [],
-              warnings: [],
-            };
+  const exportSchedules: BoardSchedulesShape["exportSchedules"] = Effect.fn(
+    "BoardSchedules.exportSchedules",
+  )(function* (projectId, options) {
+    return yield* withProjectLock(
+      projectId,
+      Effect.gen(function* () {
+        const rows = yield* store.rows(projectId);
+        if (options.excludeHandMade) {
+          // The tasks keep running, hand-made again.
+          for (const row of rows) {
+            if (row.exportLinked) yield* store.remove(row.projectId, row.fileId);
           }
-          const live = rows.filter((row) => !row.tombstone);
-          const linked = yield* linkedTaskIds;
-          const tasks = yield* listTasks;
-          const taken = new Set(rows.map((row) => row.fileId));
-          const definitions = live.map((row) => row.definition);
-          const handMade: BoardScheduleExportedTask[] = [];
-          const warnings: string[] = [];
-          for (const task of tasks) {
-            if (task.projectId !== projectId || linked.has(task.id)) continue;
-            if (task.schedule.type === "webhook" || task.schedule.type === "once") continue;
-            if (scheduledTaskThreadMode(task) !== "new_thread") {
-              warnings.push(
-                `"${task.title}" continues one conversation, which ${"t3o.json"} can't express; left out.`,
-              );
-              continue;
-            }
-            const when = fileScheduleOf(task);
-            if (when === null) {
-              warnings.push(`"${task.title}" runs more often than once a minute; left out.`);
-              continue;
-            }
-            const id = slugScheduleId(task.title, taken);
-            taken.add(id);
-            const definition: T3oFileSchedule = {
-              id,
-              title: task.title,
-              schedule: when,
-              enabled: task.enabled,
-              prompt: task.prompt,
-            };
-            // Linked, never rewritten: nothing is upserted until a confirmed import.
-            yield* save(blankRow(projectId, definition, task.id), {
-              environmentId: deps.serverEnvironmentId,
-              applied: appliedFromTask(task),
-              exportLinked: true,
-            });
-            definitions.push(definition);
-            handMade.push({
-              taskId: task.id,
-              fileId: id,
-              title: task.title,
-              environmentId: deps.serverEnvironmentId,
-            });
-          }
+          const kept = rows.filter((row) => !row.tombstone && !row.exportLinked);
           return {
-            schedules: definitions.length === 0 ? undefined : definitions,
-            handMade,
-            warnings,
+            schedules: kept.length === 0 ? undefined : kept.map((row) => row.definition),
+            handMade: [],
+            warnings: [],
           };
-        }),
-      );
-    });
-
-    const retain: BoardSchedulesShape["retain"] = Effect.fn("BoardSchedules.retain")(
-      function* (projectId, fileId) {
-        const runs = yield* store.runs(projectId, fileId);
-        const candidates = retentionCandidates(runs, yield* Clock.currentTimeMillis).filter(
-          // A worker prunes its own runs.
-          (run) => run.environmentId === deps.serverEnvironmentId,
-        );
-        if (candidates.length === 0) return;
-        const project = (yield* deps.projects()).find((candidate) => candidate.id === projectId);
-        if (project === undefined) return;
-        for (const run of candidates) {
-          const state = yield* deps.threadState(run.threadId);
-          if (retentionKeeps(state, yield* store.threadTouchedCard(run.threadId))) continue;
-          const workspace = yield* deps.threadWorkspace(run.threadId);
-          if (state !== null && state !== "unknown" && !state.deleted) {
-            const deleted = yield* Effect.result(deps.deleteThread(run.threadId));
-            if (deleted._tag === "Failure") continue;
+        }
+        const live = rows.filter((row) => !row.tombstone);
+        const linked = yield* linkedTaskIds;
+        const tasks = yield* listTasks;
+        const taken = new Set(rows.map((row) => row.fileId));
+        const definitions = live.map((row) => row.definition);
+        const handMade: BoardScheduleExportedTask[] = [];
+        const warnings: string[] = [];
+        for (const task of tasks) {
+          if (task.projectId !== projectId || linked.has(task.id)) continue;
+          if (task.schedule.type === "webhook" || task.schedule.type === "once") continue;
+          if (scheduledTaskThreadMode(task) !== "new_thread") {
+            warnings.push(
+              `"${task.title}" continues one conversation, which ${"t3o.json"} can't express; left out.`,
+            );
+            continue;
           }
-          const removed = yield* deps.removeRunWorktree({
-            project,
-            worktreePath:
-              workspace.worktreePath ??
-              (state !== null && state !== "unknown" ? state.worktreePath : null),
-            branch: workspace.branch,
-          });
-          if (!removed) continue;
-          yield* store.deleteRun(run.threadId);
-        }
-      },
-      (effect, projectId, fileId) =>
-        effect.pipe(
-          Effect.catchCause((cause) =>
-            Effect.logWarning("Schedule run retention failed", { projectId, fileId, cause }),
-          ),
-        ),
-    );
-
-    const skip = (message: string) => new BoardScheduleRunError({ message });
-
-    const run: BoardSchedulesShape["run"] = Effect.fn("BoardSchedules.run")(
-      function* (task) {
-        const row = yield* store
-          .rowByTask(task.id)
-          .pipe(Effect.mapError((error) => skip(error.message)));
-        if (row === null || row.tombstone || row.environmentId === null || row.missing) {
-          return yield* skip(SKIPPED_NOT_SCHEDULED);
-        }
-        const { latestRun, latestState } = yield* latestOf(row).pipe(
-          Effect.mapError((error) => skip(error.message)),
-        );
-        if (
-          previousRunStillGoing({
-            run: latestRun,
-            state: latestState,
-            schedule: row.definition.schedule,
-            nowMs: yield* Clock.currentTimeMillis,
-          })
-        ) {
-          return yield* skip(SKIPPED_STILL_GOING);
-        }
-        if (row.environmentId !== deps.serverEnvironmentId) {
-          return yield* skip(
-            `Skipped: ${machineName(deps.serverEnvironmentId, row.environmentId)} isn't a machine this board can run schedules on.`,
-          );
-        }
-        const uuid = yield* deps.uuid;
-        const threadId = ThreadId.make(`thread-schedule-${uuid}`);
-        // Recorded before anything launches, so a crash mid-launch still leaves the run.
-        yield* store
-          .recordRun({
-            threadId,
-            projectId: row.projectId,
-            fileId: row.fileId,
-            environmentId: row.environmentId,
-            startedAt: yield* nowIso,
-            launchError: null,
-          })
-          .pipe(Effect.mapError((error) => skip(error.message)));
-        const failLaunch = (message: string) =>
-          store.setLaunchError(threadId, message).pipe(
-            Effect.ignore,
-            Effect.andThen(Effect.fail(skip(message))),
-          );
-        const baseRef = yield* deps.defaultBranch(row.projectId);
-        if (baseRef === null) {
-          return yield* failLaunch("Couldn't resolve the project's default branch.");
-        }
-        const launched = yield* deps
-          .launch({
-            // Fresh per run: a reused id with a stored receipt changes which thread comes back.
-            commandId: CommandId.make(`board-schedule:${uuid}`),
-            threadId,
-            projectId: row.projectId,
+          const when = fileScheduleOf(task);
+          if (when === null) {
+            warnings.push(`"${task.title}" runs more often than once a minute; left out.`);
+            continue;
+          }
+          const id = slugScheduleId(task.title, taken);
+          taken.add(id);
+          const definition: T3oFileSchedule = {
+            id,
             title: task.title,
+            schedule: when,
+            enabled: task.enabled,
             prompt: task.prompt,
-            taskId: row.taskId,
-            modelSelection: yield* deps.modelFor(row.projectId),
-            baseRef,
-          })
-          .pipe(Effect.catch((error) => failLaunch(error.message)));
-        const retention = retain(row.projectId, row.fileId);
-        yield* deps.retainInBackground ? Effect.forkDetach(retention) : retention;
-        return launched;
-      },
+          };
+          // Linked, never rewritten: nothing is upserted until a confirmed import.
+          yield* save(blankRow(projectId, definition, task.id), {
+            environmentId: deps.serverEnvironmentId,
+            applied: appliedFromTask(task),
+            exportLinked: true,
+          });
+          definitions.push(definition);
+          handMade.push({
+            taskId: task.id,
+            fileId: id,
+            title: task.title,
+            environmentId: deps.serverEnvironmentId,
+          });
+        }
+        return {
+          schedules: definitions.length === 0 ? undefined : definitions,
+          handMade,
+          warnings,
+        };
+      }),
     );
+  });
 
-    return {
-      list,
-      setMachine,
-      runNow,
-      retry,
-      managedTasks,
-      reconcile,
-      previewImport,
-      placementRefusal,
-      applyImport,
-      exportSchedules,
-      run,
-      retain,
-    } satisfies BoardSchedulesShape;
-  },
-);
+  const retain: BoardSchedulesShape["retain"] = Effect.fn("BoardSchedules.retain")(
+    function* (projectId, fileId) {
+      const runs = yield* store.runs(projectId, fileId);
+      const candidates = retentionCandidates(runs, yield* Clock.currentTimeMillis).filter(
+        // A worker prunes its own runs.
+        (run) => run.environmentId === deps.serverEnvironmentId,
+      );
+      if (candidates.length === 0) return;
+      const project = (yield* deps.projects()).find((candidate) => candidate.id === projectId);
+      if (project === undefined) return;
+      for (const run of candidates) {
+        const state = yield* deps.threadState(run.threadId);
+        if (retentionKeeps(state, yield* store.threadTouchedCard(run.threadId))) continue;
+        const workspace = yield* deps.threadWorkspace(run.threadId);
+        if (state !== null && state !== "unknown" && !state.deleted) {
+          const deleted = yield* Effect.result(deps.deleteThread(run.threadId));
+          if (deleted._tag === "Failure") continue;
+        }
+        const removed = yield* deps.removeRunWorktree({
+          project,
+          worktreePath:
+            workspace.worktreePath ??
+            (state !== null && state !== "unknown" ? state.worktreePath : null),
+          branch: workspace.branch,
+        });
+        if (!removed) continue;
+        yield* store.deleteRun(run.threadId);
+      }
+    },
+    (effect, projectId, fileId) =>
+      effect.pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Schedule run retention failed", { projectId, fileId, cause }),
+        ),
+      ),
+  );
+
+  const skip = (message: string) => new BoardScheduleRunError({ message });
+
+  const run: BoardSchedulesShape["run"] = Effect.fn("BoardSchedules.run")(function* (task) {
+    const row = yield* store
+      .rowByTask(task.id)
+      .pipe(Effect.mapError((error) => skip(error.message)));
+    if (row === null || row.tombstone || row.environmentId === null || row.missing) {
+      return yield* skip(SKIPPED_NOT_SCHEDULED);
+    }
+    const { latestRun, latestState } = yield* latestOf(row).pipe(
+      Effect.mapError((error) => skip(error.message)),
+    );
+    if (
+      previousRunStillGoing({
+        run: latestRun,
+        state: latestState,
+        schedule: row.definition.schedule,
+        nowMs: yield* Clock.currentTimeMillis,
+      })
+    ) {
+      return yield* skip(SKIPPED_STILL_GOING);
+    }
+    if (row.environmentId !== deps.serverEnvironmentId) {
+      return yield* skip(
+        `Skipped: ${machineName(deps.serverEnvironmentId, row.environmentId)} isn't a machine this board can run schedules on.`,
+      );
+    }
+    const uuid = yield* deps.uuid;
+    const threadId = ThreadId.make(`thread-schedule-${uuid}`);
+    // Recorded before anything launches, so a crash mid-launch still leaves the run.
+    yield* store
+      .recordRun({
+        threadId,
+        projectId: row.projectId,
+        fileId: row.fileId,
+        environmentId: row.environmentId,
+        startedAt: yield* nowIso,
+        launchError: null,
+      })
+      .pipe(Effect.mapError((error) => skip(error.message)));
+    const failLaunch = (message: string) =>
+      store
+        .setLaunchError(threadId, message)
+        .pipe(Effect.ignore, Effect.andThen(Effect.fail(skip(message))));
+    const baseRef = yield* deps.defaultBranch(row.projectId);
+    if (baseRef === null) {
+      return yield* failLaunch("Couldn't resolve the project's default branch.");
+    }
+    const launched = yield* deps
+      .launch({
+        // Fresh per run: a reused id with a stored receipt changes which thread comes back.
+        commandId: CommandId.make(`board-schedule:${uuid}`),
+        threadId,
+        projectId: row.projectId,
+        title: task.title,
+        prompt: task.prompt,
+        taskId: row.taskId,
+        modelSelection: yield* deps.modelFor(row.projectId),
+        baseRef,
+      })
+      .pipe(Effect.catch((error) => failLaunch(error.message)));
+    const retention = retain(row.projectId, row.fileId);
+    yield* deps.retainInBackground ? Effect.forkDetach(retention) : retention;
+    return launched;
+  });
+
+  return {
+    list,
+    setMachine,
+    runNow,
+    retry,
+    managedTasks,
+    reconcile,
+    previewImport,
+    placementRefusal,
+    applyImport,
+    exportSchedules,
+    run,
+    retain,
+  } satisfies BoardSchedulesShape;
+};

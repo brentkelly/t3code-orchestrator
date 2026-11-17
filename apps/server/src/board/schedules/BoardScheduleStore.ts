@@ -66,7 +66,10 @@ export interface BoardScheduleStoreShape {
   ) => Effect.Effect<BoardScheduleStoreRow | null, BoardScheduleError>;
   /** Insert or replace a row whole. */
   readonly put: (row: BoardScheduleStoreRow) => Effect.Effect<void, BoardScheduleError>;
-  readonly remove: (projectId: ProjectId, fileId: string) => Effect.Effect<void, BoardScheduleError>;
+  readonly remove: (
+    projectId: ProjectId,
+    fileId: string,
+  ) => Effect.Effect<void, BoardScheduleError>;
   readonly recordRun: (run: BoardScheduleRun) => Effect.Effect<void, BoardScheduleError>;
   readonly setLaunchError: (
     threadId: ThreadId,

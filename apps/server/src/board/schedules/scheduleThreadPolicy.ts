@@ -27,7 +27,7 @@ export type ScheduleToolDecision =
     };
 
 /** Stages a schedule's card may be moved to or created in. */
-export const SCHEDULE_CARD_STAGES: ReadonlySet<string> = new Set([
+const SCHEDULE_CARD_STAGES: ReadonlySet<string> = new Set([
   BOARD_SEED_STAGE_IDS.backlog,
   BOARD_SEED_STAGE_IDS.sprint,
   BOARD_SEED_STAGE_IDS.planning,
@@ -148,7 +148,9 @@ export function scheduleThreadPolicy(input: {
       const card = ownCard(board, caller, params.cardId);
       if (isDecision(card)) return card;
       if (params.autoMerge === true || input.turnsAutoMergeOn === true) {
-        return refuse("Auto-merge can't be turned on from a scheduled run; a human reviews the merge.");
+        return refuse(
+          "Auto-merge can't be turned on from a scheduled run; a human reviews the merge.",
+        );
       }
       return { kind: "allow" };
     }

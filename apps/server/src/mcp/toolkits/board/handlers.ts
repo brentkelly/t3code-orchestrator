@@ -2349,8 +2349,7 @@ const boardWideAutoMergeNow = (board: BoardState) =>
  * narrows the call, or refuses it, and records the cards the run creates or changes.
  */
 const scheduleGuarded =
-  (tool: string, handle: AnyBoardHandler) =>
-  (params: Record<string, unknown> | undefined) =>
+  (tool: string, handle: AnyBoardHandler) => (params: Record<string, unknown> | undefined) =>
     Effect.gen(function* () {
       const context = yield* Effect.serviceOption(McpInvocationContext.McpInvocationContext);
       const thread = Option.isSome(context) ? context.value.thread : undefined;
@@ -2381,7 +2380,9 @@ const scheduleGuarded =
       }
       const result = yield* handle((decision.params ?? params) as never);
       if (tool === "board_list_projects") {
-        const listed = result as { readonly projects: ReadonlyArray<{ readonly projectId: string }> };
+        const listed = result as {
+          readonly projects: ReadonlyArray<{ readonly projectId: string }>;
+        };
         return {
           ...listed,
           projects: listed.projects.filter((project) => project.projectId === schedule.projectId),

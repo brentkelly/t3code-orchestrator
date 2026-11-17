@@ -23,8 +23,8 @@ const HOUR_MS = 60 * MINUTE_MS;
 const DAY_MS = 24 * HOUR_MS;
 /** Upstream skips a fixed-time run delayed past this. */
 const MISSED_GRACE_MS = 10 * MINUTE_MS;
-export const RETENTION_KEEP_RECENT = 3;
-export const RETENTION_WINDOW_MS = 7 * DAY_MS;
+const RETENTION_KEEP_RECENT = 3;
+const RETENTION_WINDOW_MS = 7 * DAY_MS;
 const OVERLAP_CAP_MS = 6 * HOUR_MS;
 
 export const SKIPPED_NOT_SCHEDULED = "Skipped: not scheduled";
@@ -99,7 +99,9 @@ const wordCount = (text: string) => text.split(/\s+/).filter((word) => word.leng
 export function lineDiffCounts(before: string, after: string) {
   const a = before.split("\n");
   const b = after.split("\n");
-  const lengths = Array.from({ length: a.length + 1 }, () => new Array<number>(b.length + 1).fill(0));
+  const lengths = Array.from({ length: a.length + 1 }, () =>
+    new Array<number>(b.length + 1).fill(0),
+  );
   for (let i = a.length - 1; i >= 0; i -= 1) {
     for (let j = b.length - 1; j >= 0; j -= 1) {
       lengths[i]![j] =
@@ -145,7 +147,11 @@ export function fieldChanges(
     changes.push(
       options.pausedByHand && definition.enabled
         ? { label: "Enabled", from: "Paused by hand", to: "Resumes (paused by hand)" }
-        : { label: "Enabled", from: enabledText(live.enabled), to: enabledText(definition.enabled) },
+        : {
+            label: "Enabled",
+            from: enabledText(live.enabled),
+            to: enabledText(definition.enabled),
+          },
     );
   }
   return changes;
@@ -246,7 +252,7 @@ const awaitingHuman = (state: BoardThreadState) =>
   state.awaitingUserInput || state.awaitingPermission;
 
 /** The cap past which a run that still looks busy no longer holds the next one back. */
-export const overlapCapMs = (schedule: unknown): number =>
+const overlapCapMs = (schedule: unknown): number =>
   isRecord(schedule) && schedule.type === "interval" && typeof schedule.everyMs === "number"
     ? 2 * schedule.everyMs
     : OVERLAP_CAP_MS;
@@ -336,7 +342,9 @@ export function deriveLastResult(input: {
     });
   }
   if (latestRun === undefined) {
-    return task?.lastRunStatus === "running" ? result("running", task.lastRunAt) : result("never", null);
+    return task?.lastRunStatus === "running"
+      ? result("running", task.lastRunAt)
+      : result("never", null);
   }
   if (latestRun.launchError !== null) {
     return result("failed-to-start", latestRun.startedAt, {

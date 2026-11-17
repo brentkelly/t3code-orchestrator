@@ -33,10 +33,13 @@ const make = Effect.gen(function* () {
   const git = yield* GitVcsDriver.GitVcsDriver;
   const serverSettings = yield* ServerSettingsService;
   const crypto = yield* SecureRandom.SecureRandom;
-  const serverEnvironmentId = yield* Effect.flatMap(ServerEnvironment, (env) => env.getEnvironmentId);
+  const serverEnvironmentId = yield* Effect.flatMap(
+    ServerEnvironment,
+    (env) => env.getEnvironmentId,
+  );
   const uuid = crypto.uuidV4().pipe(Effect.orDie);
 
-  return yield* makeBoardSchedules({
+  return makeBoardSchedules({
     store,
     tasks: {
       list: () => scheduledTasks.list().pipe(Effect.map((result) => result.tasks)),
@@ -57,7 +60,10 @@ const make = Effect.gen(function* () {
       threads.threadState(threadId).pipe(Effect.orElseSucceed(() => UNKNOWN_THREAD_STATE)),
     deleteThread: (threadId) =>
       Effect.flatMap(uuid, (id) =>
-        threads.delete({ commandId: CommandId.make(`server:board-schedule-prune:${id}`), threadId }),
+        threads.delete({
+          commandId: CommandId.make(`server:board-schedule-prune:${id}`),
+          threadId,
+        }),
       ).pipe(
         Effect.mapError(
           (cause) => new BoardScheduleError({ message: "Couldn't delete the run thread.", cause }),

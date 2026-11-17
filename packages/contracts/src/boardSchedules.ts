@@ -21,7 +21,7 @@ import {
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 
-export const BOARD_SCHEDULE_MIN_INTERVAL_MS = 60_000;
+const BOARD_SCHEDULE_MIN_INTERVAL_MS = 60_000;
 
 const BoardScheduleTimeOfDay = TrimmedNonEmptyString.check(
   Schema.isPattern(/^([01]?\d|2[0-3]):([0-5]\d)$/),
