@@ -105,7 +105,17 @@ const make = Effect.gen(function* () {
         ),
         Effect.orElseSucceed(() => null),
       ),
-    modelFor: (projectId) => boardFallbackModelSelection(serverSettings, projectId),
+    modelFor: (projectId) =>
+      boardFallbackModelSelection(serverSettings, projectId).pipe(
+        Effect.map((selection) => {
+          const options = "options" in selection ? selection.options : undefined;
+          return {
+            instanceId: selection.instanceId,
+            model: selection.model,
+            ...(options === undefined ? {} : { options }),
+          };
+        }),
+      ),
     launch: (input) =>
       launcher
         .launch({
