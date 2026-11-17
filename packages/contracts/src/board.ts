@@ -5199,11 +5199,11 @@ export const BoardCardMoveCommand = Schema.Struct({
   /** Permits non-adjacent stage moves. A drag is an override — a rigid
       board still has to let you drag a card backwards. */
   override: Schema.optional(Schema.Boolean),
-  /** `auto-build`: the card's own Auto-build started it. Such a
-      move does not begin its parent group, so it never starts its siblings.
-      `human`: stamped by the RPC layer on a person's move, whatever
-      the client sent; it resets the card's CI round trips. */
-  cause: Schema.optional(Schema.Literals(["auto-build", "human"])),
+  /** `auto-build`: the card's own Auto-build moved it; it never begins its parent group.
+      `human`: stamped by the RPC layer on a person's move; it resets CI round trips.
+      `agent`: stamped by board_move_card; like a person's, its backward move disarms the
+      toggle it undoes, and it overrides nothing else. */
+  cause: Schema.optional(Schema.Literals(["auto-build", "human", "agent"])),
   createdAt: IsoDateTime,
 });
 export type BoardCardMoveCommand = typeof BoardCardMoveCommand.Type;
@@ -13059,9 +13059,10 @@ export type BoardSettingsPatch = typeof BoardSettingsPatch.Type;
  * through, keeping the user's rounds and per-phase edits.
  */
 /**
- * Honours the user's pick, else `auto`, planning included (T3O-115): an unattended planning run
- * must not wait on approvals, and its envelope forbids changing the shared project root. The
- * board never forces `full-access`.
+ * Honours the user's pick, else `auto`, Planning included (T3O-115): an unattended planning run
+ * must not wait on approvals, and its envelope forbids changing the shared project root. A
+ * custom plan-mode stage has no such guard and defaults to `approval-required` in
+ * `resolveBoardStageExecution`. The board never forces `full-access`.
  */
 export function effectiveBoardRuntimeMode(runtimeMode: RuntimeMode | undefined): RuntimeMode {
   return runtimeMode ?? "auto";
@@ -13353,7 +13354,9 @@ export function resolveBoardStageExecution(
   );
   return {
     ...resolved,
-    runtimeMode: effectiveBoardRuntimeMode(resolved.runtimeMode),
+    // Only Planning carries the plan root guard, so another plan-mode stage, which shares the
+    // project root, still waits on approvals unless the user picked a mode.
+    runtimeMode: resolved.runtimeMode ?? (resolved.mode === "build" ? "auto" : "approval-required"),
   };
 }
 

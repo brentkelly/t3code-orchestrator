@@ -70,7 +70,8 @@ when the stage sets none, and it never edits files in the project root.
   the thread has already finished, nothing is sent and the plan waits for your approval.
 - Dragging a card back out of Building turns its Auto-build off, and back into Planning its
   Auto-plan and Auto sign-off off, so a card you pulled back waits for you. Turn them on again to
-  resume. An agent moving a card back turns nothing off.
+  resume. An agent moving a card back for you does the same; the board's own moves turn nothing
+  off.
 - Stopping the planning agent, or answering its question yourself, turns Auto-plan off. If the run
   fails on its own and has no retry left, it stops and waits for you with Auto-plan still on; the
   reason shows on the card's activity. Click **Continue** to run it again.

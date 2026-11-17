@@ -2421,9 +2421,9 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
               doneStageId,
             })
           : card.orderKey);
-      // T3o: only a person's backward move disarms; an agent's or the board's never does (T3O-115).
+      // T3o: a person's or an agent's backward move disarms; the board's never does (T3O-115).
       const disarmed =
-        command.cause === "human"
+        command.cause === "human" || command.cause === "agent"
           ? backwardMoveDisarms(board, card, command.toStage)
           : { settings: {}, changed: null };
       const nextCard: BoardCard = {

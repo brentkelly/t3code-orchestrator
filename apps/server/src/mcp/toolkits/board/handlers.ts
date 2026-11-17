@@ -1549,6 +1549,9 @@ const rawBoardHandlers = {
       toStage: toStage,
       orderKey,
       override: input.override,
+      // T3o: an agent's backward move disarms the toggle it undoes, so the gate sweep cannot
+      // relaunch the card behind it (T3O-113).
+      cause: "agent",
       createdAt: yield* nowIso,
     };
     yield* dispatch(deps, command);

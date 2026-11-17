@@ -389,7 +389,11 @@ const groupOf = (overrides: Partial<NonNullable<BoardCard["group"]>> = {}) => ({
   ...overrides,
 });
 
-const moveTo = (stage: string, id = "card-auto", cause?: "auto-build" | "human"): BoardCommand => ({
+const moveTo = (
+  stage: string,
+  id = "card-auto",
+  cause?: "auto-build" | "human" | "agent",
+): BoardCommand => ({
   type: "board.card.move",
   commandId: CommandId.make(`cmd-move-${id}-${stage}`),
   cardId: BoardCardId.make(id),
@@ -569,7 +573,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
     );
 
     it.effect(
-      "a person's drag back out of Building turns Auto-build off; back into Planning, Auto-plan",
+      "a person's or agent's drag back out of Building turns Auto-build off; back into Planning, Auto-plan",
       () =>
         Effect.gen(function* () {
           const built = makeCard({
@@ -607,10 +611,15 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
           );
           expect(forward.payload.automationChanged).toBeUndefined();
           expect(forward.payload.card.autoBuildSetting).toBe(null);
-          // T3o: an agent's or the board's backward move disarms nothing (T3O-115).
-          const byAgent = movedCard(yield* decideEvents(moveTo("planning"), readModel([built])));
-          expect(byAgent.payload.automationChanged).toBeUndefined();
-          expect(byAgent.payload.card).toMatchObject({
+          // An agent's backward move (board_move_card) disarms like a person's.
+          const byAgent = movedCard(
+            yield* decideEvents(moveTo("ready", "card-auto", "agent"), readModel([built])),
+          );
+          expect(byAgent.payload.automationChanged).toEqual({ autoBuild: true });
+          // The board's own backward move disarms nothing (T3O-115).
+          const byBoard = movedCard(yield* decideEvents(moveTo("planning"), readModel([built])));
+          expect(byBoard.payload.automationChanged).toBeUndefined();
+          expect(byBoard.payload.card).toMatchObject({
             autoBuildSetting: true,
             autoPlanSetting: true,
             autoSignOffSetting: true,
