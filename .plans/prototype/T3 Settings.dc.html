@@ -49,12 +49,33 @@ textarea{font-family:var(--font-sans)}
 ::-webkit-scrollbar{width:6px;height:6px}
 ::-webkit-scrollbar-track{background:transparent}
 ::-webkit-scrollbar-thumb{background:rgb(140 140 150 / 35%);border-radius:3px}
+.t3-frame{container-type:inline-size;container-name:t3}
+.t3-show-narrow{display:none}
+@container t3 (max-width: 640px){
+  .t3-aside{display:none !important}
+  .t3-show-narrow{display:inline !important}
+  select.t3-show-narrow{display:block !important}
+  .t3-hide-narrow{display:none !important}
+  .t3-wrap{flex-wrap:wrap !important}
+  .t3-wrap > .t3-grow{flex:1 1 calc(100% - 46px) !important}
+  .t3-content{padding:18px 14px 88px !important;gap:24px !important}
+  .t3-header{padding:0 12px !important}
+  .t3-tabs{overflow-x:auto;scrollbar-width:none}
+  .t3-tabs > button{flex:none}
+  .t3-overlay{padding:0 !important;align-items:flex-end !important}
+  .t3-dialog{width:100% !important;max-height:94% !important;border-radius:14px 14px 0 0 !important}
+  .t3-picker-col{align-items:flex-start !important;flex:1 1 100% !important}
+  .t3-sched-row{grid-template-columns:minmax(0,1fr) !important;gap:8px !important}
+  .t3-sched-row > .t3-cell{justify-content:flex-start !important}
+  .t3-pop{right:auto !important;left:0 !important;width:min(300px,calc(100cqw - 40px)) !important}
+}
 </style>
 </helmet>
 
-<div style="display:flex;height:100vh;width:100%;overflow:hidden;background:var(--bg);color:var(--fg);font-size:14px">
+<div class="t3-frame" style="{{ frameStyle }}">
+<div style="display:flex;height:100%;width:100%;overflow:hidden;background:var(--bg);color:var(--fg);font-size:14px">
 
-  <aside style="width:236px;min-width:236px;display:flex;flex-direction:column;background:var(--sidebar);border-right:1px solid var(--border);overflow:hidden">
+  <aside class="t3-aside" style="width:236px;min-width:236px;display:flex;flex-direction:column;background:var(--sidebar);border-right:1px solid var(--border);overflow:hidden">
     <div style="display:flex;align-items:center;gap:8px;height:52px;flex:none;padding:0 12px;border-bottom:1px solid var(--border)">
       <a href="t3o.dc.html" title="Back to board" style="display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:8px;color:var(--sidebar-icon-color,#9a9aa2)" style-hover="background:var(--sidebar-row-hover);color:var(--fg);text-decoration:none">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"></path></svg>
@@ -95,20 +116,113 @@ textarea{font-family:var(--font-sans)}
   </aside>
 
   <main style="flex:1;min-width:0;display:flex;flex-direction:column;overflow:hidden">
-    <header style="display:flex;align-items:center;gap:8px;height:52px;min-height:52px;flex:none;padding:0 20px;border-bottom:1px solid var(--border)">
-      <div style="display:flex;align-items:baseline;gap:5px;flex:none;font-size:15px;letter-spacing:-0.01em">
+    <header class="t3-header" style="display:flex;align-items:center;gap:8px;height:52px;min-height:52px;flex:none;padding:0 20px;border-bottom:1px solid var(--border)">
+      <div class="t3-hide-narrow" style="display:flex;align-items:baseline;gap:5px;flex:none;font-size:15px;letter-spacing:-0.01em">
         <span style="font-weight:700;color:var(--fg)">T3</span><span style="font-weight:500;color:var(--muted-fg)">Code</span>
       </div>
+      <span class="t3-show-narrow" style="flex:none;font:600 14px var(--font-sans)">Settings</span>
+      <select class="t3-show-narrow" value="{{ navValue }}" onChange="{{ navPick }}" aria-label="Settings page" style="flex:1;min-width:0;height:30px;padding:0 6px;border:1px solid var(--input);border-radius:var(--control-radius);background:var(--popover);color:var(--fg);font:500 13px var(--font-sans)">
+        <sc-for list="{{ navOptions }}" as="o" hint-placeholder-count="3"><option value="{{ o.value }}">{{ o.label }}</option></sc-for>
+      </select>
+      <span class="t3-hide-narrow" style="display:contents">
       <sc-for list="{{ crumbs }}" as="cr" hint-placeholder-count="2">
         <span style="color:var(--border)">/</span>
         <button type="button" onClick="{{ cr.go }}" style="{{ cr.style }}">{{ cr.label }}</button>
       </sc-for>
-      <div style="flex:1"></div>
-      <span style="font:400 12px var(--font-sans);color:var(--muted-fg)">{{ savedLabel }}</span>
+      </span>
+      <div class="t3-hide-narrow" style="flex:1"></div>
+      <span class="t3-hide-narrow" style="font:400 12px var(--font-sans);color:var(--muted-fg)">{{ savedLabel }}</span>
     </header>
 
     <div style="flex:1;min-height:0;overflow-y:auto">
-      <div style="max-width:880px;margin:0 auto;padding:28px 20px 96px;display:flex;flex-direction:column;gap:34px">
+      <div class="t3-content" style="max-width:880px;margin:0 auto;padding:28px 20px 96px;display:flex;flex-direction:column;gap:34px">
+
+        <!-- ═══════════ BOARD · SCHEDULED TASKS ═══════════ -->
+        <sc-if value="{{ isTasks }}" hint-placeholder-val="{{ false }}">
+          <section style="display:flex;flex-direction:column;gap:18px">
+            <div style="display:flex;flex-direction:column;gap:4px">
+              <h1 style="margin:0;font:600 19px var(--font-sans);letter-spacing:-0.015em">Scheduled tasks</h1>
+              <p style="margin:0;max-width:68ch;font:400 13px/1.55 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">Recurring unattended runs, grouped by the machine they run on. Every run has full access to its machine. A task marked <span style="display:inline-flex;align-items:center;padding:0 6px;border:1px solid var(--border);border-radius:99px;font:500 11px/17px var(--font-sans);color:var(--fg);vertical-align:1px">From t3o.json</span> is managed by a project's file: you can edit it here, but that project's next import puts back what the file says.</p>
+            </div>
+            <sc-for list="{{ tk.groups }}" as="g" hint-placeholder-count="1">
+              <div style="display:flex;flex-direction:column;gap:8px">
+                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                  <span style="display:inline-flex;color:var(--muted-fg)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="8" x="2" y="2" rx="2"></rect><rect width="20" height="8" x="2" y="14" rx="2"></rect><path d="M6 6h.01"></path><path d="M6 18h.01"></path></svg></span>
+                  <span style="font:600 14px var(--font-sans)">{{ g.name }}</span>
+                  <span style="padding:0 4px;border:1px solid var(--border);border-radius:4px;font:500 10px/15px var(--font-mono);color:var(--muted-fg)">{{ g.abbr }}</span>
+                  <span style="font:400 12px var(--font-sans);color:var(--muted-fg)">{{ g.sub }}</span>
+                </div>
+                <div style="display:flex;flex-direction:column;border:1px solid var(--border);border-radius:var(--radius);background:var(--card);box-shadow:var(--shadow-xs);overflow:hidden">
+                  <sc-for list="{{ g.rows }}" as="r" hint-placeholder-count="4">
+                    <div style="{{ r.wrapStyle }}">
+                      <div onClick="{{ r.toggle }}" class="t3-wrap" style="display:flex;align-items:center;gap:14px;padding:11px 14px;cursor:pointer" style-hover="background:var(--muted)">
+                        <div class="t3-grow" style="flex:1 1 260px;min-width:0;display:flex;flex-direction:column;gap:3px">
+                          <div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;min-width:0">
+                            <span style="font:500 13px var(--font-sans)">{{ r.title }}</span>
+                            <sc-if value="{{ r.managed }}" hint-placeholder-val="{{ false }}">
+                              <button type="button" onClick="{{ r.goFile }}" title="{{ r.markTip }}" style="display:inline-flex;align-items:center;gap:4px;height:20px;padding:0 7px;border:1px solid var(--border);border-radius:99px;background:var(--card);color:var(--muted-fg);font:500 11px var(--font-sans);white-space:nowrap;cursor:pointer" style-hover="color:var(--fg);border-color:var(--input)"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"></path><path d="M14 2v4a2 2 0 0 0 2 2h4"></path></svg>{{ r.markText }}</button>
+                            </sc-if>
+                            <sc-if value="{{ r.edited }}" hint-placeholder-val="{{ false }}">
+                              <span style="font:400 11.5px var(--font-sans);color:var(--muted-fg)">Edited here · the next import overwrites it</span>
+                            </sc-if>
+                          </div>
+                          <span style="font:400 12px var(--font-sans);color:var(--muted-fg)">{{ r.when }}</span>
+                        </div>
+                        <div style="flex:0 0 130px;display:flex;flex-direction:column;gap:1px">
+                          <span style="font:500 12.5px var(--font-sans)">{{ r.next }}</span>
+                          <span style="font:400 11.5px var(--font-sans);color:var(--muted-fg)">{{ r.nextSub }}</span>
+                        </div>
+                        <div style="flex:0 1 210px;min-width:0;display:flex;align-items:flex-start;gap:7px">
+                          <span style="{{ r.dotStyle }}"></span>
+                          <span style="font:400 12.5px/1.4 var(--font-sans);text-wrap:pretty">{{ r.last }}</span>
+                        </div>
+                        <span style="{{ r.caretStyle }}"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"></path></svg></span>
+                      </div>
+                      <sc-if value="{{ r.open }}" hint-placeholder-val="{{ false }}">
+                        <div style="display:flex;flex-direction:column;gap:12px;padding:2px 14px 14px">
+                          <sc-if value="{{ r.managed }}" hint-placeholder-val="{{ false }}">
+                            <div class="t3-wrap" style="display:flex;align-items:flex-start;gap:9px;padding:10px 12px;border:1px solid color-mix(in srgb,var(--primary) 28%,var(--border));border-radius:var(--radius);background:color-mix(in srgb,var(--primary) 4%,var(--card))">
+                              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;margin-top:1px"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"></path><path d="M14 2v4a2 2 0 0 0 2 2h4"></path></svg>
+                              <span class="t3-grow" style="flex:1;min-width:0;font:400 12.5px/1.55 var(--font-sans);color:var(--fg);text-wrap:pretty">{{ r.banner }}</span>
+                              <button type="button" onClick="{{ r.goFile }}" style="flex:none;border:none;background:transparent;padding:0;color:var(--info-fg);font:500 12px var(--font-sans);cursor:pointer;white-space:nowrap" style-hover="text-decoration:underline">{{ r.goFileLabel }}</button>
+                            </div>
+                          </sc-if>
+                          <sc-if value="{{ r.handHint }}" hint-placeholder-val="{{ false }}">
+                            <span style="font:400 12px/1.5 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">{{ r.handHintText }}</span>
+                          </sc-if>
+                          <div class="t3-wrap" style="display:flex;align-items:center;gap:10px">
+                            <span style="width:80px;flex:none;font:400 13px var(--font-sans);color:var(--muted-fg)">Title</span>
+                            <input type="text" value="{{ r.title }}" onChange="{{ r.onTitle }}" style="flex:1;min-width:160px;height:32px;padding:0 10px;border:1px solid var(--input);border-radius:var(--control-radius);background:var(--popover);color:var(--fg);font:500 13px var(--font-sans);outline:none;box-shadow:var(--shadow-xs)">
+                          </div>
+                          <div style="display:flex;align-items:center;gap:10px">
+                            <span style="width:80px;flex:none;font:400 13px var(--font-sans);color:var(--muted-fg)">Enabled</span>
+                            <button type="button" onClick="{{ r.flip }}" role="switch" style="{{ r.trackStyle }}"><span style="{{ r.knobStyle }}"></span></button>
+                          </div>
+                          <div style="display:flex;flex-direction:column;gap:6px">
+                            <span style="font:400 13px var(--font-sans);color:var(--muted-fg)">{{ r.promptHead }}</span>
+                            <textarea value="{{ r.prompt }}" onChange="{{ r.onPrompt }}" rows="4" style="display:block;width:100%;padding:11px 13px;border:1px solid var(--input);border-radius:var(--radius);background:var(--card);color:var(--fg);font:400 12.5px/1.6 var(--font-mono);outline:none;resize:vertical;box-shadow:var(--shadow-xs)"></textarea>
+                          </div>
+                        </div>
+                      </sc-if>
+                    </div>
+                  </sc-for>
+                </div>
+              </div>
+            </sc-for>
+            <div class="t3-wrap" style="display:flex;align-items:flex-start;gap:10px;padding:12px 14px;border:1px dashed var(--input);border-radius:var(--radius)">
+              <span style="display:inline-flex;flex:none;margin-top:2px;color:var(--muted-fg)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="8" x="2" y="2" rx="2"></rect><rect width="20" height="8" x="2" y="14" rx="2"></rect><path d="M6 6h.01"></path><path d="M6 18h.01"></path></svg></span>
+              <div class="t3-grow" style="flex:1;min-width:0;display:flex;flex-direction:column;gap:6px">
+                <span style="font:500 13px var(--font-sans)">{{ tk.otherTitle }}</span>
+                <span style="font:400 12.5px/1.55 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">{{ tk.otherText }}</span>
+                <div style="display:flex;flex-wrap:wrap;gap:6px">
+                  <sc-for list="{{ tk.links }}" as="l" hint-placeholder-count="2">
+                    <button type="button" onClick="{{ l.go }}" style="display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 9px;border:1px solid var(--border);border-radius:7px;background:var(--card);color:var(--fg);font:500 12px var(--font-sans);cursor:pointer" style-hover="border-color:var(--input)"><span style="{{ l.dotStyle }}"></span>{{ l.label }}</button>
+                  </sc-for>
+                </div>
+              </div>
+            </div>
+          </section>
+        </sc-if>
 
         <!-- ═══════════ BOARD · GENERAL ═══════════ -->
         <sc-if value="{{ isGeneral }}" hint-placeholder-val="{{ false }}">
@@ -124,12 +238,12 @@ textarea{font-family:var(--font-sans)}
                 </div>
               </sc-if>
               <sc-for list="{{ notices.rows }}" as="nr" hint-placeholder-count="2">
-                <div style="{{ nr.rowStyle }}">
+                <div class="t3-wrap" style="{{ nr.rowStyle }}">
                   <sc-if value="{{ nr.single }}" hint-placeholder-val="{{ false }}">
                     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;margin-top:2px"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"></path><path d="M14 2v4a2 2 0 0 0 2 2h4"></path></svg>
                   </sc-if>
                   <span style="{{ nr.dotStyle }}"></span>
-                  <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px">
+                  <div class="t3-grow" style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px">
                     <span style="font:500 13px/1.45 var(--font-sans);color:var(--fg);text-wrap:pretty">{{ nr.text }}</span>
                     <span style="font:400 11.5px var(--font-sans);color:var(--muted-fg)">{{ nr.meta }}</span>
                   </div>
@@ -487,15 +601,15 @@ textarea{font-family:var(--font-sans)}
             </div>
 
             <sc-if value="{{ pv.notice }}" hint-placeholder-val="{{ false }}">
-              <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;border:1px solid color-mix(in srgb,var(--primary) 28%,var(--border));border-radius:var(--radius);background:color-mix(in srgb,var(--primary) 4%,var(--card))">
+              <div class="t3-wrap" style="display:flex;align-items:center;gap:10px;padding:10px 14px;border:1px solid color-mix(in srgb,var(--primary) 28%,var(--border));border-radius:var(--radius);background:color-mix(in srgb,var(--primary) 4%,var(--card))">
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"></path><path d="M14 2v4a2 2 0 0 0 2 2h4"></path></svg>
-                <span style="flex:1;min-width:0;font:500 12.5px/1.45 var(--font-sans);text-wrap:pretty">{{ pv.notice.text }}</span>
+                <span class="t3-grow" style="flex:1;min-width:0;font:500 12.5px/1.45 var(--font-sans);text-wrap:pretty">{{ pv.notice.text }}</span>
                 <button type="button" onClick="{{ pv.notice.dismiss }}" style="height:26px;padding:0 9px;flex:none;border:none;border-radius:var(--control-radius);background:transparent;color:var(--muted-fg);font:500 12px var(--font-sans);cursor:pointer" style-hover="background:var(--accent);color:var(--fg)">No thanks</button>
                 <button type="button" onClick="{{ pv.notice.importIt }}" style="height:26px;padding:0 10px;flex:none;border:none;border-radius:var(--control-radius);background:var(--primary);color:var(--primary-fg);font:500 12px var(--font-sans);cursor:pointer">Import…</button>
               </div>
             </sc-if>
 
-            <div style="display:flex;align-items:center;gap:2px;border-bottom:1px solid var(--border)">
+            <div class="t3-tabs" style="display:flex;align-items:center;gap:2px;border-bottom:1px solid var(--border)">
               <sc-for list="{{ pv.tabs }}" as="t" hint-placeholder-count="3">
                 <button type="button" onClick="{{ t.select }}" style="{{ t.style }}" style-hover="color:var(--fg)">
                   {{ t.label }}
@@ -873,16 +987,120 @@ textarea{font-family:var(--font-sans)}
               </sc-if>
             </sc-if>
 
+            <!-- ── Project · Schedules ── -->
+            <sc-if value="{{ pv.isSched }}" hint-placeholder-val="{{ false }}">
+              <p style="margin:0;max-width:68ch;font:400 12.5px/1.55 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">Recurring runs declared in this project's <span style="font:500 12px var(--font-mono);color:var(--fg)">t3o.json</span>. Each runs unattended on the one machine you pick, with full access to it, in a fresh worktree off <span style="font-family:var(--font-mono)">main</span>. What a schedule does comes from the file; where it runs is set here and never written to the file.</p>
+
+              <sc-if value="{{ sp.empty }}" hint-placeholder-val="{{ false }}">
+                <div style="display:flex;flex-direction:column;gap:12px;padding:22px 24px;border:1px dashed var(--input);border-radius:var(--radius);background:var(--card)">
+                  <span style="font:600 14px var(--font-sans)">{{ sp.emptyTitle }}</span>
+                  <span style="max-width:62ch;font:400 12.5px/1.6 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">Add a <span style="font-family:var(--font-mono);color:var(--fg)">schedules</span> list to t3o.json, commit it, then import. Each entry has an id, a title, when it runs (every N minutes or hours, or a time of day with optional weekdays, in the machine's local time), whether each run starts a fresh session, whether it's enabled, and the prompt. Machines are picked at import, never in the file.</span>
+                  <pre style="margin:0;padding:10px 12px;overflow-x:auto;border:1px solid var(--border);border-radius:8px;background:var(--muted);font:400 12px/1.6 var(--font-mono);color:var(--fg);white-space:pre">{{ sp.snippet }}</pre>
+                </div>
+              </sc-if>
+
+              <sc-if value="{{ sp.hasRows }}" hint-placeholder-val="{{ true }}">
+                <div style="display:flex;flex-direction:column;border:1px solid var(--border);border-radius:var(--radius);background:var(--card);box-shadow:var(--shadow-xs)">
+                  <div class="t3-sched-row t3-hide-narrow" style="display:grid;grid-template-columns:minmax(0,1.7fr) minmax(0,1.15fr) minmax(0,1fr) minmax(0,1.2fr) 176px;gap:12px;padding:8px 14px;font:500 10.5px var(--font-sans);letter-spacing:.06em;text-transform:uppercase;color:var(--muted-fg)">
+                    <span>Schedule</span><span>Runs on</span><span>Next run</span><span>Last result</span><span></span>
+                  </div>
+                  <sc-for list="{{ sp.rows }}" as="r" hint-placeholder-count="3">
+                    <div style="border-top:1px solid var(--border)">
+                      <div class="t3-sched-row" style="display:grid;grid-template-columns:minmax(0,1.7fr) minmax(0,1.15fr) minmax(0,1fr) minmax(0,1.2fr) 176px;gap:12px;align-items:center;padding:11px 14px">
+                        <div class="t3-cell" style="display:flex;flex-direction:column;gap:2px;min-width:0">
+                          <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-width:0">
+                            <span style="font:500 13px var(--font-sans)">{{ r.title }}</span>
+                            <sc-for list="{{ r.tags }}" as="tg" hint-placeholder-count="1"><span style="{{ tg.style }}">{{ tg.text }}</span></sc-for>
+                          </div>
+                          <span style="font:400 12px var(--font-sans);color:var(--muted-fg)">{{ r.when }}</span>
+                          <div style="display:flex;align-items:center;gap:6px">
+                            <span style="font:400 11.5px var(--font-mono);color:var(--muted-fg)">{{ r.id }}</span>
+                            <span style="color:var(--border)">·</span>
+                            <button type="button" onClick="{{ r.togglePrompt }}" style="border:none;background:transparent;padding:0;color:var(--info-fg);font:500 11.5px var(--font-sans);cursor:pointer" style-hover="text-decoration:underline">{{ r.promptLabel }}</button>
+                          </div>
+                        </div>
+                        <div class="t3-cell" style="display:flex;flex-direction:column;align-items:flex-start;gap:3px;min-width:0">
+                          <div style="position:relative;flex:none;max-width:100%">
+                            <button type="button" onClick="{{ r.pk.toggle }}" title="{{ r.pk.tip }}" style="{{ r.pk.btnStyle }}">
+                              <sc-if value="{{ r.pk.picked }}" hint-placeholder-val="{{ true }}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><rect width="20" height="8" x="2" y="2" rx="2"></rect><rect width="20" height="8" x="2" y="14" rx="2"></rect><path d="M6 6h.01"></path><path d="M6 18h.01"></path></svg></sc-if>
+                              <span style="min-width:0;overflow:hidden;text-overflow:ellipsis">{{ r.pk.label }}</span>
+                              <sc-if value="{{ r.pk.picked }}" hint-placeholder-val="{{ true }}"><span style="flex:none;padding:0 4px;border:1px solid var(--border);border-radius:4px;font:500 10px/15px var(--font-mono);color:var(--muted-fg)">{{ r.pk.abbr }}</span></sc-if>
+                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;opacity:.7"><path d="m6 9 6 6 6-6"></path></svg>
+                            </button>
+                            <sc-if value="{{ r.pk.open }}" hint-placeholder-val="{{ false }}">
+                              <div onClick="{{ r.pk.close }}" style="position:fixed;inset:0;z-index:5"></div>
+                              <div class="t3-pop" style="position:absolute;left:0;top:calc(100% + 4px);z-index:6;width:300px;display:flex;flex-direction:column;padding:4px;border:1px solid var(--border);border-radius:10px;background:var(--popover);box-shadow:0 12px 32px -12px rgb(0 0 0 / 30%)">
+                                <span style="padding:6px 8px;font:400 11.5px/1.45 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">{{ r.pk.head }}</span>
+                                <sc-for list="{{ r.pk.items }}" as="it" hint-placeholder-count="5">
+                                  <sc-if value="{{ it.isDivider }}" hint-placeholder-val="{{ false }}"><div style="height:1px;margin:4px 2px;background:var(--border)"></div></sc-if>
+                                  <sc-if value="{{ it.isItem }}" hint-placeholder-val="{{ true }}">
+                                    <button type="button" onClick="{{ it.pick }}" disabled="{{ it.disabled }}" title="{{ it.tip }}" style="{{ it.style }}" style-hover="background:var(--accent)">
+                                      <span style="width:12px;flex:none;font:600 12px/18px var(--font-sans);color:var(--fg)">{{ it.tick }}</span>
+                                      <span style="display:inline-flex;width:14px;flex:none;padding-top:3px;color:var(--muted-fg)">
+                                        <sc-if value="{{ it.isMachine }}" hint-placeholder-val="{{ true }}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="8" x="2" y="2" rx="2"></rect><rect width="20" height="8" x="2" y="14" rx="2"></rect><path d="M6 6h.01"></path><path d="M6 18h.01"></path></svg></sc-if>
+                                        <sc-if value="{{ it.isNone }}" hint-placeholder-val="{{ false }}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M5.6 5.6l12.8 12.8"></path></svg></sc-if>
+                                      </span>
+                                      <span style="flex:1;min-width:0;display:flex;flex-direction:column;gap:1px">
+                                        <span style="display:flex;align-items:center;gap:6px;font:500 12.5px/18px var(--font-sans)">{{ it.name }}
+                                          <sc-if value="{{ it.hasAbbr }}" hint-placeholder-val="{{ false }}"><span style="padding:0 4px;border:1px solid var(--border);border-radius:4px;font:500 10px/15px var(--font-mono);color:var(--muted-fg)">{{ it.abbr }}</span></sc-if>
+                                          <sc-if value="{{ it.isBoard }}" hint-placeholder-val="{{ false }}"><span style="padding:0 5px;border-radius:99px;background:var(--accent);font:500 10px/15px var(--font-sans);color:var(--muted-fg)">Board</span></sc-if>
+                                        </span>
+                                        <span style="{{ it.subStyle }}">{{ it.sub }}</span>
+                                      </span>
+                                    </button>
+                                  </sc-if>
+                                </sc-for>
+                              </div>
+                            </sc-if>
+                          </div>
+                          <sc-if value="{{ r.hasMachNote }}" hint-placeholder-val="{{ false }}"><span style="{{ r.machNoteStyle }}">{{ r.machNote }}</span></sc-if>
+                        </div>
+                        <div class="t3-cell" style="display:flex;flex-direction:column;gap:1px;min-width:0">
+                          <span style="font:500 12.5px var(--font-sans)"><span class="t3-show-narrow" style="font-weight:400;color:var(--muted-fg)">Next run · </span>{{ r.next }}</span>
+                          <span style="{{ r.nextSubStyle }}">{{ r.nextSub }}</span>
+                        </div>
+                        <div class="t3-cell" style="display:flex;align-items:flex-start;gap:7px;min-width:0">
+                          <span style="{{ r.dotStyle }}"></span>
+                          <span style="font:400 12.5px/1.4 var(--font-sans);color:var(--fg);text-wrap:pretty"><span class="t3-show-narrow" style="color:var(--muted-fg)">Last · </span>{{ r.last }}</span>
+                        </div>
+                        <div class="t3-cell" style="display:flex;align-items:center;justify-content:flex-end;gap:4px;flex-wrap:wrap">
+                          <button type="button" onClick="{{ r.runNow }}" disabled="{{ r.runDisabled }}" title="{{ r.runTip }}" style="{{ r.runStyle }}"><svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4v16l13-8z"></path></svg>Run now</button>
+                          <button type="button" onClick="{{ r.unsch }}" disabled="{{ r.unschDisabled }}" title="{{ r.unschTip }}" style="{{ r.unschStyle }}" style-hover="color:var(--fg)">Unschedule</button>
+                        </div>
+                      </div>
+                      <sc-if value="{{ r.offline }}" hint-placeholder-val="{{ false }}">
+                        <div class="t3-wrap" style="display:flex;align-items:flex-start;gap:8px;margin:0 14px 11px;padding:8px 11px;border:1px solid color-mix(in srgb,var(--warning) 40%,transparent);border-radius:8px;background:color-mix(in srgb,var(--warning) 7%,var(--card));font:400 12px/1.5 var(--font-sans);color:var(--fg)">
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--warning-fg)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;margin-top:1px"><path d="m21.7 18-8-14a2 2 0 0 0-3.5 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.7-3Z"></path><path d="M12 9v4"></path><path d="M12 17h.01"></path></svg>
+                          <span class="t3-grow" style="flex:1;min-width:0;text-wrap:pretty">{{ r.offlineText }}</span>
+                          <button type="button" onClick="{{ r.pk.toggle }}" style="flex:none;border:none;background:transparent;padding:0;color:var(--info-fg);font:500 12px var(--font-sans);cursor:pointer;white-space:nowrap" style-hover="text-decoration:underline">Move to another machine…</button>
+                        </div>
+                      </sc-if>
+                      <sc-if value="{{ r.promptOpen }}" hint-placeholder-val="{{ false }}">
+                        <pre style="margin:0 14px 12px;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--muted);font:400 12px/1.6 var(--font-mono);color:var(--fg);white-space:pre-wrap">{{ r.prompt }}</pre>
+                      </sc-if>
+                    </div>
+                  </sc-for>
+                </div>
+                <sc-if value="{{ sp.hasHand }}" hint-placeholder-val="{{ false }}">
+                  <div class="t3-wrap" style="display:flex;align-items:flex-start;gap:8px;padding:10px 14px;border:1px dashed var(--input);border-radius:var(--radius);font:400 12.5px/1.55 var(--font-sans);color:var(--muted-fg)">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;margin-top:2px"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg>
+                    <span class="t3-grow" style="flex:1;min-width:0;text-wrap:pretty">{{ sp.handText }}</span>
+                    <button type="button" onClick="{{ sp.goExport }}" style="flex:none;border:none;background:transparent;padding:0;color:var(--info-fg);font:500 12px var(--font-sans);cursor:pointer" style-hover="text-decoration:underline">Go to Export</button>
+                  </div>
+                </sc-if>
+              </sc-if>
+            </sc-if>
+
             <!-- ── Project · Import & export ── -->
             <sc-if value="{{ pv.isIo }}" hint-placeholder-val="{{ false }}">
-              <p style="margin:0;max-width:66ch;font:400 12.5px/1.55 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">The board is where this project's pipeline and CI live. <span style="font:500 12px var(--font-mono);color:var(--fg)">t3o.json</span> is only a way to carry them between workspaces: import it to load a teammate's setup, export it to share yours.</p>
+              <p style="margin:0;max-width:66ch;font:400 12.5px/1.55 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">The board is where this project's pipeline, CI and schedules live. <span style="font:500 12px var(--font-mono);color:var(--fg)">t3o.json</span> is only a way to carry them between workspaces: import it to load a teammate's setup, export it to share yours.</p>
               <div style="display:flex;flex-direction:column;gap:12px">
                 <div style="display:flex;flex-direction:column;gap:12px;padding:16px 18px;border:1px solid var(--border);border-radius:var(--radius);background:var(--card);box-shadow:var(--shadow-xs)">
                   <div style="display:flex;align-items:flex-start;gap:12px">
                     <span style="display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;flex:none;border-radius:8px;background:var(--accent);color:var(--fg)">
                       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" x2="12" y1="15" y2="3"></line></svg>
                     </span>
-                    <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:3px">
+                    <div class="t3-grow" style="flex:1;min-width:0;display:flex;flex-direction:column;gap:3px">
                       <span style="font:600 13.5px var(--font-sans)">Import from the repo</span>
                       <span style="font:400 12.5px/1.5 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">Reads <span style="font-family:var(--font-mono)">t3o.json</span> at the root of the default branch. Importing replaces this project's differences; global settings are untouched.</span>
                       <div style="display:flex;align-items:center;gap:8px;margin-top:6px">
@@ -890,17 +1108,31 @@ textarea{font-family:var(--font-sans)}
                         <span style="font:400 11.5px var(--font-mono);color:var(--muted-fg)">{{ io.fileMeta }}</span>
                       </div>
                     </div>
-                    <button type="button" onClick="{{ io.importIt }}" disabled="{{ io.noFile }}" style="{{ io.importStyle }}">Import…</button>
+                    <div style="display:flex;align-items:center;gap:6px;flex:none">
+                      <button type="button" onClick="{{ io.checkAgain }}" style="height:30px;padding:0 11px;flex:none;border:1px solid var(--input);border-radius:var(--control-radius);background:var(--popover);color:var(--fg);font:500 12.5px var(--font-sans);cursor:pointer;box-shadow:var(--shadow-xs)" style-hover="background:var(--accent)">Check again</button>
+                      <button type="button" onClick="{{ io.importIt }}" disabled="{{ io.noFile }}" style="{{ io.importStyle }}">Import…</button>
+                    </div>
                   </div>
+                  <sc-if value="{{ io.hasBreak }}" hint-placeholder-val="{{ false }}">
+                    <div style="display:flex;flex-direction:column;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden">
+                      <div style="padding:8px 12px;background:var(--muted);border-bottom:1px solid var(--border);font:500 12px var(--font-sans);color:var(--muted-fg)">{{ io.breakTitle }}</div>
+                      <sc-for list="{{ io.breakLines }}" as="l" hint-placeholder-count="4">
+                        <div style="{{ l.style }}"><span style="{{ l.markStyle }}">{{ l.mark }}</span><span style="flex:1;min-width:0;font:400 12.5px/1.45 var(--font-sans);color:var(--fg);text-wrap:pretty">{{ l.text }}</span></div>
+                      </sc-for>
+                    </div>
+                  </sc-if>
                 </div>
                 <div style="display:flex;flex-direction:column;gap:12px;padding:16px 18px;border:1px solid var(--border);border-radius:var(--radius);background:var(--card);box-shadow:var(--shadow-xs)">
                   <div style="display:flex;align-items:flex-start;gap:12px">
                     <span style="display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;flex:none;border-radius:8px;background:var(--accent);color:var(--fg)">
                       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" x2="12" y1="3" y2="15"></line></svg>
                     </span>
-                    <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:3px">
+                    <div class="t3-grow" style="flex:1;min-width:0;display:flex;flex-direction:column;gap:3px">
                       <span style="font:600 13.5px var(--font-sans)">Export to the repo</span>
-                      <span style="font:400 12.5px/1.5 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">Writes this project's differences and CI steps to <span style="font-family:var(--font-mono)">t3o.json</span> in the project root, overwriting the file if there is one. {{ io.exportSummary }}</span>
+                      <span style="font:400 12.5px/1.5 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">Writes this project's differences, CI steps and schedules to <span style="font-family:var(--font-mono)">t3o.json</span> in the project root, overwriting the file if there is one. Machines aren't written. {{ io.exportSummary }}</span>
+                      <sc-if value="{{ io.hasHandNote }}" hint-placeholder-val="{{ false }}">
+                        <span style="display:flex;align-items:flex-start;gap:6px;margin-top:4px;font:400 12px/1.5 var(--font-sans);color:var(--fg);text-wrap:pretty"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;margin-top:2px"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg>{{ io.handNote }}</span>
+                      </sc-if>
                     </div>
                     <button type="button" onClick="{{ io.exportIt }}" style="height:30px;padding:0 12px;flex:none;border:1px solid var(--input);border-radius:var(--control-radius);background:var(--popover);color:var(--fg);font:500 12.5px var(--font-sans);cursor:pointer;box-shadow:var(--shadow-xs)" style-hover="background:var(--accent)">Export</button>
                   </div>
@@ -915,6 +1147,24 @@ textarea{font-family:var(--font-sans)}
                         <code style="flex:1;min-width:0;padding:6px 10px;border:1px solid var(--border);border-radius:7px;background:var(--card);font:400 12px var(--font-mono);overflow-x:auto;white-space:nowrap">{{ io.gitCmd }}</code>
                         <button type="button" onClick="{{ io.copyGit }}" style="height:28px;padding:0 10px;flex:none;border:1px solid var(--border);border-radius:var(--control-radius);background:var(--popover);color:var(--fg);font:500 12px var(--font-sans);cursor:pointer" style-hover="background:var(--accent)">{{ io.copyLabel }}</button>
                       </div>
+                      <sc-if value="{{ io.addedHand }}" hint-placeholder-val="{{ false }}">
+                        <div style="display:flex;flex-direction:column;gap:6px;padding-top:9px;border-top:1px solid color-mix(in srgb,var(--attention) 25%,transparent)">
+                          <span style="font:600 12.5px var(--font-sans)">{{ io.addedTitle }}</span>
+                          <sc-for list="{{ io.addedRows }}" as="a" hint-placeholder-count="1">
+                            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:7px 10px;border:1px solid var(--border);border-radius:8px;background:var(--card)">
+                              <span style="font:500 12.5px var(--font-sans)">{{ a.title }}</span>
+                              <span style="font:400 11.5px var(--font-mono);color:var(--muted-fg)">{{ a.id }}</span>
+                              <span style="flex:1"></span>
+                              <span style="font:400 12px var(--font-sans);color:var(--muted-fg)">{{ a.where }}</span>
+                            </div>
+                          </sc-for>
+                          <span style="font:400 12px/1.55 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">{{ io.addedNote }}</span>
+                          <div style="display:flex;flex-wrap:wrap;gap:14px">
+                            <button type="button" onClick="{{ io.openTasks }}" style="border:none;background:transparent;padding:0;color:var(--info-fg);font:500 12px var(--font-sans);cursor:pointer" style-hover="text-decoration:underline">Open Scheduled tasks</button>
+                            <button type="button" onClick="{{ io.undoHand }}" style="border:none;background:transparent;padding:0;color:var(--info-fg);font:500 12px var(--font-sans);cursor:pointer" style-hover="text-decoration:underline">Export again without them</button>
+                          </div>
+                        </div>
+                      </sc-if>
                     </div>
                   </sc-if>
                 </div>
@@ -956,13 +1206,170 @@ textarea{font-family:var(--font-sans)}
     </div>
   </sc-if>
 
-  <sc-if value="{{ toast }}" hint-placeholder-val="{{ false }}">
-    <div style="position:fixed;left:50%;bottom:24px;z-index:70;transform:translateX(-50%);max-width:min(560px,calc(100% - 32px));padding:10px 14px;border:1px solid var(--border);border-radius:10px;background:var(--popover);color:var(--fg);font:500 12.5px/1.5 var(--font-sans);box-shadow:0 12px 32px -12px rgb(0 0 0 / 30%)">{{ toast }}</div>
+  <!-- ═══════════ IMPORT DIALOG ═══════════ -->
+  <sc-if value="{{ impOpen }}" hint-placeholder-val="{{ false }}">
+    <div class="t3-overlay" style="position:fixed;inset:0;z-index:60;display:flex;align-items:center;justify-content:center;padding:24px;background:color-mix(in srgb,#0b0b0c 42%,transparent)">
+      <div onClick="{{ im.close }}" style="position:absolute;inset:0"></div>
+      <div role="dialog" aria-modal="true" class="t3-dialog" style="position:relative;width:min(720px,100%);max-height:100%;display:flex;flex-direction:column;border:1px solid var(--border);border-radius:var(--radius);background:var(--card);box-shadow:0 18px 48px rgb(0 0 0 / 22%);overflow:hidden">
+        <div style="display:flex;flex-direction:column;gap:10px;padding:20px 22px 14px;border-bottom:1px solid var(--border)">
+          <h3 style="margin:0;font:600 15px var(--font-sans);letter-spacing:-0.01em">{{ im.title }}</h3>
+          <p style="margin:0;font:400 13px/1.55 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">{{ im.note }}</p>
+          <div style="display:flex;flex-wrap:wrap;gap:6px">
+            <sc-for list="{{ im.chips }}" as="c" hint-placeholder-count="3"><span style="{{ c.style }}">{{ c.text }}</span></sc-for>
+          </div>
+        </div>
+        <div style="flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:20px;padding:16px 22px 20px">
+          <div style="display:flex;flex-direction:column;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden">
+            <sc-for list="{{ im.lines }}" as="l" hint-placeholder-count="4">
+              <div style="{{ l.style }}"><span style="{{ l.markStyle }}">{{ l.mark }}</span><span style="flex:1;min-width:0;font:400 12.5px/1.45 var(--font-sans);color:var(--fg);text-wrap:pretty">{{ l.text }}</span></div>
+            </sc-for>
+          </div>
+
+          <sc-if value="{{ im.hasSched }}" hint-placeholder-val="{{ true }}">
+            <div style="display:flex;flex-direction:column;gap:10px">
+              <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap">
+                <span style="font:600 13.5px var(--font-sans)">Schedules</span>
+                <span style="font:400 12px var(--font-sans);color:var(--muted-fg)">{{ im.schedSub }}</span>
+              </div>
+              <div style="{{ im.verdictStyle }}">
+                <div style="display:flex;align-items:flex-start;gap:8px">
+                  <sc-if value="{{ im.going }}" hint-placeholder-val="{{ false }}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--warning-fg)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;margin-top:2px"><path d="m21.7 18-8-14a2 2 0 0 0-3.5 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.7-3Z"></path><path d="M12 9v4"></path><path d="M12 17h.01"></path></svg></sc-if>
+                  <sc-if value="{{ im.idle }}" hint-placeholder-val="{{ true }}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;margin-top:2px"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg></sc-if>
+                  <span style="flex:1;min-width:0;font:500 12.5px/1.5 var(--font-sans);color:var(--fg);text-wrap:pretty">{{ im.verdict }}</span>
+                </div>
+                <sc-for list="{{ im.vlines }}" as="v" hint-placeholder-count="1">
+                  <div style="display:flex;align-items:baseline;gap:8px;padding-left:2px"><span style="{{ v.markStyle }}">{{ v.mark }}</span><span style="flex:1;min-width:0;font:400 12px/1.5 var(--font-sans);color:var(--fg);text-wrap:pretty">{{ v.text }}</span></div>
+                </sc-for>
+              </div>
+
+              <sc-for list="{{ im.scheds }}" as="r" hint-placeholder-count="3">
+                <div style="{{ r.cardStyle }}">
+                  <div class="t3-wrap" style="display:flex;align-items:flex-start;gap:12px;padding:11px 12px">
+                    <span style="{{ r.opStyle }}">{{ r.op }}</span>
+                    <div class="t3-grow" style="flex:1;min-width:0;display:flex;flex-direction:column;gap:3px">
+                      <div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;min-width:0">
+                        <span style="{{ r.titleStyle }}">{{ r.title }}</span>
+                        <span style="font:400 11.5px var(--font-mono);color:var(--muted-fg)">{{ r.id }}</span>
+                      </div>
+                      <span style="font:500 12.5px var(--font-sans);color:var(--fg)">{{ r.when }}</span>
+                      <div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap">
+                        <sc-for list="{{ r.tags }}" as="tg" hint-placeholder-count="1"><span style="{{ tg.style }}">{{ tg.text }}</span></sc-for>
+                      </div>
+                      <span style="font:400 12px/1.5 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">{{ r.sub }}</span>
+                    </div>
+                    <sc-if value="{{ r.hasPicker }}" hint-placeholder-val="{{ true }}">
+                      <div class="t3-picker-col" style="display:flex;flex-direction:column;align-items:flex-end;gap:5px;flex:none">
+                        <span style="font:500 11px var(--font-sans);color:var(--muted-fg)">Run on</span>
+                        <div style="position:relative;flex:none;max-width:100%">
+                          <button type="button" onClick="{{ r.pk.toggle }}" title="{{ r.pk.tip }}" style="{{ r.pk.btnStyle }}">
+                            <sc-if value="{{ r.pk.picked }}" hint-placeholder-val="{{ false }}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><rect width="20" height="8" x="2" y="2" rx="2"></rect><rect width="20" height="8" x="2" y="14" rx="2"></rect><path d="M6 6h.01"></path><path d="M6 18h.01"></path></svg></sc-if>
+                            <span style="min-width:0;overflow:hidden;text-overflow:ellipsis">{{ r.pk.label }}</span>
+                            <sc-if value="{{ r.pk.picked }}" hint-placeholder-val="{{ false }}"><span style="flex:none;padding:0 4px;border:1px solid var(--border);border-radius:4px;font:500 10px/15px var(--font-mono);color:var(--muted-fg)">{{ r.pk.abbr }}</span></sc-if>
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;opacity:.7"><path d="m6 9 6 6 6-6"></path></svg>
+                          </button>
+                          <sc-if value="{{ r.pk.open }}" hint-placeholder-val="{{ false }}">
+                            <div onClick="{{ r.pk.close }}" style="position:fixed;inset:0;z-index:5"></div>
+                            <div class="t3-pop" style="position:absolute;right:0;top:calc(100% + 4px);z-index:6;width:300px;display:flex;flex-direction:column;padding:4px;border:1px solid var(--border);border-radius:10px;background:var(--popover);box-shadow:0 12px 32px -12px rgb(0 0 0 / 30%)">
+                              <span style="padding:6px 8px;font:400 11.5px/1.45 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">{{ r.pk.head }}</span>
+                              <sc-for list="{{ r.pk.items }}" as="it" hint-placeholder-count="5">
+                                <sc-if value="{{ it.isDivider }}" hint-placeholder-val="{{ false }}"><div style="height:1px;margin:4px 2px;background:var(--border)"></div></sc-if>
+                                <sc-if value="{{ it.isItem }}" hint-placeholder-val="{{ true }}">
+                                  <button type="button" onClick="{{ it.pick }}" disabled="{{ it.disabled }}" title="{{ it.tip }}" style="{{ it.style }}" style-hover="background:var(--accent)">
+                                    <span style="width:12px;flex:none;font:600 12px/18px var(--font-sans);color:var(--fg)">{{ it.tick }}</span>
+                                    <span style="display:inline-flex;width:14px;flex:none;padding-top:3px;color:var(--muted-fg)">
+                                      <sc-if value="{{ it.isMachine }}" hint-placeholder-val="{{ true }}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="8" x="2" y="2" rx="2"></rect><rect width="20" height="8" x="2" y="14" rx="2"></rect><path d="M6 6h.01"></path><path d="M6 18h.01"></path></svg></sc-if>
+                                      <sc-if value="{{ it.isNone }}" hint-placeholder-val="{{ false }}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M5.6 5.6l12.8 12.8"></path></svg></sc-if>
+                                    </span>
+                                    <span style="flex:1;min-width:0;display:flex;flex-direction:column;gap:1px">
+                                      <span style="display:flex;align-items:center;gap:6px;font:500 12.5px/18px var(--font-sans)">{{ it.name }}
+                                        <sc-if value="{{ it.hasAbbr }}" hint-placeholder-val="{{ false }}"><span style="padding:0 4px;border:1px solid var(--border);border-radius:4px;font:500 10px/15px var(--font-mono);color:var(--muted-fg)">{{ it.abbr }}</span></sc-if>
+                                        <sc-if value="{{ it.isBoard }}" hint-placeholder-val="{{ false }}"><span style="padding:0 5px;border-radius:99px;background:var(--accent);font:500 10px/15px var(--font-sans);color:var(--muted-fg)">Board</span></sc-if>
+                                      </span>
+                                      <span style="{{ it.subStyle }}">{{ it.sub }}</span>
+                                    </span>
+                                  </button>
+                                </sc-if>
+                              </sc-for>
+                            </div>
+                          </sc-if>
+                        </div>
+                        <sc-if value="{{ r.hasKeep }}" hint-placeholder-val="{{ false }}">
+                          <button type="button" onClick="{{ r.keep }}" style="border:none;background:transparent;padding:0;color:var(--info-fg);font:500 11.5px var(--font-sans);cursor:pointer" style-hover="text-decoration:underline">{{ r.keepLabel }}</button>
+                        </sc-if>
+                      </div>
+                    </sc-if>
+                  </div>
+                  <sc-if value="{{ r.hasChanges }}" hint-placeholder-val="{{ false }}">
+                    <div style="display:flex;flex-direction:column;gap:2px;padding:8px 12px 9px;border-top:1px dashed var(--border)">
+                      <sc-for list="{{ r.changes }}" as="c" hint-placeholder-count="2">
+                        <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;font:400 12px/1.5 var(--font-sans)">
+                          <span style="width:68px;flex:none;color:var(--muted-fg)">{{ c.label }}</span>
+                          <span style="color:var(--muted-fg)">{{ c.from }}</span>
+                          <span style="color:var(--muted-fg)">→</span>
+                          <span style="{{ c.toStyle }}">{{ c.to }}</span>
+                        </div>
+                      </sc-for>
+                    </div>
+                  </sc-if>
+                  <sc-if value="{{ r.hasPrompt }}" hint-placeholder-val="{{ true }}">
+                    <div style="display:flex;align-items:flex-start;gap:8px;padding:8px 12px;border-top:1px solid color-mix(in srgb,var(--warning) 30%,var(--border));background:color-mix(in srgb,var(--warning) 7%,var(--card));font:400 12px/1.5 var(--font-sans);color:var(--fg)">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--warning-fg)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;margin-top:1px"><path d="m21.7 18-8-14a2 2 0 0 0-3.5 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.7-3Z"></path><path d="M12 9v4"></path><path d="M12 17h.01"></path></svg>
+                      <span style="flex:1;min-width:0;text-wrap:pretty">{{ r.warn }}</span>
+                    </div>
+                    <div style="display:flex;flex-direction:column;padding:8px 0 10px;border-top:1px solid var(--border);background:var(--muted);border-radius:0 0 calc(var(--radius) - 1px) calc(var(--radius) - 1px)">
+                      <span style="padding:0 12px 6px;font:500 11px var(--font-sans);color:var(--muted-fg)">{{ r.promptLabel }}</span>
+                      <sc-for list="{{ r.plines }}" as="pl" hint-placeholder-count="4">
+                        <div style="{{ pl.style }}"><span style="{{ pl.markStyle }}">{{ pl.mark }}</span><span style="{{ pl.textStyle }}">{{ pl.text }}</span></div>
+                      </sc-for>
+                    </div>
+                  </sc-if>
+                </div>
+              </sc-for>
+            </div>
+          </sc-if>
+
+          <div style="display:flex;flex-direction:column;gap:10px">
+            <span style="font:600 12.5px/1.5 var(--font-sans)">Review every command, prompt and permission setting this import installs:</span>
+            <sc-for list="{{ im.review }}" as="rv" hint-placeholder-count="2">
+              <div style="display:flex;flex-direction:column;gap:4px">
+                <span style="font:500 11px var(--font-sans);color:var(--muted-fg)">{{ rv.label }}</span>
+                <pre style="margin:0;padding:9px 11px;border:1px solid var(--border);border-radius:8px;background:var(--muted);font:400 12px/1.55 var(--font-mono);color:var(--fg);white-space:pre-wrap">{{ rv.text }}</pre>
+              </div>
+            </sc-for>
+            <span style="font:400 12px/1.5 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">{{ im.reviewNote }}</span>
+          </div>
+        </div>
+        <div class="t3-wrap" style="display:flex;align-items:center;gap:8px;padding:12px 22px;border-top:1px solid var(--border)">
+          <span class="t3-grow" style="flex:1;min-width:0;font:400 12px var(--font-sans);color:var(--muted-fg)">{{ im.foot }}</span>
+          <button type="button" onClick="{{ im.close }}" style="height:32px;padding:0 13px;border:1px solid var(--border);border-radius:var(--control-radius);background:transparent;color:var(--fg);font:500 13px var(--font-sans);cursor:pointer" style-hover="background:var(--accent)">Cancel</button>
+          <button type="button" onClick="{{ im.apply }}" style="{{ im.btnStyle }}" style-hover="filter:brightness(0.94)">{{ im.primary }}</button>
+        </div>
+      </div>
+    </div>
   </sc-if>
+
+  <sc-if value="{{ tst.show }}" hint-placeholder-val="{{ false }}">
+    <div role="status" style="{{ tst.style }}">
+      <sc-if value="{{ tst.warn }}" hint-placeholder-val="{{ false }}"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--warning-fg)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;margin-top:2px"><path d="m21.7 18-8-14a2 2 0 0 0-3.5 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.7-3Z"></path><path d="M12 9v4"></path><path d="M12 17h.01"></path></svg></sc-if>
+      <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:3px">
+        <span style="font:500 12.5px/1.5 var(--font-sans);color:var(--fg);text-wrap:pretty">{{ tst.text }}</span>
+        <sc-if value="{{ tst.hasSub }}" hint-placeholder-val="{{ false }}"><span style="font:400 12px/1.5 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">{{ tst.sub }}</span></sc-if>
+        <sc-if value="{{ tst.hasActions }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex;gap:14px;padding-top:3px">
+            <sc-for list="{{ tst.actions }}" as="a" hint-placeholder-count="2"><button type="button" onClick="{{ a.run }}" style="border:none;background:transparent;padding:0;color:var(--info-fg);font:500 12px var(--font-sans);cursor:pointer" style-hover="text-decoration:underline">{{ a.label }}</button></sc-for>
+          </div>
+        </sc-if>
+      </div>
+      <sc-if value="{{ tst.persist }}" hint-placeholder-val="{{ false }}">
+        <button type="button" onClick="{{ tst.close }}" aria-label="Dismiss" style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;flex:none;border:none;border-radius:6px;background:transparent;color:var(--muted-fg);font:500 15px var(--font-sans);cursor:pointer" style-hover="background:var(--accent);color:var(--fg)">×</button>
+      </sc-if>
+    </div>
+  </sc-if>
+</div>
 </div>
 
 </x-dc>
-<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":860},"start":{"editor":"enum","options":["board","pipeline","projects/advisor/pipeline","projects/advisor/ci","projects/web/ci","projects/relay/ci","projects/hub/import"],"default":"projects/advisor/ci","tsType":"string"},"promptsOpenByDefault":{"editor":"boolean","default":false,"tsType":"boolean"},"density":{"editor":"enum","options":["comfortable","compact"],"default":"comfortable","tsType":"string"}}'>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":860},"start":{"editor":"enum","options":["dialog/relay","dialog/hub","projects/relay/import","projects/advisor/schedules","projects/web/schedules","projects/advisor/import","tasks","board","pipeline","projects/advisor/pipeline","projects/advisor/ci","projects/web/ci","projects/relay/ci","projects/hub/import"],"default":"dialog/relay","tsType":"string"},"frame":{"editor":"enum","options":["desktop","narrow"],"default":"desktop","tsType":"string"},"promptsOpenByDefault":{"editor":"boolean","default":false,"tsType":"boolean"},"density":{"editor":"enum","options":["comfortable","compact"],"default":"comfortable","tsType":"string"}}'>
 const ROLE = { backlog: 1, planning: 1, building: 1, review: 1, merge: 1, done: 1 };
 const ROLE_NOTE = "Role stage. The board needs it to plan, build, review or merge, so every project runs it and it can't be switched off.";
 const MODELS = ["claude-opus-4", "claude-sonnet-4", "claude-haiku-4", "gpt-5-codex"];
@@ -974,19 +1381,68 @@ const SNIPPETS = [
   { title: "Progress · print any time, from any script step", code: "echo '::t3o-progress::{\"message\":\"Running unit tests\",\"done\":128,\"total\":212}'" },
   { title: "Result · write once before exiting", code: "cat > \"$T3O_CI_RESULT\" <<'JSON'\n{\n  \"summary\": \"3 of 212 tests failed in fanout::backpressure\",\n  \"failures\": [\n    { \"title\": \"slow_consumer_drops_oldest\",\n      \"detail\": \"assertion left == right failed: dropped frames (0 vs 12)\",\n      \"file\": \"infra/relay/src/fanout.rs\", \"line\": 311 }\n  ]\n}\nJSON" },
 ];
+// Machines a scheduled task can live on. Status words follow the Workers page.
+const MACHINES = [
+  { id: "srv", name: "This server", abbr: "SRV", tz: "UTC+1", state: "ok" },
+  { id: "b01", name: "build-01", abbr: "B01", tz: "UTC+1", state: "ok" },
+  { id: "b02", name: "build-02", abbr: "B02", tz: "UTC−5", state: "offline", seen: "17:52 · 50 min ago" },
+  { id: "mac", name: "mac-mini", abbr: "MAC", tz: "UTC+1", state: "unready" },
+];
+const MACH = {}; MACHINES.forEach(m => { MACH[m.id] = m; });
+const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const NOW_MIN = 18 * 60 + 42, TODAY = 2; // Tue 18:42 in this mock
+const PR = {
+  advE2e: "Run `bun run test:e2e` against a fresh build of apps/web.\nIf any spec fails, file one card with board_create_card in Backlog listing each failing spec with its last 40 lines of output.",
+  advDeps: "Run `bun outdated` and `bun audit`.\nFor every advisory rated high or critical, file a card with board_create_card titled \"Deps: <package> <advisory id>\".\nDon't change the lockfile.",
+  advDigest: "Find cards that have waited on a human for more than a day.\nPost one comment on T3-1 listing them, oldest first, with how long each has waited. Don't move any card.",
+  advLog: "Draft this week's changelog from cards merged since last Friday and post it as a comment on T3-2.",
+  relNightlyOld: "Run the full workspace test suite with `cargo nextest run --workspace --no-fail-fast`.\nIf every test passes, finish without doing anything else.\nIf any test fails, file one card per failing test with board_create_card in Backlog, titled \"Nightly: <test name> fails\", with the failure output in the brief.",
+  relNightlyNew: "Run the full workspace test suite with `cargo nextest run --workspace --no-fail-fast --retries 1`.\nAlso run `cargo xtask soak --short` and treat a non-zero exit as a failure.\nIf everything passes, finish without doing anything else.\nIf any test fails, file one card per failing test with board_create_card in Backlog, titled \"Nightly: <test name> fails\", with the failure output in the brief.\nBefore filing, search open cards with board_search_cards and comment on a matching card instead of filing a duplicate.",
+  relFlakyOld: "Re-run the tests marked #[flaky] five times each and post a summary comment on RL-12.",
+  relFlakyNew: "Re-run every test marked #[flaky] ten times each with `cargo nextest run --run-ignored only -E 'test(flaky)'`.\nFor any test that fails at least once, file a card with board_create_card titled \"Flaky: <test name>\", with its failure rate and the first failing output.\nDon't change any code.",
+  relBench: "Run `cargo bench -p relay-fanout -- --save-baseline weekly` and compare with the previous baseline in target/criterion.\nIf any benchmark is more than 5% slower, file a card with board_create_card titled \"Bench regression: <name>\" with the before and after numbers.\nDon't push anything.",
+  relSoak: "Read the last 24 hours of staging soak metrics and post a summary comment on RL-3.",
+  hubE2e: "Install dependencies with `pnpm install --frozen-lockfile`, then run `pnpm test:e2e --reporter=line` against a fresh local build.\nIf anything fails, file one card with board_create_card in Backlog listing every failing spec, with the last 40 lines of output for each.",
+  hubSmoke: "Open the latest preview deploy's /health and /login pages.\nIf either fails to load, file a card with board_create_card titled \"Preview down\", unless one is already open.",
+  prune: "Remove worktrees under ~/.t3/worktrees whose card is Done and older than 7 days.",
+};
+const SCHED_SNIPPET = `"schedules": [
+  {
+    "id": "nightly-tests",
+    "title": "Nightly full test run",
+    "at": "02:00",
+    "days": ["mon", "tue", "wed", "thu", "fri"],
+    "freshSession": true,
+    "enabled": true,
+    "prompt": "Run the full test suite. If anything fails, file a card with board_create_card."
+  },
+  { "id": "preview-smoke", "title": "Preview smoke check", "every": "30m",
+    "freshSession": false, "enabled": true, "prompt": "…" }
+]`;
 // What each repo's t3o.json would import, as the board parsed it.
 const FILES = {
   advisor: { status: "imported", sha: "4e1c9a2", when: "imported 6 Oct" },
   web: { status: "none" },
-  relay: { status: "changed", sha: "b71e0d4", was: "91b07fe", when: "changed 2h ago",
-    summary: { chips: ["CI · 4 steps", "1 override", "1 ignored entry"],
-      lines: [["±", "CI: adds “Clippy” in parallel with Test"], ["=", "Staging soak on, Sprint off (same as now)"], ["±", "CI fix attempts 1 (now 1)"], ["!", "ci.steps[3].retries isn't a known setting, so it would be ignored"]],
-      apply: { on: { sprint: false, soak: true, ci: true }, ov: { ci: { attempts: 1 } }, addClippy: true } } },
+  relay: { status: "changed", sha: "b71e0d4", was: "91b07fe", when: "changed 2h ago", schedOnly: true,
+    summary: { chips: ["Schedules only", "3 schedules", "1 removed"],
+      lines: [["±", "“Nightly full test run”: runs at 01:30 instead of 02:00; prompt changed"], ["±", "“Flaky test sweep”: takes over the hand-made task with this title"], ["+", "“Weekly benchmarks”: new"], ["−", "“Staging soak report”: no longer in the file, so it's deleted"], ["=", "Pipeline and CI: same as now"]],
+      apply: null },
+    review: [],
+    schedules: [
+      { id: "nightly-tests", title: "Nightly full test run", when: { at: "01:30" }, fresh: true, enabled: true, prompt: PR.relNightlyNew },
+      { id: "flaky-sweep", title: "Flaky test sweep", when: { at: "04:00", days: [1, 2, 3, 4, 5] }, fresh: true, enabled: true, prompt: PR.relFlakyNew },
+      { id: "bench-weekly", title: "Weekly benchmarks", when: { at: "03:00", days: [0] }, fresh: true, enabled: true, prompt: PR.relBench, failOn: "b01", failReason: "it went offline while the task was being saved" },
+    ] },
   hub: { status: "new", sha: "c3d58a1", when: "found 3m ago",
-    summary: { chips: ["+1 stage", "CI · 3 steps", "2 overrides", "1 ignored entry"],
-      lines: [["+", "Staging soak on (off by default)"], ["+", "CI on: Typecheck ∥ Lint, then Build"], ["±", "Planning prompt replaced · 212 words"], ["±", "Code review rounds 3 (global 5)"], ["!", "stages.review.round isn't a known setting, so it would be ignored"]],
+    summary: { chips: ["+1 stage", "CI · 3 steps", "2 overrides", "2 schedules", "1 ignored entry"],
+      lines: [["+", "Staging soak on (off by default)"], ["+", "CI on: Typecheck ∥ Lint, then Build"], ["±", "Planning prompt replaced · 212 words"], ["±", "Code review rounds 3 (global 5)"], ["+", "Schedules: “Nightly e2e run” and “Preview smoke check”, both new"], ["!", "stages.review.round isn't a known setting, so it would be ignored"]],
       apply: { on: { soak: true, ci: true }, ov: { review: { rounds: 3 }, planning: { prompt: "Plan in small vertical slices. Ask at most three questions." } },
-        steps: [{ type: "script", name: "Typecheck", run: "pnpm typecheck", timeout: 5 }, { type: "script", name: "Lint", run: "pnpm lint", timeout: 5, par: true }, { type: "script", name: "Build", run: "pnpm build", timeout: 10 }] } } },
+        steps: [{ type: "script", name: "Typecheck", run: "pnpm typecheck", timeout: 5 }, { type: "script", name: "Lint", run: "pnpm lint", timeout: 5, par: true }, { type: "script", name: "Build", run: "pnpm build", timeout: 10 }] } },
+    review: [["Command · CI · Typecheck", "pnpm typecheck"], ["Command · CI · Lint", "pnpm lint"], ["Command · CI · Build", "pnpm build"], ["Prompt · Planning", "Plan in small vertical slices. Ask at most three questions."]],
+    schedules: [
+      { id: "nightly-e2e", title: "Nightly e2e run", when: { at: "02:00" }, fresh: true, enabled: true, prompt: PR.hubE2e },
+      { id: "preview-smoke", title: "Preview smoke check", when: { every: 30, unit: "m" }, fresh: false, enabled: false, prompt: PR.hubSmoke },
+    ] },
   walls: { status: "imported", sha: "e09ab33", when: "imported 2 Nov" },
 };
 let SEQ = 100;
@@ -999,7 +1455,19 @@ class Component extends DCLogic {
     open: null, bodyOpen: {}, editing: {},
     stepOpen: {}, helpOpen: false, copied: null,
     addOpen: false, addMode: "all", addProject: "web",
-    dismissed: {}, exported: {}, confirm: null, toast: "",
+    dismissed: {}, exported: {}, confirm: null, toast: null,
+    imp: null, pickOpen: null, taskOpen: {}, promptOpen: {},
+    // Every scheduled task the board knows about. fileId set = managed by that project's t3o.json.
+    tasks: [
+      { tid: "t1", pid: "advisor", fileId: "nightly-e2e", title: "Nightly e2e suite", when: { at: "02:00" }, fresh: true, enabled: true, machine: "b02", prompt: PR.advE2e, last: { tone: "ok", text: "Succeeded · 02:38 today" } },
+      { tid: "t2", pid: "advisor", fileId: "deps-audit", title: "Dependency audit", when: { at: "06:30", days: [1] }, fresh: true, enabled: true, machine: "srv", prompt: PR.advDeps, last: { tone: "fail", text: "Failed · Mon 06:51 · filed T3-118" } },
+      { tid: "t3", pid: "advisor", fileId: "waiting-digest", title: "Waiting-on-you digest", when: { every: 4, unit: "h" }, fresh: false, enabled: true, machine: null, prompt: PR.advDigest, last: { tone: "none", text: "Never run" } },
+      { tid: "t4", pid: "advisor", fileId: null, title: "Weekly changelog draft", when: { at: "16:00", days: [5] }, fresh: true, enabled: true, machine: "srv", prompt: PR.advLog, last: { tone: "ok", text: "Succeeded · Fri 16:07" } },
+      { tid: "t5", pid: "relay", fileId: "nightly-tests", title: "Nightly full test run", when: { at: "02:00" }, fresh: true, enabled: true, machine: "b01", prompt: PR.relNightlyOld, last: { tone: "ok", text: "Succeeded · 02:44 today" } },
+      { tid: "t6", pid: "relay", fileId: null, title: "Flaky test sweep", when: { every: 6, unit: "h" }, fresh: true, enabled: true, machine: "b01", prompt: PR.relFlakyOld, last: { tone: "ok", text: "Succeeded · 12:20 today" } },
+      { tid: "t7", pid: "relay", fileId: "soak-report", title: "Staging soak report", when: { at: "07:00" }, fresh: true, enabled: true, machine: "srv", prompt: PR.relSoak, last: { tone: "ok", text: "Succeeded · 07:04 today" } },
+      { tid: "t8", pid: null, fileId: null, title: "Prune old worktrees", when: { at: "03:30" }, fresh: true, enabled: true, machine: "srv", prompt: PR.prune, last: { tone: "ok", text: "Succeeded · 03:31 today" } },
+    ],
     autoCollapseEmpty: false,
     projects: [
       { id: "advisor", name: "core.agent.advisor", dot: "#8b8bf5", prefix: "T3", visible: true, repo: "github.com/brentkelly/advisor · main", forge: "GitHub", forgeRepo: "brentkelly/advisor" },
@@ -1057,7 +1525,7 @@ class Component extends DCLogic {
     let h = "";
     try { h = (window.location.hash || "").replace(/^#/, ""); } catch (e) {}
     const route = this.parseRoute(h) || this.parseRoute(this.props.start || "") || this.state.route;
-    this.setState({ autoCollapseEmpty: v, route, open: route.stage || null });
+    this.setState({ autoCollapseEmpty: v, route, open: route.stage || null, imp: route.openImport ? { pid: route.pid, picks: {} } : null });
   }
   componentWillUnmount() { clearTimeout(this._toastT); }
 
@@ -1065,24 +1533,28 @@ class Component extends DCLogic {
     const p = String(h || "").split("/").filter(Boolean);
     if (!p.length) return null;
     if (p[0] === "board") return { view: "general" };
+    if (p[0] === "tasks") return { view: "tasks" };
     if (p[0] === "pipeline") return { view: "pipeline", stage: p[1] || null };
+    if (p[0] === "dialog" && p[1] && this.state.proj[p[1]]) return { view: "project", pid: p[1], tab: "io", openImport: true };
     if (p[0] === "projects" && p[1] && this.state.proj[p[1]]) {
-      const tab = p[2] === "ci" ? "ci" : p[2] === "import" ? "io" : "pipe";
+      const tab = p[2] === "ci" ? "ci" : p[2] === "import" ? "io" : p[2] === "schedules" ? "sched" : "pipe";
       return { view: "project", pid: p[1], tab };
     }
     return null;
   }
   go(route) {
-    const hash = route.view === "general" ? "board" : route.view === "pipeline" ? "pipeline" + (route.stage ? "/" + route.stage : "")
-      : "projects/" + route.pid + "/" + (route.tab === "ci" ? "ci" : route.tab === "io" ? "import" : "pipeline");
+    const hash = route.view === "general" ? "board" : route.view === "tasks" ? "tasks" : route.view === "pipeline" ? "pipeline" + (route.stage ? "/" + route.stage : "")
+      : "projects/" + route.pid + "/" + (route.tab === "ci" ? "ci" : route.tab === "io" ? "import" : route.tab === "sched" ? "schedules" : "pipeline");
     try { history.replaceState(null, "", "#" + hash); } catch (e) {}
-    this.setState({ route, open: route.stage || this.state.open });
+    this.setState({ route, open: route.stage || this.state.open, pickOpen: null });
   }
   toastMsg(t) {
     clearTimeout(this._toastT);
-    this.setState({ toast: t });
-    this._toastT = setTimeout(() => this.setState({ toast: "" }), 4200);
+    const toast = typeof t === "string" ? { text: t } : t;
+    this.setState({ toast });
+    if (!toast.persist) this._toastT = setTimeout(() => this.setState({ toast: null }), 4200);
   }
+  closeToast = () => { clearTimeout(this._toastT); this.setState({ toast: null }); };
   toggleTheme = () => this.setState(s => {
     const theme = s.theme === "light" ? "dark" : "light";
     document.documentElement.dataset.t3Theme = theme;
@@ -1477,33 +1949,325 @@ class Component extends DCLogic {
   }
 
   importFlow(pid) {
-    const f = FILES[pid];
-    const p = this.proj(pid);
-    if (!f || !f.summary) return;
-    const cur = this.diffCount(pid);
-    const markColor = { "+": "var(--success-fg)", "±": "var(--primary)", "=": "var(--muted-fg)", "!": "var(--warning-fg)" };
-    this.setState({ confirm: {
+    if (FILES[pid] && FILES[pid].summary) this.setState({ imp: { pid, picks: {} }, pickOpen: null });
+  }
+  noticeText(p, f) {
+    if (f.schedOnly) return p.name + "'s t3o.json differs only in its schedules. Import to review them; nothing runs until you pick a machine.";
+    return f.status === "new" ? p.name + " has a t3o.json. Import its pipeline, CI and schedules?" : p.name + "'s t3o.json changed since you imported it. Import the new version?";
+  }
+
+  // ── schedules ───────────────────────────────────────────────
+  hm(n) { return String(Math.floor(n / 60)).padStart(2, "0") + ":" + String(n % 60).padStart(2, "0"); }
+  words(s) { return String(s || "").trim() ? String(s).trim().split(/\s+/).length : 0; }
+  slug(s) { return String(s).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""); }
+  whenBase(w) {
+    if (!w) return "";
+    if (w.every) return "Every " + w.every + (w.unit === "h" ? (w.every === 1 ? " hour" : " hours") : " min");
+    let pre = "Daily";
+    if (w.days && w.days.length) {
+      const k = w.days.slice().sort().join(",");
+      pre = k === "1,2,3,4,5" ? "Weekdays" : k === "0,6" ? "Weekends" : w.days.map(x => DAYS[x]).join(", ");
+    }
+    return pre + " at " + w.at;
+  }
+  whenText(w, mid) {
+    const b = this.whenBase(w);
+    if (!w || w.every) return b;
+    const m = mid ? MACH[mid] : null;
+    if (!m) return b + ", in the chosen machine's local time";
+    return b + ", " + (m.id === "srv" ? "server time" : m.name + " time") + " (" + m.tz + ")";
+  }
+  nextRun(t) {
+    if (!t.machine) return { text: "—", sub: "Not scheduled" };
+    if (!t.enabled) return { text: "Paused", sub: t.fileId ? "enabled: false in t3o.json" : "Switched off" };
+    const w = t.when; let mins = 0, label = "";
+    if (w.every) {
+      const step = w.unit === "h" ? w.every * 60 : w.every;
+      const n = Math.ceil((NOW_MIN + 1) / step) * step;
+      mins = n - NOW_MIN; label = (n >= 1440 ? "Tomorrow " : "Today ") + this.hm(n % 1440);
+    } else {
+      const [h, mm] = w.at.split(":").map(Number); const at = h * 60 + mm;
+      for (let k = 0; k < 8; k++) {
+        const day = (TODAY + k) % 7;
+        if (w.days && w.days.length && w.days.indexOf(day) < 0) continue;
+        if (k === 0 && at <= NOW_MIN) continue;
+        mins = k * 1440 + at - NOW_MIN; label = (k === 0 ? "Today " : k === 1 ? "Tomorrow " : DAYS[day] + " ") + w.at; break;
+      }
+    }
+    const m = MACH[t.machine];
+    if (m.state === "offline") return { text: label, sub: "Skipped unless " + m.name + " reconnects", tone: "warn" };
+    return { text: label, sub: "in " + (mins >= 1440 ? Math.round(mins / 1440) + " days" : mins >= 60 ? Math.floor(mins / 60) + " h " + (mins % 60) + " min" : mins + " min") };
+  }
+  dot(tone) {
+    const c = { ok: "var(--success)", fail: "var(--warning)", run: "var(--info)" }[tone];
+    return "width:8px;height:8px;flex:none;margin-top:5px;border-radius:99px;" + (c ? "background:" + c : "border:1.5px solid var(--input)");
+  }
+  tagChip(text) { return { text, style: "flex:none;padding:0 6px;border:1px solid var(--border);border-radius:99px;font:500 10.5px/17px var(--font-sans);color:var(--muted-fg);white-space:nowrap" }; }
+  patchTask(tid, patch) { this.setState(s => ({ tasks: s.tasks.map(t => t.tid === tid ? { ...t, ...patch } : t) })); }
+  diffLines(a, b) {
+    const A = String(a).split("\n"), B = String(b).split("\n"), n = A.length, m = B.length;
+    const L = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
+    for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) L[i][j] = A[i] === B[j] ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1]);
+    const out = []; let i = 0, j = 0;
+    while (i < n && j < m) { if (A[i] === B[j]) { out.push([" ", B[j]]); i++; j++; } else if (L[i + 1][j] >= L[i][j + 1]) out.push(["−", A[i++]]); else out.push(["+", B[j++]]); }
+    while (i < n) out.push(["−", A[i++]]);
+    while (j < m) out.push(["+", B[j++]]);
+    return out;
+  }
+  // The worker-picker pattern from New card › pin, reused to choose where a task runs.
+  picker(key, current, pname, onPick, o) {
+    o = o || {};
+    const open = this.state.pickOpen === key;
+    const cur = current ? MACH[current] : null;
+    const close = () => this.setState({ pickOpen: null });
+    const itemStyle = dis => "display:flex;align-items:flex-start;gap:6px;width:100%;padding:7px 8px;border:none;border-radius:7px;background:transparent;color:var(--fg);text-align:left;cursor:" + (dis ? "not-allowed" : "pointer") + ";opacity:" + (dis ? .55 : 1);
+    const items = [
+      { isItem: true, isDivider: false, isNone: true, isMachine: false, hasAbbr: false, isBoard: false, name: o.noneLabel || "Don't schedule", sub: o.noneSub || "Import it without running it anywhere",
+        subStyle: "font:400 11.5px/1.4 var(--font-sans);color:var(--muted-fg)", tick: cur ? "" : "✓", disabled: false, tip: "", style: itemStyle(false), pick: () => { close(); onPick(null); } },
+      { isDivider: true, isItem: false },
+    ];
+    MACHINES.forEach(m => {
+      const ok = m.state === "ok";
+      const sub = m.state === "offline" ? "Offline · last seen " + m.seen : m.state === "unready" ? "Not ready for " + pname + " · .t3/ready.sh exited 1" : m.id === "srv" ? "Board server · ready" : "Connected · ready for " + pname;
+      items.push({ isItem: true, isDivider: false, isNone: false, isMachine: true, hasAbbr: true, abbr: m.abbr, isBoard: m.id === "srv", name: m.name, sub,
+        subStyle: "font:400 11.5px/1.4 var(--font-sans);color:" + (ok ? "var(--muted-fg)" : "var(--warning-fg)"),
+        tick: current === m.id ? "✓" : "", disabled: !ok, style: itemStyle(!ok),
+        tip: ok ? "" : m.state === "offline" ? "Unavailable while " + m.name + " is offline" : "Set up " + pname + " on " + m.name + " first",
+        pick: () => { if (ok) { close(); onPick(m.id); } } });
+    });
+    const off = cur && cur.state !== "ok";
+    return { open, items, head: o.head || "", close,
+      toggle: e => { if (e && e.stopPropagation) e.stopPropagation(); this.setState(s => ({ pickOpen: s.pickOpen === key ? null : key })); },
+      picked: !!cur, label: cur ? cur.name : (o.noneLabel || "Don't schedule"), abbr: cur ? cur.abbr : "", tip: "Choose the machine this runs on",
+      btnStyle: "display:inline-flex;align-items:center;gap:6px;height:28px;max-width:100%;padding:0 8px 0 9px;border-radius:var(--control-radius);font:500 12.5px var(--font-sans);white-space:nowrap;cursor:pointer;" +
+        (!cur ? "border:1px dashed var(--input);background:transparent;color:var(--muted-fg)" : off ? "border:1px solid color-mix(in srgb,var(--warning) 50%,var(--border));background:var(--popover);color:var(--fg)" : "border:1px solid var(--input);background:var(--popover);color:var(--fg);box-shadow:var(--shadow-xs)") };
+  }
+  // What importing would do to each schedule: matched by id, else adopt a hand-made task by title.
+  impPlan(pid) {
+    const f = FILES[pid] || {};
+    const tasks = this.state.tasks.filter(t => t.pid === pid);
+    const ids = (f.schedules || []).map(e => e.id);
+    const plan = (f.schedules || []).map(e => {
+      let was = tasks.find(t => t.fileId === e.id), op = "update";
+      if (!was) { was = tasks.find(t => !t.fileId && t.title === e.title); op = was ? "adopt" : "create"; }
+      return { e, op, was };
+    });
+    tasks.filter(t => t.fileId && ids.indexOf(t.fileId) < 0).forEach(t => plan.push({ e: { id: t.fileId, title: t.title }, op: "delete", was: t }));
+    const order = { update: 0, adopt: 1, create: 2, delete: 3 };
+    return plan.sort((a, b) => order[a.op] - order[b.op]);
+  }
+  applyImport() {
+    const im = this.state.imp; if (!im) return;
+    const pid = im.pid, f = FILES[pid], p = this.proj(pid);
+    const a = f.summary && f.summary.apply;
+    if (a) this.setProjData(pid, d => ({ ...d, on: { ...a.on }, ov: JSON.parse(JSON.stringify(a.ov || {})), steps: a.steps ? a.steps.map(x => ({ id: sid(), ...x })) : d.steps, fix: {} }));
+    let tasks = this.state.tasks.slice();
+    const fails = []; let set = 0, removed = 0;
+    this.impPlan(pid).forEach(x => {
+      const e = x.e, m = im.picks[e.id] || null;
+      if (x.op === "delete") { tasks = tasks.filter(t => t !== x.was); removed++; return; }
+      let mach = m, last = null;
+      if (m && e.failOn === m) { fails.push({ title: e.title, m, reason: e.failReason }); mach = null; last = { tone: "fail", text: "Couldn't be scheduled on " + MACH[m].name + " at import" }; }
+      else if (m) set++;
+      const fields = { pid, fileId: e.id, title: e.title, when: e.when, fresh: e.fresh, enabled: e.enabled, prompt: e.prompt, machine: mach, edited: false };
+      if (x.was) { const i = tasks.indexOf(x.was); tasks[i] = { ...x.was, ...fields, last: last || (mach && mach === x.was.machine ? x.was.last : { tone: "none", text: "Not run yet" }) }; }
+      else tasks.push({ tid: sid(), ...fields, last: last || { tone: "none", text: "Never run" } });
+    });
+    this.setState(s => ({ tasks, imp: null, pickOpen: null, dismissed: { ...s.dismissed, [pid]: "imported" } }));
+    const tail = [set ? this.plural(set, "schedule set up", "schedules set up") : "No schedules set up", removed ? this.plural(removed, "schedule deleted", "schedules deleted") : ""].filter(Boolean).join(" · ");
+    if (!fails.length) { this.toastMsg({ text: "Imported " + p.name + "'s t3o.json.", sub: tail + "." }); return; }
+    const f0 = fails[0];
+    this.toastMsg({ tone: "warn", persist: true,
+      text: fails.length === 1 ? "Imported; 1 schedule failed on worker '" + MACH[f0.m].name + "': " + f0.reason + "." : "Imported; " + fails.length + " schedules failed.",
+      sub: (fails.length === 1 ? "“" + f0.title + "” is listed as Not scheduled." : fails.map(x => "“" + x.title + "” on " + MACH[x.m].name + ": " + x.reason + ".").join(" ")) + " Everything else was imported · " + tail + ".",
+      actions: [{ label: "Retry", run: () => this.retryFails(pid, fails) }, { label: "Open Schedules", run: () => this.go({ view: "project", pid, tab: "sched" }) }] });
+  }
+  retryFails(pid, fails) {
+    this.setState(s => ({ tasks: s.tasks.map(t => { const x = fails.find(y => t.pid === pid && y.title === t.title); return x ? { ...t, machine: x.m, last: { tone: "none", text: "Not run yet" } } : t; }) }));
+    this.toastMsg(fails.map(x => "“" + x.title + "” scheduled on " + MACH[x.m].name).join(", ") + ".");
+  }
+  runNow(t) {
+    const m = MACH[t.machine];
+    this.patchTask(t.tid, { last: { tone: "run", text: "Running on " + m.name + " · started 18:42" } });
+    this.toastMsg("Started “" + t.title + "” on " + m.name + ". It runs unattended in a fresh worktree off main.");
+    clearTimeout(this._runT);
+    this._runT = setTimeout(() => this.patchTask(t.tid, { last: { tone: "ok", text: "Succeeded · 18:49 today" } }), 6000);
+  }
+  moveTask(t, v) {
+    if (!v) { this.unschedule(t); return; }
+    const from = t.machine ? MACH[t.machine] : null;
+    this.patchTask(t.tid, { machine: v, last: { tone: "none", text: "Not run yet on " + MACH[v].name } });
+    const nx = this.nextRun({ ...t, machine: v });
+    this.toastMsg((from ? "Moved “" + t.title + "” from " + from.name + " to " : "Scheduled “" + t.title + "” on ") + MACH[v].name + ". Next run " + nx.text + "." + (from && from.state === "offline" ? " " + from.name + " drops its copy when it reconnects." : ""));
+  }
+  unschedule(t) {
+    if (!t.machine) return;
+    const m = MACH[t.machine];
+    this.setState({ pickOpen: null, confirm: { title: "Unschedule “" + t.title + "”?",
+      note: "It stops running on " + m.name + (m.state === "offline" ? " (removed there when it reconnects)" : "") + ". It stays in " + this.proj(t.pid).name + "'s t3o.json and is listed as Not scheduled; pick a machine to run it again. Importing the file doesn't schedule it unless you pick a machine in the import.",
+      label: "Unschedule", tone: "danger", apply: () => { this.patchTask(t.tid, { machine: null }); this.toastMsg("Unscheduled “" + t.title + "”. It stays in t3o.json."); } } });
+  }
+
+  impVm() {
+    const im = this.state.imp;
+    if (!im || !FILES[im.pid]) return { chips: [], lines: [], scheds: [], vlines: [], review: [] };
+    const pid = im.pid, f = FILES[pid], p = this.proj(pid);
+    const plan = this.impPlan(pid);
+    const pick = id => im.picks[id] || null;
+    const setPick = id => v => this.setState(s => ({ imp: { ...s.imp, picks: { ...s.imp.picks, [id]: v } }, pickOpen: null }));
+    const live = plan.filter(x => x.op !== "delete");
+    const going = live.filter(x => pick(x.e.id));
+    const stopping = live.filter(x => x.was && x.was.machine && !pick(x.e.id));
+    const dels = plan.filter(x => x.op === "delete");
+    const markColor = { "+": "var(--primary)", "±": "var(--primary)", "=": "var(--muted-fg)", "!": "var(--warning-fg)", "−": "var(--muted-fg)" };
+    const markStyle = m => "width:12px;flex:none;font:600 12px var(--font-mono);color:" + markColor[m];
+    const opLabel = { create: "Creates", update: "Updates", adopt: "Adopts existing", delete: "Will be deleted" };
+    const mName = id => id ? MACH[id].name : "Not scheduled";
+    const fresh = v => v ? "Fresh session each run" : "Continues one session";
+    const scheds = plan.map(x => {
+      const e = x.e, w = x.was, m = pick(e.id), del = x.op === "delete";
+      const tags = [];
+      if (!del) { tags.push(this.tagChip(fresh(e.fresh))); if (!e.enabled) tags.push(this.tagChip("Disabled in file")); }
+      const changes = [];
+      const diff = !!(w && !del && w.prompt !== e.prompt);
+      if (w && !del) {
+        const ch = (label, a, b) => { if (a !== b) changes.push({ label, from: a, to: b, toStyle: "font-weight:500;color:var(--fg)" }); };
+        ch("Schedule", this.whenBase(w.when), this.whenBase(e.when));
+        if (diff) {
+          const d = this.diffLines(w.prompt, e.prompt);
+          const add = d.filter(l => l[0] === "+").length, rem = d.filter(l => l[0] === "−").length;
+          changes.push({ label: "Prompt", from: this.words(w.prompt) + " words", to: this.words(e.prompt) + " words · " + this.plural(add, "line", "lines") + " added, " + rem + " removed, marked below", toStyle: "font-weight:500;color:var(--fg)" });
+        }
+        ch("Enabled", w.enabled ? "On" : "Off", e.enabled ? "On" : "Off");
+        ch("Session", fresh(w.fresh), fresh(e.fresh));
+        const stops = !m && !!w.machine;
+        changes.push({ label: "Machine", from: mName(w.machine), to: m && m === w.machine ? mName(m) + " (unchanged)" : stops ? "Not scheduled · stops running on " + mName(w.machine) : mName(m),
+          toStyle: "font-weight:500;color:" + (stops ? "var(--warning-fg)" : "var(--fg)") });
+      }
+      const raw = del ? [] : diff ? this.diffLines(w.prompt, e.prompt) : String(e.prompt).split("\n").map(t => [" ", t]);
+      const plines = raw.map(([mk, t]) => ({ mark: mk === " " ? " " : mk, text: t || " ",
+        style: "display:flex;gap:8px;padding:0 12px;font:400 12px/1.65 var(--font-mono);" + (mk === "+" ? "background:color-mix(in srgb,var(--primary) 9%,transparent)" : ""),
+        markStyle: "width:10px;flex:none;color:" + (mk === "+" ? "var(--primary)" : "var(--muted-fg)"),
+        textStyle: "flex:1;min-width:0;white-space:pre-wrap;overflow-wrap:anywhere;" + (mk === "−" ? "color:var(--muted-fg);text-decoration:line-through" : "color:var(--fg)") }));
+      const wm = w && w.machine ? MACH[w.machine] : null;
+      const sub = x.op === "create" ? "New task from the file." + (m ? "" : " Imported as Not scheduled unless you pick a machine.")
+        : x.op === "update" ? "Set up by an earlier import" + (wm ? " · runs on " + wm.name + " today" : " · not scheduled today") + "."
+        : x.op === "adopt" ? "A hand-made task with this title runs on " + (wm ? wm.name : "no machine") + ". After import, t3o.json manages it."
+        : "“" + e.id + "” is no longer in the file. Set up by an earlier import" + (wm ? " on " + wm.name : "") + (w.last ? " · last run: " + w.last.text : "") + ".";
+      return {
+        op: opLabel[x.op], id: e.id, title: e.title, tags, sub,
+        when: del ? this.whenText(w.when, w.machine) : this.whenText(e.when, m),
+        opStyle: "flex:none;margin-top:1px;padding:1px 8px;border:1px solid " + (del ? "color-mix(in srgb,var(--destructive) 35%,var(--border))" : "var(--border)") + ";border-radius:99px;font:500 11px/16px var(--font-sans);white-space:nowrap;" + (del ? "color:var(--destructive-fg)" : "background:var(--accent);color:var(--fg)"),
+        titleStyle: "font:600 13px var(--font-sans);" + (del ? "color:var(--muted-fg);text-decoration:line-through" : "color:var(--fg)"),
+        cardStyle: "display:flex;flex-direction:column;border:1px solid var(--border);border-left:3px solid " + (m ? "var(--primary)" : "var(--border)") + ";border-radius:var(--radius);background:var(--card)",
+        hasPicker: !del,
+        pk: del ? { items: [] } : this.picker("imp:" + e.id, m, p.name, setPick(e.id), { head: "Run “" + e.title + "” on one machine. Usually only one machine should run a given schedule." }),
+        hasKeep: !!(wm && wm.state === "ok" && m !== w.machine && !del), keepLabel: wm ? "Keep on " + wm.name : "", keep: () => { if (w) setPick(e.id)(w.machine); },
+        hasChanges: changes.length > 0, changes,
+        hasPrompt: !del,
+        warn: m ? "Runs unattended on " + MACH[m].name + " with full access to that machine, in a fresh worktree off main. It can use board tools, such as filing a card." : "If you schedule it, it runs unattended with full access to that machine, in a fresh worktree off main. It can use board tools, such as filing a card.",
+        promptLabel: diff ? "Prompt · new version from the file · changed lines marked" : "Prompt · full text",
+        plines,
+      };
+    });
+    const chips = f.summary.chips.map(t => this.chip(t, /ignored/.test(t) ? "warn" : "quiet"));
+    if (live.length) chips.push(this.chip(going.length ? going.length + " will run" : "None scheduled", going.length ? "auto" : "quiet"));
+    const review = (f.review || []).map(([label, text]) => ({ label, text }));
+    return {
       title: "Import " + p.name + "'s t3o.json?",
-      chips: f.summary.chips.map(t => this.chip(t, /ignored/.test(t) ? "warn" : "quiet")),
-      lines: f.summary.lines.map(([m, t], i) => ({ mark: m, text: t,
-        style: "display:flex;align-items:baseline;gap:10px;padding:7px 12px;" + (i ? "border-top:1px solid var(--border)" : ""),
-        markStyle: "width:12px;flex:none;font:600 12px var(--font-mono);color:" + markColor[m] })),
-      note: "Importing replaces " + p.name + "'s differences" + (cur.total ? " (" + this.plural(cur.total, "difference", "differences") + " today)" : "") + " with what's in the file. Global settings and other projects are untouched. Cards already in a stage keep the config they entered with.",
-      label: "Replace and import", tone: "primary",
-      apply: () => {
-        const a = f.summary.apply;
-        this.setProjData(pid, d => {
-          let steps = d.steps;
-          if (a.steps) steps = a.steps.map(x => ({ id: sid(), ...x }));
-          if (a.addClippy && !steps.some(x => x.name === "Clippy")) {
-            const ti = steps.findIndex(x => x.name === "Test");
-            steps = steps.slice(); steps.splice(ti + 1, 0, { id: sid(), type: "script", name: "Clippy", run: "cargo clippy --all-targets -- -D warnings", timeout: 10, par: true });
-          }
-          return { ...d, on: { ...a.on }, ov: JSON.parse(JSON.stringify(a.ov || {})), steps, fix: a.ov && a.ov.ci && a.ov.ci.attempts != null ? { attempts: a.ov.ci.attempts } : {} };
-        });
-        this.setState(s => ({ dismissed: { ...s.dismissed, [pid]: "imported" } }));
-        this.toastMsg("Imported " + p.name + "'s t3o.json · " + f.summary.chips.join(", ") + ".");
-      } } });
+      note: f.schedOnly ? "Only the schedules differ; " + p.name + "'s pipeline and CI already match the file. Importing replaces the schedules an earlier import set up with the file's." : "Importing replaces " + p.name + "'s differences with what's in the file. Global settings and other projects are untouched. Cards already in a stage keep the config they entered with.",
+      chips,
+      lines: (f.summary.lines || []).map(([m, t], i) => ({ mark: m, text: t, markStyle: markStyle(m), style: "display:flex;align-items:baseline;gap:10px;padding:7px 12px;" + (i ? "border-top:1px solid var(--border)" : "") })),
+      hasSched: plan.length > 0, scheds,
+      schedSub: live.length + " in the file" + (dels.length ? " · " + dels.length + " removed" : "") + " · where each runs is picked here and never written to the file",
+      going: going.length > 0, idle: going.length === 0,
+      verdict: going.length
+        ? this.plural(going.length, "schedule", "schedules") + " will run unattended, with full access to the machine: " + going.map(x => "“" + x.e.title + "” on " + MACH[pick(x.e.id)].name).join(", ") + "."
+        : "Nothing will be scheduled." + (live.length ? " The file's " + this.plural(live.length, "schedule is", "schedules are") + " listed under " + p.name + " › Schedules as Not scheduled; pick a machine below, or there later." : ""),
+      vlines: stopping.map(x => ({ mark: "!", markStyle: markStyle("!"), text: "“" + x.e.title + "” runs on " + MACH[x.was.machine].name + " today. With no machine picked, it stops running there." }))
+        .concat(dels.map(x => ({ mark: "−", markStyle: markStyle("−"), text: "“" + x.e.title + "” is deleted from " + mName(x.was.machine) + "." }))),
+      verdictStyle: "display:flex;flex-direction:column;gap:6px;padding:10px 12px;border-radius:var(--radius);" + (going.length ? "border:1px solid color-mix(in srgb,var(--warning) 40%,var(--border));background:color-mix(in srgb,var(--warning) 6%,var(--card))" : "border:1px solid var(--border);background:var(--muted)"),
+      review, reviewNote: (review.length ? "" : "Nothing else: the pipeline and CI already match. ") + "Schedule prompts are shown in full with each schedule above.",
+      foot: going.length ? going.length + " of " + live.length + " schedules will run" : live.length ? "No schedules will run" : "",
+      primary: going.length ? "Import and schedule " + going.length : "Replace and import",
+      btnStyle: "height:32px;padding:0 13px;border:1px solid transparent;border-radius:var(--control-radius);font:500 13px var(--font-sans);cursor:pointer;color:#fff;background:var(--primary)",
+      close: () => this.setState({ imp: null, pickOpen: null }),
+      apply: () => this.applyImport(),
+    };
+  }
+
+  schedVm(pid) {
+    const st = this.state, p = this.proj(pid);
+    const mine = st.tasks.filter(t => t.pid === pid);
+    const btn = (dis, ghost) => "display:inline-flex;align-items:center;gap:5px;height:26px;padding:0 8px;flex:none;border-radius:var(--control-radius);font:500 12px var(--font-sans);white-space:nowrap;" +
+      (ghost ? "border:1px solid transparent;background:transparent;color:var(--muted-fg);" : "border:1px solid var(--input);background:var(--popover);color:var(--fg);box-shadow:var(--shadow-xs);") + (dis ? "cursor:not-allowed;opacity:.45" : "cursor:pointer");
+    const rows = mine.filter(t => t.fileId).map(t => {
+      const m = t.machine ? MACH[t.machine] : null;
+      const off = !!m && m.state !== "ok";
+      const running = t.last.tone === "run";
+      const nx = this.nextRun(t);
+      const runOk = !!m && !off && !running;
+      const tags = [];
+      if (!t.enabled) tags.push(this.tagChip("Paused in file"));
+      if (!t.fresh) tags.push(this.tagChip("Continues one session"));
+      if (t.edited) tags.push(this.tagChip("Edited by hand"));
+      const open = !!st.promptOpen[t.tid];
+      return {
+        title: t.title, id: t.fileId, tags, when: this.whenText(t.when, t.machine),
+        pk: this.picker("pan:" + t.tid, t.machine, p.name, v => this.moveTask(t, v), { head: "Run “" + t.title + "” on… Moving it changes nothing in t3o.json.", noneLabel: "Not scheduled", noneSub: "Stop running it; it stays in the file" }),
+        hasMachNote: !m || off, machNote: off ? "Offline · last seen " + m.seen : "Runs nowhere until you pick a machine",
+        machNoteStyle: "font:400 11.5px/1.4 var(--font-sans);color:" + (off ? "var(--warning-fg)" : "var(--muted-fg)"),
+        next: nx.text, nextSub: nx.sub, nextSubStyle: "font:400 11.5px var(--font-sans);color:" + (nx.tone === "warn" ? "var(--warning-fg)" : "var(--muted-fg)"),
+        last: t.last.text, dotStyle: this.dot(t.last.tone),
+        runNow: () => { if (runOk) this.runNow(t); }, runDisabled: !runOk, runStyle: btn(!runOk, false),
+        runTip: !m ? "Pick a machine first" : off ? "Available when " + m.name + " reconnects" : running ? "Already running" : "Run once now on " + m.name + ": unattended, full access, fresh worktree off main",
+        unsch: () => this.unschedule(t), unschDisabled: !m, unschStyle: btn(!m, true), unschTip: m ? "Stop running it on " + m.name + "; it stays in t3o.json" : "Not scheduled",
+        offline: off, offlineText: off ? m.name + " is offline (last seen " + m.seen + "). " + (t.when.at ? "The " + t.when.at + " run" : "Its runs") + " won't happen unless it reconnects, and Run now waits for it. Move the task to keep it running." : "",
+        promptOpen: open, promptLabel: open ? "Hide prompt" : "Show prompt", togglePrompt: () => this.flag("promptOpen", t.tid), prompt: t.prompt,
+      };
+    });
+    const hand = mine.filter(t => !t.fileId);
+    const one = hand.length === 1;
+    return { rows, hasRows: rows.length > 0, empty: !rows.length, emptyTitle: "No schedules in " + p.name + "'s t3o.json", snippet: SCHED_SNIPPET,
+      hasHand: hand.length > 0,
+      handText: hand.length ? (one ? "1 hand-made scheduled task also runs for " : hand.length + " hand-made scheduled tasks also run for ") + p.name + ": " + hand.map(t => "“" + t.title + "” on " + (t.machine ? MACH[t.machine].name : "no machine")).join(", ") + ". " + (one ? "It isn't" : "They aren't") + " in t3o.json; Export adds " + (one ? "it" : "them") + "." : "",
+      goExport: () => this.go({ view: "project", pid, tab: "io" }) };
+  }
+
+  tasksVm() {
+    const st = this.state, srv = MACH.srv;
+    const rows = st.tasks.filter(t => t.machine === "srv").map((t, i) => {
+      const p = t.pid ? this.proj(t.pid) : null;
+      const managed = !!t.fileId;
+      const open = !!st.taskOpen[t.tid];
+      const nx = this.nextRun(t);
+      const set = (k, v) => this.patchTask(t.tid, { [k]: v, edited: managed ? true : !!t.edited });
+      const sw = this.sw(t.enabled);
+      return {
+        title: t.title, when: this.whenText(t.when, t.machine), managed, edited: managed && !!t.edited,
+        markText: "From t3o.json · " + (p ? p.name : ""),
+        markTip: managed ? "Managed by " + p.name + "'s t3o.json (" + t.fileId + "). Edits made here are overwritten by its next import." : "",
+        goFile: e => { if (e && e.stopPropagation) e.stopPropagation(); if (p) this.go({ view: "project", pid: p.id, tab: "sched" }); },
+        goFileLabel: "Open " + (p ? p.name : "") + " › Schedules",
+        banner: managed ? "Managed by " + p.name + "'s t3o.json. You can edit it here, but the next import of that file puts back what the file says" + (t.edited ? ", undoing the edits you made" : "") + ". To change it for good, edit t3o.json, commit, then import." : "",
+        handHint: !managed && !!p, handHintText: p ? "Made by hand for " + p.name + ". If you export " + p.name + "'s t3o.json, this task goes into the file and the file manages it from then on." : "",
+        next: nx.text, nextSub: nx.sub, last: t.last.text, dotStyle: this.dot(t.last.tone),
+        open, toggle: () => this.flag("taskOpen", t.tid),
+        caretStyle: "display:inline-flex;flex:none;color:var(--muted-fg);transition:transform .18s;transform:rotate(" + (open ? "180deg" : "0deg") + ")",
+        onTitle: e => set("title", e.target.value),
+        prompt: t.prompt, onPrompt: e => set("prompt", e.target.value), promptHead: "Prompt · runs unattended with full access to " + srv.name,
+        trackStyle: sw.trackStyle, knobStyle: sw.knobStyle, flip: () => set("enabled", !t.enabled),
+        wrapStyle: i ? "border-top:1px solid var(--border)" : "",
+      };
+    });
+    const withFile = st.projects.filter(p => st.tasks.some(t => t.pid === p.id && t.fileId));
+    return {
+      groups: [{ name: srv.name, abbr: srv.abbr, sub: "Board server · " + srv.tz + " · " + this.plural(rows.length, "task", "tasks"), rows }],
+      otherTitle: "Tasks on workers aren't listed here",
+      otherText: "This browser connects only to this server, so it can't see tasks on build-01, build-02 or mac-mini. Tasks a project's t3o.json put on a worker are listed in that project's Schedules tab, wherever they run:",
+      links: withFile.map(p => ({ label: p.name + " · " + this.plural(st.tasks.filter(t => t.pid === p.id && t.fileId).length, "schedule", "schedules"),
+        dotStyle: "width:7px;height:7px;flex:none;border-radius:99px;background:" + p.dot, go: () => this.go({ view: "project", pid: p.id, tab: "sched" }) })),
+    };
   }
 
   ioVm(pid) {
@@ -1511,19 +2275,39 @@ class Component extends DCLogic {
     const p = this.proj(pid);
     const imported = this.state.dismissed[pid] === "imported";
     const status = imported ? "imported" : f.status;
-    const label = { none: "No t3o.json in the repo", imported: "Imported · up to date", changed: "Changed since last import", new: "Not imported yet" }[status];
+    const label = { none: "No t3o.json in the repo", imported: "Matches this project", changed: f.schedOnly ? "Differs · schedules only" : "Differs from this project", new: "Differs · never imported" }[status];
     const tone = status === "changed" || status === "new" ? "background:color-mix(in srgb,var(--primary) 12%,transparent);color:var(--primary)" : "background:var(--accent);color:var(--muted-fg)";
     const ex = this.state.exported[pid];
     const dc = this.diffCount(pid);
+    const mine = this.state.tasks.filter(t => t.pid === pid);
+    const hand = mine.filter(t => !t.fileId);
+    const added = ex && ex.added ? ex.added : [];
+    const mc = { "+": "var(--primary)", "±": "var(--primary)", "−": "var(--muted-fg)", "!": "var(--warning-fg)", "=": "var(--muted-fg)" };
+    const one = n => n === 1;
     return {
+      checkAgain: () => this.toastMsg(status === "none" ? "Checked main. There's still no t3o.json at the project root." : "Checked main @ " + f.sha + ". " + label + "."),
+      hasBreak: status === "changed" && !!f.schedOnly,
+      breakTitle: "Pipeline and CI match. Only the schedules differ:",
+      breakLines: f.schedOnly ? f.summary.lines.filter(l => l[0] !== "=").map(([m, t], i) => ({ mark: m, text: t, markStyle: "width:12px;flex:none;font:600 12px var(--font-mono);color:" + mc[m], style: "display:flex;align-items:baseline;gap:10px;padding:7px 12px;" + (i ? "border-top:1px solid var(--border)" : "") })) : [],
+      hasHandNote: hand.length > 0 && !ex,
+      handNote: "Includes " + this.plural(hand.length, "hand-made scheduled task", "hand-made scheduled tasks") + ": " + hand.map(t => "“" + t.title + "”").join(", ") + ". Once exported, t3o.json manages " + (one(hand.length) ? "it" : "them") + " and the next import overwrites hand edits.",
+      addedHand: added.length > 0,
+      addedTitle: "Also added " + this.plural(added.length, "hand-made scheduled task", "hand-made scheduled tasks") + " to the file",
+      addedRows: added.map(a => ({ title: a.title, id: a.id, where: "runs on " + (a.machine ? MACH[a.machine].name : "no machine") + " · machine not written to the file" })),
+      addedNote: (one(added.length) ? "It now shows" : "They now show") + " “From t3o.json” on Scheduled tasks, and the next import of this file overwrites hand edits to " + (one(added.length) ? "it" : "them") + ". Anyone who imports the file picks their own machine.",
+      openTasks: () => this.go({ view: "tasks" }),
+      undoHand: () => { const ids = added.map(a => a.tid); this.setState(s => ({ tasks: s.tasks.map(t => ids.indexOf(t.tid) >= 0 ? { ...t, fileId: null } : t), exported: { ...s.exported, [pid]: { added: [] } } })); this.toastMsg("Exported again without hand-made tasks. They keep running as before and t3o.json no longer lists them."); },
       fileState: label, noFile: status === "none" || status === "imported",
       fileChipStyle: "flex:none;padding:1px 7px;border-radius:99px;font:500 11px var(--font-sans);" + tone,
       fileMeta: status === "none" ? "" : status === "changed" ? "main @ " + f.sha + " · was " + f.was + " · " + f.when : "main @ " + f.sha + " · " + (f.when || ""),
       importIt: () => this.importFlow(pid),
       importStyle: "height:30px;padding:0 12px;flex:none;border:1px solid " + (status === "none" || status === "imported" ? "var(--border)" : "transparent") + ";border-radius:var(--control-radius);font:500 12.5px var(--font-sans);" +
         (status === "none" || status === "imported" ? "background:transparent;color:var(--muted-fg);cursor:not-allowed" : "background:var(--primary);color:var(--primary-fg);cursor:pointer;box-shadow:var(--shadow-xs)"),
-      exportSummary: "Right now: " + [this.plural(dc.sw, "stage switch", "stage switches"), this.plural(dc.ov, "override", "overrides"), dc.ci ? "CI · " + this.plural(dc.ci, "step", "steps") : "no CI"].join(", ") + ".",
-      exportIt: () => { this.setState(s => ({ exported: { ...s.exported, [pid]: true } })); },
+      exportSummary: "Right now: " + [this.plural(dc.sw, "stage switch", "stage switches"), this.plural(dc.ov, "override", "overrides"), dc.ci ? "CI · " + this.plural(dc.ci, "step", "steps") : "no CI", mine.length ? this.plural(mine.length, "schedule", "schedules") + (hand.length ? " (" + hand.length + " made by hand)" : "") : "no schedules"].join(", ") + ".",
+      exportIt: () => {
+        const add = hand.map(t => ({ tid: t.tid, title: t.title, id: this.slug(t.title), machine: t.machine }));
+        this.setState(s => ({ exported: { ...s.exported, [pid]: { added: add } }, tasks: s.tasks.map(t => { const a = add.find(x => x.tid === t.tid); return a ? { ...t, fileId: a.id } : t; }) }));
+      },
       exported: !!ex,
       exportedNote: "t3o.json is in " + p.name + "'s project root on " + "main" + "'s working copy, uncommitted. Nobody else sees it until you commit and push it; their board then offers to import it.",
       gitCmd: "git add t3o.json && git commit -m \"chore: export t3o pipeline\" && git push",
@@ -1580,13 +2364,13 @@ class Component extends DCLogic {
       hasDiff: dc.total > 0,
       resetAll: () => this.setState({ confirm: { title: "Reset " + p.name + " to global?", note: "Clears every stage switch and override, and removes its CI steps. " + p.name + " will run the global pipeline exactly. Export first if you want to keep a copy.", label: "Reset to global", tone: "danger",
         apply: () => this.setProjData(pid, () => ({ on: {}, ov: {}, steps: [], fix: {} })) } }),
-      notice: pending ? { text: f.status === "new" ? p.name + " has a t3o.json. Import its pipeline and CI settings?" : p.name + "'s t3o.json changed since you imported it. Import the new version?",
+      notice: pending ? { text: this.noticeText(p, f),
         dismiss: () => this.setState(s => ({ dismissed: { ...s.dismissed, [pid]: "no" } })), importIt: () => this.importFlow(pid) } : null,
-      tabs: [["pipe", "Pipeline", dc.sw + dc.ov], ["ci", "CI", d.steps.length], ["io", "Import & export", pending ? "1" : 0]].map(([id, label, count]) => ({
+      tabs: [["pipe", "Pipeline", dc.sw + dc.ov], ["ci", "CI", d.steps.length], ["sched", "Schedules", st.tasks.filter(t => t.pid === pid && t.fileId).length], ["io", "Import & export", pending ? "1" : 0]].map(([id, label, count]) => ({
         label, hasCount: !!count, count,
         countStyle: "min-width:18px;height:17px;padding:0 5px;border-radius:99px;font:600 10.5px/17px var(--font-sans);text-align:center;" + (id === "io" ? "background:var(--primary);color:var(--primary-fg)" : "background:var(--accent);color:var(--muted-fg)"),
         style: tabStyle(tab === id), select: () => this.go({ view: "project", pid, tab: id }) })),
-      isPipe: tab === "pipe", isCi: tab === "ci", isIo: tab === "io",
+      isPipe: tab === "pipe", isCi: tab === "ci", isIo: tab === "io", isSched: tab === "sched",
       stages,
     };
   }
@@ -1599,6 +2383,7 @@ class Component extends DCLogic {
     const navBoard = [
       { label: "General", view: "general", badge: pendingProjects.length },
       { label: "Pipeline", view: "pipeline", badge: 0 },
+      { label: "Scheduled tasks", view: "tasks", badge: 0 },
     ].map(n => ({ label: n.label, hasBadge: !!n.badge, badge: n.badge, select: () => this.go({ view: n.view }), style: navStyle(route.view === n.view) }));
     const navProjects = st.projects.map(p => ({
       label: p.name, select: () => this.go({ view: "project", pid: p.id, tab: route.view === "project" ? route.tab : "pipe" }),
@@ -1609,10 +2394,11 @@ class Component extends DCLogic {
     const crumbBtn = last => `border:none;background:transparent;padding:0;font:${last ? "500" : "400"} 13.5px var(--font-sans);color:${last ? "var(--fg)" : "var(--muted-fg)"};cursor:${last ? "default" : "pointer"}`;
     let crumbs = [];
     if (route.view === "general") crumbs = [["Board", null]];
+    else if (route.view === "tasks") crumbs = [["Board", { view: "general" }], ["Scheduled tasks", null]];
     else if (route.view === "pipeline") crumbs = [["Board", { view: "general" }], ["Pipeline", null]];
     else {
       const p = this.proj(route.pid);
-      crumbs = [["Projects", { view: "general" }], [p.name, { view: "project", pid: p.id, tab: "pipe" }], [{ pipe: "Pipeline", ci: "CI", io: "Import & export" }[route.tab || "pipe"], null]];
+      crumbs = [["Projects", { view: "general" }], [p.name, { view: "project", pid: p.id, tab: "pipe" }], [{ pipe: "Pipeline", ci: "CI", sched: "Schedules", io: "Import & export" }[route.tab || "pipe"], null]];
     }
     crumbs = crumbs.map(([label, to], i) => ({ label, style: crumbBtn(i === crumbs.length - 1), go: () => to && this.go(to) }));
 
@@ -1626,7 +2412,7 @@ class Component extends DCLogic {
         const many = pendingProjects.length > 1;
         return {
           single: !many,
-          text: f.status === "new" ? p.name + " has a t3o.json. Import its pipeline and CI settings?" : p.name + "'s t3o.json changed since you imported it. Import the new version?",
+          text: this.noticeText(p, f),
           meta: (f.status === "changed" ? "main @ " + f.sha + " · was " + f.was : "main @ " + f.sha) + " · " + f.summary.chips.join(", "),
           dotStyle: many ? `width:8px;height:8px;flex:none;margin-top:6px;border-radius:99px;background:${p.dot}` : "display:none",
           rowStyle: "display:flex;align-items:flex-start;gap:10px;padding:12px 16px;" + (many && i ? "border-top:1px solid color-mix(in srgb,var(--primary) 14%,var(--border))" : ""),
@@ -1642,6 +2428,8 @@ class Component extends DCLogic {
       if (dc.sw) chips.push(this.chip(this.plural(dc.sw, "stage switched", "stages switched"), "quiet"));
       if (dc.ov) chips.push(this.chip(this.plural(dc.ov, "override", "overrides"), "quiet"));
       chips.push(this.chip(dc.ci && this.isOn(this.stage("ci"), p.id) ? "CI · " + this.plural(dc.ci, "step", "steps") : "No CI", "quiet"));
+      const nS = st.tasks.filter(t => t.pid === p.id && t.fileId).length;
+      if (nS) chips.push(this.chip(this.plural(nS, "schedule", "schedules"), "quiet"));
       return {
         name: p.name, prefix: p.prefix, visible: p.visible, hidden: !p.visible, chips,
         settingsTitle: "Open " + p.name, open: () => this.go({ view: "project", pid: p.id, tab: "pipe" }),
@@ -1668,7 +2456,14 @@ class Component extends DCLogic {
     return {
       toggleTheme: this.toggleTheme, navBoard, navProjects, crumbs,
       savedLabel: "Saved just now",
-      isGeneral: route.view === "general", isPipeline: route.view === "pipeline", isProject,
+      isGeneral: route.view === "general", isPipeline: route.view === "pipeline", isProject, isTasks: route.view === "tasks",
+      tk: route.view === "tasks" ? this.tasksVm() : { groups: [], links: [] },
+      sp: isProject && route.tab === "sched" ? this.schedVm(route.pid) : { rows: [] },
+      impOpen: !!st.imp, im: this.impVm(),
+      frameStyle: this.props.frame === "narrow" ? "position:relative;width:390px;height:100vh;margin:0 auto;border-inline:1px solid var(--border);transform:translateZ(0);overflow:hidden" : "position:relative;width:100%;height:100vh;transform:translateZ(0)",
+      navOptions: [{ value: "general", label: "Board" }, { value: "pipeline", label: "Pipeline" }, { value: "tasks", label: "Scheduled tasks" }].concat(st.projects.map(p => ({ value: "p:" + p.id, label: p.name }))),
+      navValue: route.view === "project" ? "p:" + route.pid : route.view,
+      navPick: e => { const v = e.target.value; if (v.indexOf("p:") === 0) this.go({ view: "project", pid: v.slice(2), tab: route.view === "project" ? route.tab : "pipe" }); else this.go({ view: v }); },
       notices, projectRows,
       boardRows: [this.toggleRow("Auto-collapse empty stages", st.autoCollapseEmpty, () => this.setState(s => { const v = !s.autoCollapseEmpty; try { localStorage.setItem("t3-board-auto-collapse-empty", v ? "1" : "0"); } catch (e) {} return { autoCollapseEmpty: v }; }),
         "Stages with no cards fold to a narrow strip and open again when a card lands in them.")],
@@ -1698,7 +2493,14 @@ class Component extends DCLogic {
         btnStyle: "height:32px;padding:0 13px;border:1px solid transparent;border-radius:var(--control-radius);font:500 13px var(--font-sans);cursor:pointer;color:#fff;background:" + (c.tone === "danger" ? "var(--destructive)" : "var(--primary)") } : { chips: [], lines: [] },
       closeConfirm: () => this.setState({ confirm: null }),
       doConfirm: () => { const cc = this.state.confirm; this.setState({ confirm: null }); if (cc && cc.apply) cc.apply(); },
-      toast: st.toast,
+      tst: (() => {
+        const t = st.toast;
+        if (!t) return { show: false, actions: [] };
+        const warn = t.tone === "warn";
+        return { show: true, warn, text: t.text, sub: t.sub || "", hasSub: !!t.sub, persist: !!t.persist, close: this.closeToast,
+          hasActions: !!(t.actions && t.actions.length), actions: (t.actions || []).map(a => ({ label: a.label, run: () => { this.closeToast(); a.run(); } })),
+          style: "position:fixed;left:50%;bottom:24px;z-index:70;transform:translateX(-50%);width:max-content;max-width:min(560px,calc(100% - 32px));display:flex;align-items:flex-start;gap:9px;padding:10px 12px 10px 14px;border:1px solid " + (warn ? "color-mix(in srgb,var(--warning) 45%,var(--border))" : "var(--border)") + ";border-radius:10px;background:var(--popover);color:var(--fg);box-shadow:0 12px 32px -12px rgb(0 0 0 / 30%)" };
+      })(),
     };
   }
 }

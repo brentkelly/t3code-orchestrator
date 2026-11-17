@@ -7,7 +7,11 @@ import { type RepositoryIdentity, SourceControlProviderKind } from "@t3tools/con
 import { describe, expect, it } from "@effect/vitest";
 
 import { boardRepositoryOf } from "./boardRepository.ts";
-import { parseCardPullRequestText, resolveCardPullRequestTarget } from "./cardPullRequestTarget.ts";
+import {
+  confirmsRenamedRepositoryTarget,
+  parseCardPullRequestText,
+  resolveCardPullRequestTarget,
+} from "./cardPullRequestTarget.ts";
 
 const zeald: RepositoryIdentity = {
   canonicalKey: "github.com/zeald/core.z5",
@@ -125,6 +129,33 @@ describe("resolveCardPullRequestTarget in a fork", () => {
         fork,
       ),
     ).toEqual({ number: 175 });
+  });
+
+  // T3o (T3O-119): GitHub renamed the fork; origin still names the old repository.
+  it("leaves another repository's refusal to the forge, which confirms a rename", () => {
+    for (const target of [
+      { url: "https://github.com/brentkelly/t3o/pull/285" },
+      { repository: "github.com/BrentKelly/t3o", number: 285 },
+    ]) {
+      const result = resolveCardPullRequestTarget(target, fork);
+      if (!("reason" in result) || result.reason !== "other-repository") {
+        throw new Error(`expected an other-repository refusal, got ${JSON.stringify(result)}`);
+      }
+      expect(result.number).toBe(285);
+      expect(
+        confirmsRenamedRepositoryTarget(result, "https://github.com/brentkelly/t3o/pull/285"),
+      ).toBe(true);
+      expect(
+        confirmsRenamedRepositoryTarget(result, "https://github.com/brentkelly/t3o/pull/286"),
+      ).toBe(false);
+      expect(
+        confirmsRenamedRepositoryTarget(
+          result,
+          "https://github.com/brentkelly/t3code-orchestrator/pull/285",
+        ),
+      ).toBe(false);
+      expect(confirmsRenamedRepositoryTarget(result, "not a url")).toBe(false);
+    }
   });
 
   it("refuses upstream's, naming the fork as the card's repository", () => {

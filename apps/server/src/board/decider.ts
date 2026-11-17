@@ -4950,7 +4950,9 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         ...endBoardCardAutoPlan(card, command.createdAt),
         group: defaultBoardCardGroup(board, card, {
           ...settings,
-          started: card.stage === buildStage.stageId,
+          // Auto sign-off with Auto-build is the human's go-ahead to build once signed off.
+          started:
+            card.stage === buildStage.stageId || (settings.autoSignOff && settings.autoBuild),
         }),
         // Its children copied its priority above; a group has none.
         priority: "normal",
