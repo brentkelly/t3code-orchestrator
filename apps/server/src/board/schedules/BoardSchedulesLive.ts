@@ -9,7 +9,6 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import { ServerEnvironment } from "../../environment/ServerEnvironment.ts";
-import { ThreadLaunchService } from "../../orchestration-v2/ThreadLaunchService.ts";
 import { ThreadManagementService } from "../../orchestration-v2/ThreadManagementService.ts";
 import { ScheduledTaskService } from "../../scheduledTasks/ScheduledTaskService.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
@@ -19,6 +18,8 @@ import { ThreadGateway, UNKNOWN_THREAD_STATE } from "../ThreadGateway.ts";
 import { BoardWorkspaces } from "../workspace/BoardWorkspace.ts";
 import { WorktreeRetirer } from "../worktreeRetire.ts";
 import { BoardSchedules, makeBoardSchedules } from "./BoardSchedules.ts";
+import { BoardScheduleLauncher } from "./BoardScheduleLauncher.ts";
+import { BoardScheduleLauncherLive } from "../ThreadGatewayV2.ts";
 import { BoardScheduleStore, BoardScheduleStoreLive } from "./BoardScheduleStore.ts";
 import { registerBoardScheduleRunner } from "./scheduleRuns.ts";
 
@@ -27,7 +28,7 @@ const make = Effect.gen(function* () {
   const scheduledTasks = yield* ScheduledTaskService;
   const threads = yield* ThreadGateway;
   const threadManagement = yield* ThreadManagementService;
-  const launcher = yield* ThreadLaunchService;
+  const launcher = yield* BoardScheduleLauncher;
   const workspaces = yield* BoardWorkspaces;
   const retirer = yield* WorktreeRetirer;
   const git = yield* GitVcsDriver.GitVcsDriver;
@@ -122,22 +123,7 @@ const make = Effect.gen(function* () {
           };
         }),
       ),
-    launch: (input) =>
-      launcher
-        .launch({
-          commandId: input.commandId,
-          threadId: input.threadId,
-          projectId: input.projectId,
-          title: input.title,
-          modelSelection: input.modelSelection,
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          workspaceStrategy: { type: "worktree", baseRef: input.baseRef, startFromOrigin: true },
-          initialMessage: { scheduledTaskId: input.taskId, text: input.prompt, attachments: [] },
-          createdBy: "system",
-          creationSource: "server",
-        })
-        .pipe(Effect.map((launched) => launched.threadId)),
+    launch: launcher.launch,
     uuid,
     utcOffsetMinutes: DateTime.withCurrentZoneLocal(DateTime.nowInCurrentZone).pipe(
       Effect.map((now) => Math.round(DateTime.zonedOffset(now) / 60_000)),
@@ -150,4 +136,4 @@ const make = Effect.gen(function* () {
 export const BoardSchedulesLive = Layer.effect(
   BoardSchedules,
   Effect.tap(make, (schedules) => registerBoardScheduleRunner({ run: schedules.run })),
-).pipe(Layer.provideMerge(BoardScheduleStoreLive));
+).pipe(Layer.provideMerge(BoardScheduleStoreLive), Layer.provide(BoardScheduleLauncherLive));
