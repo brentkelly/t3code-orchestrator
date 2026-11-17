@@ -300,6 +300,20 @@ it.layer(makeBoardStackTestLayer("t3o-board-ci-leave-"))("a card leaving CI", (i
       });
       yield* record({ kind: "finish-pass", runId: "run-a", result: "failed" });
       yield* record({ kind: "begin-fix", runId: "run-a" });
+      // T3o: the per-stay merge fix counts persist through the projection (T3O-116).
+      const mergeStay = { stageEnteredAt: null, conflictFixes: 1, branchUpdates: 0 };
+      yield* engine.dispatch({
+        type: "board.card.update",
+        commandId: id(),
+        cardId,
+        mergeStay,
+        createdAt: at,
+      });
+      assert.deepStrictEqual(
+        (yield* (yield* BoardQueries).boardCardDetail(cardId))!.card.mergeStay,
+        mergeStay,
+      );
+
       // T3o: the move's trailing CI event must not carry a stale gate block back (T3O-115).
       yield* engine.dispatch({
         type: "board.card.update",

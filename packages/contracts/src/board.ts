@@ -1068,6 +1068,37 @@ export function isBoardCardAutoMergeSoft(
   return classification === "soft";
 }
 
+export const BoardCardAutoMergeStop = Schema.Literals([
+  "no-pull-request",
+  "no-workspace",
+  "fix-failed",
+]);
+export type BoardCardAutoMergeStop = typeof BoardCardAutoMergeStop.Type;
+
+/**
+ * T3o: the automatic merge fixes spent in one stay in Ready for merge (T3O-116). The ladder resets
+ * its attempt on every new head, and the board's own fix pushes make one, so "one conflict fix" and
+ * "one branch update" are counted per stay instead. Counts apply only while `stageEnteredAt`
+ * equals the card's; a new stay, a human Merge click or someone else's push starts them again.
+ */
+export const BoardCardMergeStay = Schema.Struct({
+  stageEnteredAt: Schema.NullOr(IsoDateTime),
+  conflictFixes: NonNegativeInt,
+  branchUpdates: NonNegativeInt,
+});
+export type BoardCardMergeStay = typeof BoardCardMergeStay.Type;
+
+/** The merge fixes this card has spent in its current stay. */
+export function boardCardMergeStayCounts(
+  card: Pick<BoardCard, "stageEnteredAt" | "mergeStay">,
+): BoardCardMergeStay {
+  const stay = card.mergeStay;
+  const stageEnteredAt = card.stageEnteredAt ?? null;
+  return stay !== undefined && stay.stageEnteredAt === stageEnteredAt
+    ? stay
+    : { stageEnteredAt, conflictFixes: 0, branchUpdates: 0 };
+}
+
 /**
  * On the card aggregate so it survives a restart. Not on step state: a fake step row with no
  * thread would corrupt slot accounting, recovery and boot reconciliation.
@@ -1093,6 +1124,10 @@ export const BoardCardAutoMergeHold = Schema.Struct({
   /** The head commit the probe described. A DIFFERENT sha means new commits
       and therefore new CI, which resets the ladder. */
   headSha: Schema.NullOr(TrimmedNonEmptyString),
+  /** T3o: why the board itself stopped, when it was not the forge's refusal (T3O-116): no pull
+      request (cleared once one is linked), no project checkout, or a fix agent that failed.
+      Absent on forge refusals and older holds. */
+  stop: Schema.optionalKey(BoardCardAutoMergeStop),
 });
 export type BoardCardAutoMergeHold = typeof BoardCardAutoMergeHold.Type;
 
@@ -1109,7 +1144,8 @@ export function boardCardAutoMergeHoldsEqual(
     left.attempt === right.attempt &&
     left.heldSince === right.heldSince &&
     left.retryAt === right.retryAt &&
-    left.headSha === right.headSha
+    left.headSha === right.headSha &&
+    left.stop === right.stop
   );
 }
 
@@ -2080,6 +2116,9 @@ export const BOARD_GATES = [
   "split-sign-off",
   "split",
   "build",
+  // T3o: the merge gates, last (T3O-116).
+  "merged-done",
+  "merge",
 ] as const;
 export type BoardGate = (typeof BOARD_GATES)[number];
 
@@ -2271,6 +2310,8 @@ export const BoardCard = Schema.Struct({
   stageEnteredAt: Schema.optionalKey(IsoDateTime),
   /** T3o: the last automation gate attempt that could not act (T3O-115). Absent when none. */
   gateBlock: Schema.optionalKey(BoardCardGateBlock),
+  /** T3o: merge fixes spent this stay in Ready for merge (T3O-116). Absent when none. */
+  mergeStay: Schema.optionalKey(BoardCardMergeStay),
   /** Derived from unmet dependencies at Ready and beyond, recorded by
       the decider at each move / dependency edit / unarchive. */
   blocked: Schema.Boolean,
@@ -3371,11 +3412,21 @@ export const BOARD_CONFLICT_STEP_LABEL = "Conflicts";
  */
 export const BOARD_CHECKS_FIX_STEP_LABEL = "Fixing CI";
 
+/** The step label a merge-stage branch update wears, reserved on the same terms (T3O-116). */
+export const BOARD_BRANCH_UPDATE_STEP_LABEL = "Updating branch";
+
 /** Which merge fix the reactor armed a merge-stage run as, if any. */
-export type BoardMergeFixKind = "conflict" | "checks";
+export type BoardMergeFixKind = "conflict" | "checks" | "update";
 
 function boardMergeFixLabel(kind: BoardMergeFixKind): string {
-  return kind === "conflict" ? BOARD_CONFLICT_STEP_LABEL : BOARD_CHECKS_FIX_STEP_LABEL;
+  switch (kind) {
+    case "conflict":
+      return BOARD_CONFLICT_STEP_LABEL;
+    case "checks":
+      return BOARD_CHECKS_FIX_STEP_LABEL;
+    case "update":
+      return BOARD_BRANCH_UPDATE_STEP_LABEL;
+  }
 }
 
 /**
@@ -3389,7 +3440,8 @@ export function boardSelectedStepLabel(
 ): string | null {
   if (armedFix !== null) return boardMergeFixLabel(armedFix);
   return planStepLabel === BOARD_CONFLICT_STEP_LABEL ||
-    planStepLabel === BOARD_CHECKS_FIX_STEP_LABEL
+    planStepLabel === BOARD_CHECKS_FIX_STEP_LABEL ||
+    planStepLabel === BOARD_BRANCH_UPDATE_STEP_LABEL
     ? null
     : planStepLabel;
 }
@@ -5326,6 +5378,8 @@ export const BoardCardUpdateCommand = Schema.Struct({
   sizeEditor: Schema.optional(BoardCardSizeEditor),
   /** T3o: the supervisor's gate-attempt record (T3O-115). Absent leaves it; null clears it. */
   gateBlock: Schema.optional(Schema.NullOr(BoardCardGateBlock)),
+  /** T3o: the supervisor's per-stay merge fix counts (T3O-116). Absent leaves it; null clears it. */
+  mergeStay: Schema.optional(Schema.NullOr(BoardCardMergeStay)),
   createdAt: IsoDateTime,
 });
 export type BoardCardUpdateCommand = typeof BoardCardUpdateCommand.Type;
@@ -12547,6 +12601,13 @@ export const RETIRED_BOARD_MERGE_CONFLICT_PROMPTS: ReadonlyArray<string> = [
  */
 export const DEFAULT_BOARD_CHECKS_FIX_PROMPT =
   "This card's pull request cannot merge because its CI checks are failing. Find out why: read the failing checks and their logs (`gh pr checks` and `gh run view --log-failed` on GitHub, or the equivalent for this repository's forge). Fix the cause in this card's branch, then run the project's own checks and tests and fix what they catch. Merge the base branch in only if the failure actually needs it. Then commit and push normally. Do NOT rebase, do NOT force-push, and do NOT convert the pull request back to a draft: a push to a ready pull request re-runs CI, which is exactly what has to happen next. If the failure is flaky, an infrastructure problem, or unrelated to this branch's changes, do not guess at a fix. Stop and say so.";
+
+/**
+ * Compiled in for the same reason: it starts only when the forge refuses a merge solely because
+ * the branch is behind its base, once per stay in the merge stage (T3O-116).
+ */
+export const DEFAULT_BOARD_BRANCH_UPDATE_PROMPT =
+  "This card's pull request cannot merge because its branch is behind the base branch and the repository requires it to be up to date. There are no known conflicts. Merge the base branch into this card's branch. If the merge does conflict after all, resolve each conflict on the merits: read enough of both sides to understand what each change was for and keep the intent of both, never discarding one side to make the merge go through. Then run the project's own checks and tests and fix what the merge broke. Commit and push normally. Do NOT rebase, and do NOT force-push under any circumstances: this branch has an open pull request, and rewriting its history strands the review comments anchored to it and can destroy work someone else pushed. If a conflict needs a decision you cannot make from the code alone, stop and say so rather than guessing.";
 
 /**
  * `autoExecute` is forced off: the only agent run this stage starts is the conflict fix, after

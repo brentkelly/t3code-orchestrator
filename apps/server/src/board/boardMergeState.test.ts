@@ -155,6 +155,13 @@ describe("boardMergeStateOf: why the host is blocking", () => {
     const state = boardMergeStateOf(detail({ baseComparison: "behind", behindBy: 3 }));
 
     assert.strictEqual(state.blockedReason, "behind");
+    // A host that cannot say whether being behind is the whole refusal never asks for an update.
+    assert.strictEqual(state.updateRequired, undefined);
+    assert.strictEqual(
+      boardMergeStateOf(detail({ baseComparison: "behind", baseUpdateRequired: true }))
+        .updateRequired,
+      true,
+    );
   });
 
   it("keeps 'still working it out' distinct from 'no'", () => {

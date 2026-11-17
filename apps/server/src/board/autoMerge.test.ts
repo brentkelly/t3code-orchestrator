@@ -7,11 +7,13 @@ import {
   BOARD_CHECKS_FIX_STEP_LABEL,
   BOARD_SEED_STAGE_IDS,
   BoardCardId,
+  defaultBoardCardGroup,
   EMPTY_BOARD_STATE,
   ProviderInstanceId,
   ThreadId,
   type BoardCard,
   type BoardCardAutoMergeHold,
+  type BoardCardPullRequest,
   type BoardCardStepState,
   type BoardState,
   type VcsStatusChangeRequest,
@@ -33,6 +35,7 @@ import {
   readyWorktree,
   settingsWith,
   withGovernor,
+  type Harness,
   type HarnessCommand,
   type HarnessEvent,
 } from "./supervisorHarness.testkit.ts";
@@ -75,6 +78,7 @@ const probe = (input: {
   readonly mergeable?: "mergeable" | "blocked" | "unknown";
   readonly blockedReason?: BoardMergeState["blockedReason"];
   readonly headSha?: string;
+  readonly updateRequired?: boolean;
 }): BoardMergeState => {
   const passed = input.passed ?? 0;
   const pending = input.pending ?? 0;
@@ -92,6 +96,7 @@ const probe = (input: {
     },
     headSha: input.headSha ?? "sha-one",
     checksUnread: false,
+    ...(input.updateRequired === undefined ? {} : { updateRequired: input.updateRequired }),
   };
 };
 
@@ -166,6 +171,33 @@ const setup = (input: {
   ...(input.mergeRefusal === undefined ? {} : { mergeRefusal: input.mergeRefusal }),
 });
 
+/** A pull request link the forge reports merged. */
+const mergedLink: BoardCardPullRequest = {
+  number: 284,
+  url: "https://example.test/pull/284",
+  state: "merged",
+  title: "Services index page",
+  headBranch: "board/card-one",
+  baseRef: "main",
+  closedAt: NOW,
+  checkedAt: NOW,
+};
+
+/** The same pull request, open. */
+const openLink: BoardCardPullRequest = { ...mergedLink, state: "open", closedAt: null };
+
+/** A stopped ladder: only a human or someone else's push revives it. */
+const hardHold = (patch: Partial<BoardCardAutoMergeHold> = {}): BoardCardAutoMergeHold => ({
+  reason: "Required status check 'test' has not passed.",
+  classification: "soft",
+  detail: null,
+  attempt: 8,
+  heldSince: NOW,
+  retryAt: null,
+  headSha: "sha-one",
+  ...patch,
+});
+
 const holdOf = (board: BoardState, id = "card-one"): BoardCardAutoMergeHold | null =>
   board.cards.find((card) => card.id === BoardCardId.make(id))?.autoMergeHold ?? null;
 
@@ -212,41 +244,51 @@ it.effect("merges an unflagged card when the BOARD-WIDE setting is on", () =>
   ),
 );
 
-it.effect("switching the board-wide setting on merges NO card already parked there (D2)", () =>
+it.effect("a card already waiting when the board-wide setting is on merges on the boot pass", () =>
   withGovernor(setup({ cards: [cardAtMerge()], boardWideAutoMerge: true }), (h) =>
     Effect.gen(function* () {
-      // The setting is already on and the card is already here — no arrival,
-      // no merge. Flipping a board-wide default is policy for what happens
-      // NEXT; eleven irreversible forge operations from one toggle is not a
-      // default, it is an accident.
-      yield* h.reactor.fireAutoMerges;
+      // T3o: no arrival event at all. The merge gate asks the same question of the card at rest
+      // that the arrival would have, so a restart or a toggle turned on late costs one pass
+      // (T3O-116).
       yield* h.reactor.drain;
-      assert.deepStrictEqual(yield* h.mergeAttempts, []);
-      assert.strictEqual(stageOf(yield* h.board), MERGE);
+      assert.deepStrictEqual(yield* h.mergeAttempts, [{ number: 284 }]);
+      assert.strictEqual(stageOf(yield* h.board), DONE);
     }),
   ),
 );
 
-it.effect("does not auto-merge a card DRAGGED non-adjacently onto the merge stage (D2)", () =>
+it.effect("merges a card DRAGGED non-adjacently onto the merge stage (T3O-116)", () =>
   withGovernor(setup({ cards: [cardAtMerge()], boardWideAutoMerge: true }), (h) =>
     Effect.gen(function* () {
-      // Building → Merge skips review. A blanket policy must not merge a diff
-      // no review round ever saw.
+      // T3o: the contract merges every card that reaches Ready for merge with Auto-merge on,
+      // however it got there; the gate cannot tell a drag from a review round.
       yield* h.pumpDomain(cardMoved(cardAtMerge(), BUILDING, MERGE, 1));
-      assert.deepStrictEqual(yield* h.mergeAttempts, []);
-      assert.strictEqual(stageOf(yield* h.board), MERGE);
+      assert.deepStrictEqual(yield* h.mergeAttempts, [{ number: 284 }]);
+      assert.strictEqual(stageOf(yield* h.board), DONE);
     }),
   ),
 );
 
-it.effect("does not re-merge a card a human pulled BACK out of Done", () =>
-  withGovernor(setup({ cards: [cardAtMerge({ autoMerge: true })] }), (h) =>
-    Effect.gen(function* () {
-      // A backward drag is an UNDO, and answering it by re-merging on the
-      // forge is surprising at best.
-      yield* h.pumpDomain(cardMoved(cardAtMerge({ autoMerge: true }), DONE, MERGE, 1));
-      assert.deepStrictEqual(yield* h.mergeAttempts, []);
-    }),
+it.effect("a card pulled BACK out of Done whose pull request merged goes straight back", () =>
+  withGovernor(
+    {
+      ...setup({ cards: [{ ...cardAtMerge({ autoMerge: true }), pullRequest: mergedLink }] }),
+      pullRequest: { ...openPr, state: "merged" },
+    },
+    (h) =>
+      Effect.gen(function* () {
+        yield* h.pumpDomain(
+          cardMoved(
+            { ...cardAtMerge({ autoMerge: true }), pullRequest: mergedLink },
+            DONE,
+            MERGE,
+            1,
+          ),
+        );
+        // Merged is merged: never merged again, and the card does not sit in Ready for merge.
+        assert.deepStrictEqual(yield* h.mergeAttempts, []);
+        assert.strictEqual(stageOf(yield* h.board), DONE);
+      }),
   ),
 );
 
@@ -264,19 +306,21 @@ it.effect("merges IMMEDIATELY when the arm is toggled on for a card already park
   ),
 );
 
-it.effect("does not merge on an unrelated edit to an armed card parked at merge", () =>
-  withGovernor(setup({ cards: [cardAtMerge({ autoMerge: true })] }), (h) =>
-    Effect.gen(function* () {
-      // Keyed on the payload MARKER, not on the card's state: a title edit on
-      // an armed card must never fire a merge.
-      const card = cardAtMerge({ autoMerge: true });
-      yield* h.pumpDomain({
-        type: "board.card-updated",
-        sequence: 1,
-        payload: { cardId: card.id, card: { ...card, title: "Renamed" } },
-      } as never);
-      assert.deepStrictEqual(yield* h.mergeAttempts, []);
-    }),
+it.effect("does not merge on an unrelated edit to an armed card that is HELD", () =>
+  withGovernor(
+    setup({ cards: [{ ...cardAtMerge({ autoMerge: true }), autoMergeHold: hardHold() }] }),
+    (h) =>
+      Effect.gen(function* () {
+        // T3o: an armed card resting with no hold is the merge gate's on the next pass anyway
+        // (T3O-116); what an edit must never do is jump a hold the ladder put there.
+        const card = { ...cardAtMerge({ autoMerge: true }), autoMergeHold: hardHold() };
+        yield* h.pumpDomain({
+          type: "board.card-updated",
+          sequence: 1,
+          payload: { cardId: card.id, card: { ...card, title: "Renamed" } },
+        } as never);
+        assert.deepStrictEqual(yield* h.mergeAttempts, []);
+      }),
   ),
 );
 
@@ -1113,5 +1157,525 @@ it.effect("an armed dependency merges itself and starts its armed dependent", ()
         yield* h.pumpDomain(cardMoved(merged!, MERGE, DONE, 2));
         assert.strictEqual(stageOf(yield* h.board, "dependent"), BUILDING);
       }),
+  ),
+);
+
+// ── Merge gates (T3O-116) ─────────────────────────────────────────────────
+
+/** Far past the merge-stage refresh cadence (2 minutes), carried by the 30s tick. */
+const REFRESH = Duration.minutes(3);
+
+/** A running fix step on the merge stage, as a conflict fix or branch update leaves it. */
+const runningMergeFix = (patch: Partial<BoardCardStepState> = {}): BoardCardStepState => ({
+  ...runningChecksFix(),
+  stepLabel: null,
+  prompt: "merge the base in",
+  ...patch,
+});
+
+const mergeFixCompleted = (sequence: number, outcome: "succeeded" | "failed" = "succeeded") =>
+  ({
+    type: "board.card-step-completed",
+    sequence,
+    payload: {
+      cardId: BoardCardId.make("card-one"),
+      completion: {
+        cardId: BoardCardId.make("card-one"),
+        stepId: MERGE,
+        outcome,
+        summary: "merged the base in",
+        payload: null,
+        threadId: ThreadId.make("thread-ci"),
+        completedAt: NOW,
+      },
+    },
+  }) as unknown as HarnessEvent;
+
+/** Put a running fix step on the card, as the start-stage-thread the reactor asked for would. */
+const withRunningFix = (h: Harness) =>
+  Ref.update(h.model, (model) => ({
+    ...model,
+    board: { ...(model.board ?? EMPTY_BOARD_STATE), stepStates: [runningMergeFix()] },
+  }));
+
+const startedFixes = (commands: ReadonlyArray<HarnessCommand>) =>
+  commands.filter((command) => command.type === "board.card.start-stage-thread");
+
+const cardOf = (board: BoardState, id = "card-one") =>
+  board.cards.find((card) => card.id === BoardCardId.make(id));
+
+it.effect("lose the event: an armed card at merge across a restart merges on the boot pass", () =>
+  withGovernor(setup({ cards: [cardAtMerge({ autoMerge: true })] }), (h) =>
+    Effect.gen(function* () {
+      // Never told it arrived. `beginStageRun` used to return before the armed check because the
+      // merge stage never auto-executes, so only an arrival event could merge it.
+      yield* h.reactor.drain;
+      assert.deepStrictEqual(yield* h.mergeAttempts, [{ number: 284 }]);
+      assert.strictEqual(stageOf(yield* h.board), DONE);
+    }),
+  ),
+);
+
+/** An armed group parked at the merge stage, and its one child, already done. */
+const groupAtMerge = (): BoardCard => ({
+  ...cardAtMerge({ autoMerge: true }),
+  group: defaultBoardCardGroup(EMPTY_BOARD_STATE, { stage: BOARD_SEED_STAGE_IDS.merge }),
+});
+const doneChild = (): BoardCard =>
+  makeBoardCard({ id: "child-one", stage: DONE, orderKey: "c", parentCardId: "card-one" });
+
+it.effect("an armed group merges on its arrival once its children are done", () =>
+  withGovernor(setup({ cards: [groupAtMerge(), doneChild()] }), (h) =>
+    Effect.gen(function* () {
+      yield* h.pumpDomain(cardMoved(groupAtMerge(), REVIEW, MERGE, 1));
+      assert.deepStrictEqual(yield* h.mergeAttempts, [{ number: 284 }]);
+      assert.strictEqual(stageOf(yield* h.board), DONE);
+    }),
+  ),
+);
+
+it.effect("an armed group parked at merge across a restart merges on the boot pass", () =>
+  withGovernor(setup({ cards: [groupAtMerge(), doneChild()] }), (h) =>
+    Effect.gen(function* () {
+      yield* h.reactor.drain;
+      assert.deepStrictEqual(yield* h.mergeAttempts, [{ number: 284 }]);
+      assert.strictEqual(stageOf(yield* h.board), DONE);
+    }),
+  ),
+);
+
+it.effect("idempotent: the arrival event and then the tick make ONE merge attempt", () =>
+  withGovernor(
+    setup({
+      cards: [cardAtMerge({ autoMerge: true })],
+      mergeFailure: "Required status check 'test' has not passed.",
+      mergeState: probe({ passed: 1, pending: 1 }),
+    }),
+    (h) =>
+      Effect.gen(function* () {
+        yield* h.pumpDomain(cardMoved(cardAtMerge({ autoMerge: true }), REVIEW, MERGE, 1));
+        yield* h.reactor.tick;
+        yield* h.reactor.tick;
+        yield* h.reactor.drain;
+        assert.strictEqual((yield* h.mergeAttempts).length, 1);
+        assert.strictEqual(holdOf(yield* h.board)?.attempt, 1);
+      }),
+  ),
+);
+
+it.effect("a soft hold whose rung is still ahead is not merged early by the tick", () => {
+  // The harness clock starts at the epoch.
+  const rungAt = "1970-01-01T00:10:00.000Z";
+  return withGovernor(
+    setup({
+      cards: [
+        {
+          ...cardAtMerge({ autoMerge: true }),
+          autoMergeHold: hardHold({ attempt: 1, retryAt: rungAt }),
+        },
+      ],
+    }),
+    (h) =>
+      Effect.gen(function* () {
+        yield* h.reactor.tick;
+        assert.deepStrictEqual(yield* h.mergeAttempts, []);
+        yield* TestClock.adjust(Duration.minutes(15));
+        yield* h.reactor.tick;
+        yield* h.reactor.drain;
+        assert.deepStrictEqual(yield* h.mergeAttempts, [{ number: 284 }]);
+      }),
+  );
+});
+
+it.effect("a PR already merged in Ready for merge goes to Done; no merge is attempted", () =>
+  withGovernor(
+    {
+      ...setup({ cards: [{ ...cardAtMerge({ autoMerge: true }), pullRequest: mergedLink }] }),
+      pullRequest: { ...openPr, state: "merged" },
+    },
+    (h) =>
+      Effect.gen(function* () {
+        // Also the crash between `mergePullRequest` and `merge-advance`: the merged state was
+        // recorded, the move never landed, and the boot pass finishes it.
+        yield* h.reactor.drain;
+        assert.deepStrictEqual(yield* h.mergeAttempts, []);
+        assert.strictEqual(stageOf(yield* h.board), DONE);
+      }),
+  ),
+);
+
+it.effect("a crash after the forge merged but before anything was recorded settles at boot", () =>
+  withGovernor(
+    {
+      // The cached link still says open; the forge says merged. A retry finds it merged.
+      ...setup({ cards: [{ ...cardAtMerge({ autoMerge: true }), pullRequest: openLink }] }),
+      pullRequest: { ...openPr, state: "merged" },
+    },
+    (h) =>
+      Effect.gen(function* () {
+        yield* h.reactor.drain;
+        yield* h.reactor.tick;
+        yield* h.reactor.drain;
+        assert.deepStrictEqual(yield* h.mergeAttempts, []);
+        assert.strictEqual(stageOf(yield* h.board), DONE);
+        assert.strictEqual(holdOf(yield* h.board), null);
+      }),
+  ),
+);
+
+it.effect("a PR merged on the forge while held moves the card to Done after a refresh", () => {
+  let forge: VcsStatusChangeRequest = openPr;
+  return withGovernor(
+    {
+      ...setup({
+        cards: [
+          {
+            ...cardAtMerge({ autoMerge: true }),
+            pullRequest: openLink,
+            autoMergeHold: hardHold(),
+          },
+        ],
+        mergeState: probe({ passed: 1, pending: 1 }),
+      }),
+      pullRequestOf: () => forge,
+    },
+    (h) =>
+      Effect.gen(function* () {
+        yield* h.reactor.drain;
+        assert.strictEqual(stageOf(yield* h.board), MERGE);
+        // Someone merged it on GitHub. Nothing tells the board but the refresh.
+        forge = { ...openPr, state: "merged" };
+        yield* TestClock.adjust(REFRESH);
+        yield* h.reactor.drain;
+        yield* h.reactor.tick;
+        yield* h.reactor.drain;
+        assert.deepStrictEqual(yield* h.mergeAttempts, []);
+        assert.strictEqual(stageOf(yield* h.board), DONE);
+      }),
+  );
+});
+
+it.effect("behind its base (no conflict): the branch is updated once, then the merge lands", () =>
+  withGovernor(
+    {
+      ...setup({
+        cards: [cardAtMerge({ autoMerge: true })],
+        mergeOutcomes: ["The head branch is not up to date with the base branch.", null],
+        mergeState: probe({ blockedReason: "behind", passed: 2, updateRequired: true }),
+      }),
+      initialShells: new Map([
+        ["thread-ci", fakeThreadState("thread-ci", { sessionStatus: "none" })],
+      ]),
+    },
+    (h) =>
+      Effect.gen(function* () {
+        yield* h.pumpDomain(cardMoved(cardAtMerge({ autoMerge: true }), REVIEW, MERGE, 1));
+        const started = startedFixes(yield* h.commands);
+        assert.strictEqual(started.length, 1);
+        assert.include(String(started[0]?.commandId), "merge-branch-update");
+        // The update owns the merge now: no hold describing a wait that is not happening.
+        assert.strictEqual(holdOf(yield* h.board), null);
+        assert.strictEqual(cardOf(yield* h.board)?.mergeStay?.branchUpdates, 1);
+
+        yield* withRunningFix(h);
+        yield* h.pumpDomain(mergeFixCompleted(2));
+        assert.strictEqual((yield* h.mergeAttempts).length, 2);
+        assert.strictEqual(stageOf(yield* h.board), DONE);
+      }),
+  ),
+);
+
+it.effect("behind again after the update (a busy base) holds; no second update", () =>
+  withGovernor(
+    {
+      ...setup({
+        // A soft hold from an earlier rung is cleared by the update, like a conflict fix.
+        cards: [
+          {
+            ...cardAtMerge({ autoMerge: true }),
+            autoMergeHold: hardHold({ attempt: 2, retryAt: "1970-01-01T00:00:00.000Z" }),
+          },
+        ],
+        mergeFailure: "The head branch is not up to date with the base branch.",
+        mergeState: probe({ blockedReason: "behind", passed: 2, updateRequired: true }),
+      }),
+      initialShells: new Map([
+        ["thread-ci", fakeThreadState("thread-ci", { sessionStatus: "none" })],
+      ]),
+    },
+    (h) =>
+      Effect.gen(function* () {
+        yield* h.reactor.drain;
+        assert.strictEqual(startedFixes(yield* h.commands).length, 1);
+        yield* withRunningFix(h);
+        yield* h.pumpDomain(mergeFixCompleted(2));
+        const hold = holdOf(yield* h.board);
+        assert.strictEqual(hold?.classification, "behind");
+        assert.strictEqual(hold?.retryAt, null);
+        // The update's own push is not someone else's: refreshes neither revive nor reset it.
+        yield* TestClock.adjust(Duration.hours(1));
+        yield* h.reactor.drain;
+        assert.strictEqual(startedFixes(yield* h.commands).length, 1);
+        assert.strictEqual((yield* h.mergeAttempts).length, 2);
+        assert.strictEqual(cardOf(yield* h.board)?.mergeStay?.branchUpdates, 1);
+      }),
+  ),
+);
+
+it.effect("behind with checks still running waits on the checks; no branch update", () =>
+  withGovernor(
+    setup({
+      cards: [cardAtMerge({ autoMerge: true })],
+      mergeFailure: "The head branch is not up to date with the base branch.",
+      mergeState: probe({ blockedReason: "behind", passed: 1, pending: 1, updateRequired: true }),
+    }),
+    (h) =>
+      Effect.gen(function* () {
+        yield* h.reactor.drain;
+        assert.strictEqual(startedFixes(yield* h.commands).length, 0);
+        assert.strictEqual(cardOf(yield* h.board)?.mergeStay?.branchUpdates ?? 0, 0);
+        assert.notStrictEqual(holdOf(yield* h.board)?.retryAt ?? null, null);
+      }),
+  ),
+);
+
+it.effect.each(["behind", "conflict"] as const)(
+  "a %s fix whose start is refused does not spend the stay's fix",
+  (blockedReason) =>
+    withGovernor(
+      {
+        ...setup({
+          cards: [cardAtMerge({ autoMerge: true })],
+          mergeFailure: "the host refused",
+          mergeState: probe({ blockedReason, passed: 2, updateRequired: true }),
+        }),
+        onDispatch: (command) =>
+          command.type === "board.card.start-stage-thread"
+            ? Effect.die("start refused")
+            : Effect.void,
+      },
+      (h) =>
+        Effect.gen(function* () {
+          yield* h.reactor.drain;
+          assert.strictEqual((yield* h.mergeAttempts).length, 1);
+          const stay = cardOf(yield* h.board)?.mergeStay ?? null;
+          assert.strictEqual(stay?.conflictFixes ?? 0, 0);
+          assert.strictEqual(stay?.branchUpdates ?? 0, 0);
+        }),
+    ),
+);
+
+it.effect("one conflict fix per stay: a second conflict after a restart is a hard stop", () =>
+  withGovernor(
+    setup({
+      cards: [
+        {
+          ...cardAtMerge({ autoMerge: true }),
+          // The stay's fix already ran before the restart. Its push made a new head, which reset
+          // the ladder's attempt, so only the per-stay count remembers it.
+          mergeStay: { stageEnteredAt: null, conflictFixes: 1, branchUpdates: 0 },
+        },
+      ],
+      mergeFailure: "the host refused",
+      mergeState: probe({ blockedReason: "conflict", passed: 1, headSha: "sha-fixed" }),
+    }),
+    (h) =>
+      Effect.gen(function* () {
+        yield* h.reactor.drain;
+        assert.strictEqual((yield* h.mergeAttempts).length, 1);
+        assert.strictEqual(startedFixes(yield* h.commands).length, 0);
+        const hold = holdOf(yield* h.board);
+        assert.strictEqual(hold?.retryAt, null);
+        assert.strictEqual(hold?.headSha, "sha-fixed");
+        yield* TestClock.adjust(Duration.hours(1));
+        yield* h.reactor.drain;
+        assert.strictEqual((yield* h.mergeAttempts).length, 1);
+      }),
+  ),
+);
+
+it.effect("a conflict fix that pushes a new head, then conflicts again, stops", () => {
+  let head = "sha-one";
+  return withGovernor(
+    {
+      ...setup({
+        cards: [cardAtMerge({ autoMerge: true })],
+        mergeFailure: "the host refused",
+      }),
+      mergeStateOf: () => probe({ blockedReason: "conflict", passed: 1, headSha: head }),
+      initialShells: new Map([
+        ["thread-ci", fakeThreadState("thread-ci", { sessionStatus: "none" })],
+      ]),
+    },
+    (h) =>
+      Effect.gen(function* () {
+        yield* h.pumpDomain(cardMoved(cardAtMerge({ autoMerge: true }), REVIEW, MERGE, 1));
+        assert.strictEqual(startedFixes(yield* h.commands).length, 1);
+        assert.strictEqual(cardOf(yield* h.board)?.mergeStay?.conflictFixes, 1);
+        head = "sha-fixed";
+        yield* withRunningFix(h);
+        yield* h.pumpDomain(mergeFixCompleted(2));
+        const hold = holdOf(yield* h.board);
+        assert.strictEqual(hold?.retryAt, null);
+        assert.strictEqual(hold?.headSha, "sha-fixed");
+        yield* TestClock.adjust(Duration.hours(1));
+        yield* h.reactor.drain;
+        assert.strictEqual(startedFixes(yield* h.commands).length, 1);
+      }),
+  );
+});
+
+it.effect("an exhausted ladder re-arms when someone else pushes, and only then", () => {
+  let head = "sha-one";
+  return withGovernor(
+    {
+      ...setup({
+        cards: [
+          { ...cardAtMerge({ autoMerge: true }), pullRequest: openLink, autoMergeHold: hardHold() },
+        ],
+        mergeFailure: "Required status check 'test' has not passed.",
+      }),
+      mergeStateOf: () => probe({ passed: 1, pending: 1, headSha: head }),
+    },
+    (h) =>
+      Effect.gen(function* () {
+        // No change on the forge: it stays held, however long.
+        yield* TestClock.adjust(Duration.minutes(10));
+        yield* h.reactor.drain;
+        assert.deepStrictEqual(yield* h.mergeAttempts, []);
+        assert.strictEqual(holdOf(yield* h.board)?.retryAt, null);
+
+        head = "sha-theirs";
+        yield* TestClock.adjust(REFRESH);
+        yield* h.reactor.drain;
+        yield* h.reactor.tick;
+        yield* h.reactor.drain;
+        // Revived: a fresh ladder on the new head.
+        assert.strictEqual((yield* h.mergeAttempts).length, 1);
+        const hold = holdOf(yield* h.board);
+        assert.strictEqual(hold?.attempt, 1);
+        assert.strictEqual(hold?.headSha, "sha-theirs");
+      }),
+  );
+});
+
+it.effect("a fix that starts while the refresh reads the head keeps its spent fix", () => {
+  let head = "sha-one";
+  let duringProbe: Effect.Effect<void> = Effect.void;
+  return withGovernor(
+    {
+      ...setup({
+        cards: [
+          {
+            ...cardAtMerge({ autoMerge: true }),
+            pullRequest: openLink,
+            autoMergeHold: hardHold(),
+            mergeStay: { stageEnteredAt: null, conflictFixes: 1, branchUpdates: 0 },
+          },
+        ],
+        mergeFailure: "Required status check 'test' has not passed.",
+      }),
+      mergeStateOf: () => probe({ passed: 1, pending: 1, headSha: head }),
+      mergeStateGate: Effect.suspend(() => duringProbe),
+    },
+    (h) =>
+      Effect.gen(function* () {
+        yield* h.reactor.drain;
+        // The board's own fix starts in the window between the refresh's read and its write.
+        head = "sha-theirs";
+        duringProbe = withRunningFix(h);
+        yield* TestClock.adjust(REFRESH);
+        yield* h.reactor.drain;
+        assert.strictEqual(holdOf(yield* h.board)?.headSha, "sha-one");
+        assert.strictEqual(cardOf(yield* h.board)?.mergeStay?.conflictFixes, 1);
+      }),
+  );
+});
+
+it.effect("a fix agent that pushed and then failed leaves a hold on the post-push head", () => {
+  let head = "sha-one";
+  return withGovernor(
+    {
+      ...setup({
+        cards: [cardAtMerge({ autoMerge: true })],
+        mergeFailure: "the host refused",
+      }),
+      mergeStateOf: () => probe({ blockedReason: "conflict", passed: 1, headSha: head }),
+      initialShells: new Map([
+        ["thread-ci", fakeThreadState("thread-ci", { sessionStatus: "none" })],
+      ]),
+    },
+    (h) =>
+      Effect.gen(function* () {
+        yield* h.pumpDomain(cardMoved(cardAtMerge({ autoMerge: true }), REVIEW, MERGE, 1));
+        assert.strictEqual(startedFixes(yield* h.commands).length, 1);
+        // The agent pushed, then gave up on its last attempt.
+        head = "sha-pushed";
+        yield* Ref.update(h.model, (model) => ({
+          ...model,
+          board: {
+            ...(model.board ?? EMPTY_BOARD_STATE),
+            // Recovery has nothing left: this failure escalates rather than parking a retry.
+            stepStates: [runningMergeFix({ stallCount: 99, stageEntryRecoveries: 99 })],
+          },
+        }));
+        yield* h.pumpDomain(mergeFixCompleted(2, "failed"));
+        const hold = holdOf(yield* h.board);
+        assert.strictEqual(hold?.stop, "fix-failed");
+        assert.strictEqual(hold?.retryAt, null);
+        assert.strictEqual(hold?.headSha, "sha-pushed");
+        // The next refresh reads the same head: no revival, and the fix stays spent.
+        yield* TestClock.adjust(REFRESH);
+        yield* h.reactor.drain;
+        assert.strictEqual(holdOf(yield* h.board)?.stop, "fix-failed");
+        assert.strictEqual(cardOf(yield* h.board)?.mergeStay?.conflictFixes, 1);
+        assert.strictEqual((yield* h.mergeAttempts).length, 1);
+      }),
+  );
+});
+
+it.effect("a card with no pull request holds, and linking one clears the hold and merges", () => {
+  let forge: VcsStatusChangeRequest | null = null;
+  return withGovernor(
+    {
+      ...setup({ cards: [cardAtMerge({ autoMerge: true })] }),
+      pullRequest: null,
+      pullRequestOf: () => forge,
+    },
+    (h) =>
+      Effect.gen(function* () {
+        yield* h.reactor.drain;
+        const hold = holdOf(yield* h.board);
+        assert.strictEqual(hold?.stop, "no-pull-request");
+        assert.strictEqual(hold?.retryAt, null);
+        assert.deepStrictEqual(yield* h.mergeAttempts, []);
+
+        forge = openPr;
+        yield* h.reactor.refreshPullRequest(BoardCardId.make("card-one"), { force: true });
+        // The link event is what re-evaluates the gate (the tick would too, within 30s).
+        const linked = (yield* h.decided).findLast(
+          (event) => event.type === "board.card-pull-request-recorded",
+        );
+        assert.isDefined(linked);
+        if (linked !== undefined) yield* h.pumpDomain(linked);
+        assert.deepStrictEqual(yield* h.mergeAttempts, [{ number: 284 }]);
+        assert.strictEqual(stageOf(yield* h.board), DONE);
+      }),
+  );
+});
+
+it.effect("the board-wide setting turned on late picks up a card already waiting", () =>
+  withGovernor(setup({ cards: [cardAtMerge()] }), (h) =>
+    Effect.gen(function* () {
+      yield* h.reactor.drain;
+      assert.deepStrictEqual(yield* h.mergeAttempts, []);
+      h.setBoardSettings(
+        settingsWith({ building: [codexStep], globalMaxConcurrent: 3, merge: { autoMerge: true } }),
+      );
+      yield* h.reactor.tick;
+      yield* h.reactor.drain;
+      assert.deepStrictEqual(yield* h.mergeAttempts, [{ number: 284 }]);
+      assert.strictEqual(stageOf(yield* h.board), DONE);
+    }),
   ),
 );

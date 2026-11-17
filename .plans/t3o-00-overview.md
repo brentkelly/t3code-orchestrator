@@ -488,6 +488,10 @@ a human act unless listed below.
     state (`boardGateDue`), asked by the event that reaches it and again by the 30s tick and the
     boot pass, so a lost event costs at most one tick.
   - Board-wide auto-merge turns every card's Auto-merge on, group children included.
+  - Auto-merge is gated the same way (T3O-116): `merged-done` then `merge`, on any arrival in Ready
+    for merge and on every tick, cards already waiting included. One automatic conflict fix and one
+    branch update per stay, counted on the card (`mergeStay`); an exhausted ladder holds until a
+    human clicks Merge or someone else pushes.
   - Dragging a card back out of Building turns its Auto-build off, back into Planning its Auto-plan
     off (D7), so a card pulled back never relaunches under the person parking it. A human Stop or
     answer on an unattended planning run turns Auto-plan off; a machine failure does not.

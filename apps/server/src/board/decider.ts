@@ -2930,7 +2930,8 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         command.addLabels === undefined &&
         command.removeLabels === undefined &&
         command.size === undefined &&
-        command.gateBlock === undefined
+        command.gateBlock === undefined &&
+        command.mergeStay === undefined
       ) {
         return yield* invariant(command, `Update for card '${command.cardId}' carries no changes.`);
       }
@@ -3055,8 +3056,11 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       const {
         planReview: _priorPlanReview,
         gateBlock: priorGateBlock,
+        mergeStay: priorMergeStay,
         ...cardWithoutPlanReview
       } = card;
+      // T3o: the supervisor's per-stay merge fix counts (T3O-116); null clears them.
+      const mergeStay = command.mergeStay === undefined ? priorMergeStay : command.mergeStay;
       // T3o: the supervisor's gate-attempt record (T3O-115); null clears it.
       const gateBlock = command.gateBlock === undefined ? priorGateBlock : command.gateBlock;
 
@@ -3112,6 +3116,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
               ),
         priority: command.priority ?? card.priority,
         ...(gateBlock == null ? {} : { gateBlock }),
+        ...(mergeStay == null ? {} : { mergeStay }),
         updatedAt: command.createdAt,
       };
       const updated: PlannedBoardEvent = {

@@ -46,6 +46,8 @@ export interface BoardGateSweepDeps<E> {
   readonly readBoard: Effect.Effect<BoardState>;
   readonly readSettings: Effect.Effect<BoardSettings>;
   readonly workerUnreachable: Effect.Effect<(workerId: string) => boolean>;
+  /** The clock, for the merge gate's retry rung. */
+  readonly nowMs: Effect.Effect<number>;
   readonly actions: BoardGateActions<E>;
   /** Persist a block, called only when its gate + reason differ from the card's last one. */
   readonly recordBlock: (
@@ -63,17 +65,31 @@ function sameGateBlock(
   return left.gate === right.gate && left.reason === right.reason;
 }
 
-/** The cards a pass never evaluates: archived, groups and Done. Backlog is evaluated; no gate is
-    due there. */
+/** The cards a pass never evaluates: archived and Done. Groups are evaluated for their merge
+    gates; the predicate says no other gate is due on one. */
 function sweepable(board: BoardState, card: BoardCard): boolean {
-  if (card.archivedAt !== null || card.group !== null) return false;
+  if (card.archivedAt !== null) return false;
   const stage = boardStageById(board, card.stage);
   if (stage === null) return false;
   const role = effectiveBoardStageRole(stage);
   return role !== "done";
 }
 
-export function makeBoardGateSweep<E>(deps: BoardGateSweepDeps<E>) {
+/** What one due gate did in a pass. */
+export interface BoardGateFired {
+  readonly cardId: BoardCardId;
+  readonly gate: BoardGate;
+  readonly outcome: BoardGateOutcome;
+}
+
+/** Fire every gate due on the given cards, or on every card. Total: a failed action is a block. */
+export type BoardFireDueGates = (
+  cardIds: ReadonlyArray<BoardCardId> | "all",
+) => Effect.Effect<ReadonlyArray<BoardGateFired>>;
+
+export function makeBoardGateSweep<E>(deps: BoardGateSweepDeps<E>): {
+  readonly fireDueGates: BoardFireDueGates;
+} {
   const act = Effect.fn("board-supervisor-fireGate")(function* (gate: BoardGate, card: BoardCard) {
     const outcome = yield* deps.actions[gate](card).pipe(
       Effect.catchCause((cause) =>
@@ -114,19 +130,16 @@ export function makeBoardGateSweep<E>(deps: BoardGateSweepDeps<E>) {
     const board = yield* deps.readBoard;
     const settings = yield* deps.readSettings;
     const workerUnreachable = yield* deps.workerUnreachable;
+    const nowMs = yield* deps.nowMs;
     const index = boardGateIndex(board);
     const cards =
       cardIds === "all"
         ? board.cards
         : cardIds.flatMap((id) => index.cardsById.get(String(id)) ?? []);
-    const fired: Array<
-      { readonly cardId: BoardCardId; readonly gate: BoardGate } & {
-        readonly outcome: BoardGateOutcome;
-      }
-    > = [];
+    const fired: Array<BoardGateFired> = [];
     for (const card of cards) {
       if (!sweepable(board, card)) continue;
-      const due = boardGateDue({ board, card, settings, workerUnreachable, index });
+      const due = boardGateDue({ board, card, settings, workerUnreachable, index, nowMs });
       // A block belongs to its gate being due: once that gate is not, nothing retries it.
       if (card.gateBlock !== undefined && due?.gate !== card.gateBlock.gate) {
         yield* deps.recordBlock(card.id, null);
