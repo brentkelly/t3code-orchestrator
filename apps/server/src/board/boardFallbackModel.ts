@@ -1,7 +1,8 @@
 /**
- * The model a board-launched thread runs on when nothing names one: the board's default,
- * else the project's own default override, else the project-resolved text-generation
- * selection. Not the environment-wide chat default, which would move every unset stage onto it.
+ * The model a board-launched thread runs on when nothing names one: the board's default and
+ * the project's own default override (in the order `boardModelSelectionFor` documents), else
+ * the project-resolved text-generation selection. Not the environment-wide chat default,
+ * which would move every unset stage onto it.
  */
 import {
   DEFAULT_BOARD_SETTINGS,
