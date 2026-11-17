@@ -5,6 +5,7 @@
  */
 import {
   BOARD_SEED_STAGE_IDS,
+  BOARD_SCHEDULE_WS_METHODS,
   BOARD_WS_METHODS,
   boardCardEffectivePriority,
   boardCardPriorityRank,
@@ -30,7 +31,12 @@ import {
   type BoardLabel,
   type BoardThreadStateSource,
   type BoardProjectImportCandidatesInput,
+  type BoardProjectExportInput,
   type BoardProjectImportInput,
+  type BoardScheduleListInput,
+  type BoardScheduleRef,
+  type BoardScheduleRetryInput,
+  type BoardScheduleSetMachineInput,
   type BoardProjectStageConfigShell,
   type BoardStageDefinition,
   type BoardStageId,
@@ -63,6 +69,13 @@ import {
   setupBoardWorkerProject,
   cloneBoardProjectHere,
 } from "../operations/boardWorkers.ts";
+import {
+  boardScheduleManagedTasks,
+  listBoardSchedules,
+  retryBoardSchedules,
+  runBoardScheduleNow,
+  setBoardScheduleMachine,
+} from "../operations/boardSchedules.ts";
 import {
   approveBoardPlans,
   startBoardPlanReview,
@@ -915,6 +928,18 @@ export function createBoardEnvironmentAtoms<R, ER>(
     ).pipe(Atom.withLabel(`environment-board-workers:${environmentId}`)),
   );
 
+  // T3o: the Schedules tab and the Scheduled tasks page's marker (T3O-117).
+  const schedulesAtom = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:board:schedules",
+    tag: BOARD_SCHEDULE_WS_METHODS.list,
+    staleTimeMs: 0,
+  });
+  const managedScheduleTasksAtom = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:board:managed-schedule-tasks",
+    tag: BOARD_SCHEDULE_WS_METHODS.managedTasks,
+    staleTimeMs: 0,
+  });
+
   /** The archive page's cards, read when the page opens. */
   const archivedCardsAtom = createEnvironmentRpcQueryAtomFamily(runtime, {
     label: "environment-data:board:archived-cards",
@@ -996,6 +1021,8 @@ export function createBoardEnvironmentAtoms<R, ER>(
     cardsByProjectAtom,
     cardThreadsByCardAtom,
     archivedCardsAtom,
+    schedulesAtom,
+    managedScheduleTasksAtom,
     labelCatalogueAtom,
     stageListAtom,
     projectStageConfigsAtom,
@@ -1317,7 +1344,28 @@ export function createBoardEnvironmentAtoms<R, ER>(
     }),
     exportProjectFile: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:export-project-file",
-      execute: (input: { readonly projectId: ProjectId }) => exportBoardProjectFile(input),
+      execute: (input: BoardProjectExportInput) => exportBoardProjectFile(input),
+    }),
+    // T3o: t3o.json schedules (T3O-117).
+    listSchedules: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:list-schedules",
+      execute: (input: BoardScheduleListInput) => listBoardSchedules(input),
+    }),
+    setScheduleMachine: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:set-schedule-machine",
+      execute: (input: BoardScheduleSetMachineInput) => setBoardScheduleMachine(input),
+    }),
+    runScheduleNow: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:run-schedule-now",
+      execute: (input: BoardScheduleRef) => runBoardScheduleNow(input),
+    }),
+    retrySchedules: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:retry-schedules",
+      execute: (input: BoardScheduleRetryInput) => retryBoardSchedules(input),
+    }),
+    managedScheduleTasks: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:managed-schedule-tasks",
+      execute: (_input: Record<string, never>) => boardScheduleManagedTasks(),
     }),
     startStageThread: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:start-stage-thread",

@@ -32,10 +32,15 @@ import {
   type BoardCapacityHoldResult,
   type BoardWorkerReadCiLogInput,
   type BoardWorkerRunCiInput,
+  type BoardGatewayLaunchScheduleRunInput,
+  type BoardGatewayLaunchScheduleRunResult,
+  type BoardGatewayPruneScheduleRunsInput,
+  CommandId,
   type ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as FileSystem from "effect/FileSystem";
@@ -66,6 +71,8 @@ import {
 import { McpRelayHost, type McpRelayRefused } from "./McpRelayHost.ts";
 import { BoardCiRunner, boardCiLogDir } from "../ci/BoardCiRunner.ts";
 import { toWireCiDone } from "../ci/remoteCiRunner.ts";
+import { retentionKeeps, scheduleRunBranchOf } from "../schedules/scheduleLogic.ts";
+import { WorkerScheduleRunsSlot } from "../schedules/WorkerScheduleRuns.ts";
 import { isSafeBoardCiLogTarget, readBoardCiLogFile } from "../ci/ciLog.ts";
 
 type CallerBound =
@@ -85,6 +92,8 @@ type CallerBound =
   | "checkReadiness"
   | "readinessOutput"
   | "actuals"
+  | "launchScheduleRun"
+  | "pruneScheduleRuns"
   | ThreadMutation
   | "runCi"
   | "readCiLog";
@@ -181,6 +190,15 @@ export type WorkerGatewayHostShape = Omit<
     input: BoardWorkerActualsInput,
     caller: GatewayCaller,
   ) => Effect.Effect<BoardStepReading | null, BoardWorkerGatewayError>;
+  /** T3o: a t3o.json schedule's run, for the board that owns the schedule (T3O-118). */
+  readonly launchScheduleRun: (
+    input: BoardGatewayLaunchScheduleRunInput,
+    caller: GatewayCaller,
+  ) => Effect.Effect<BoardGatewayLaunchScheduleRunResult, BoardWorkerGatewayError>;
+  readonly pruneScheduleRuns: (
+    input: BoardGatewayPruneScheduleRunsInput,
+    caller: GatewayCaller,
+  ) => Effect.Effect<BoardGatewayLaunchScheduleRunResult, BoardWorkerGatewayError>;
   readonly subscribeMcpRelay: (
     centralEnvironmentId: EnvironmentId,
     caller: AuthSessionId,
@@ -215,6 +233,8 @@ export const hostForSession = (
   checkReadiness: (input) => host.checkReadiness(input, caller),
   readinessOutput: (key, path) => host.readinessOutput(key, path, caller),
   actuals: (input) => host.actuals(input, caller),
+  launchScheduleRun: (input) => host.launchScheduleRun(input, caller),
+  pruneScheduleRuns: (input) => host.pruneScheduleRuns(input, caller),
   interrupt: (input) => host.interrupt(input, caller),
   stopSession: (input) => host.stopSession(input, caller),
   settle: (input) => host.settle(input, caller),
@@ -257,6 +277,8 @@ export const makeWorkerGatewayHost = Effect.gen(function* () {
   const capacity = yield* Effect.serviceOption(BoardWorkerCapacity);
   // T3o: optional so a harness without the meter answers "nothing measured" (T3O-87).
   const actualsMeter = yield* Effect.serviceOption(BoardActualsMeter);
+  // T3o: filled by the board layer above this one (T3O-118); empty, schedule runs fail.
+  const scheduleRuns = yield* Effect.serviceOption(WorkerScheduleRunsSlot);
 
   const noBoard = (operation: string) =>
     new BoardWorkerGatewayError({
@@ -503,7 +525,147 @@ export const makeWorkerGatewayHost = Effect.gen(function* () {
           }),
         );
 
+  /**
+   * Retention for a board's schedule (T3O-118): the board can't remove a worktree it doesn't
+   * hold, so the worker removes each settled previous run's worktree and branch, and its thread
+   * unless the run touched a card. Only threads this board placed here, or that are already
+   * gone, and only the branch that thread's run made.
+   */
+  const pruneRuns = Effect.fn("WorkerGatewayHost.pruneRuns")(function* (
+    input: BoardGatewayPruneScheduleRunsInput,
+    caller: GatewayCaller,
+  ) {
+    const runs = Option.isSome(scheduleRuns) ? scheduleRuns.value.current() : null;
+    if (runs === null || input.previousRuns.length === 0) return [];
+    const project = yield* local.project(input.projectId).pipe(Effect.orElseSucceed(() => null));
+    if (project === null) return [];
+    const pruned: Array<ThreadId> = [];
+    for (const run of input.previousRuns) {
+      if (run.branch !== null && run.branch !== scheduleRunBranchOf(run.threadId)) continue;
+      const read = yield* local.threadState(run.threadId).pipe(Effect.result);
+      const state = read._tag === "Failure" ? ("unknown" as const) : read.success;
+      if (retentionKeeps(state)) continue;
+      const live = state !== null && state !== "unknown" && !state.deleted;
+      if (live && !(yield* placedByCaller(caller, run.threadId))) continue;
+      const worktreePath = live ? state.worktreePath : null;
+      if (live && !run.touchedCard) {
+        const deleted = yield* local
+          .delete({
+            // Fresh per attempt: the engine replays a rejected command id's refusal for good.
+            commandId: CommandId.make(`server:board-schedule-prune:${SecureRandom.uuidV4Unsafe()}`),
+            threadId: run.threadId,
+          })
+          .pipe(Effect.result);
+        if (deleted._tag === "Failure") continue;
+      }
+      const removed = yield* runs.removeRunWorktree({
+        project: { id: input.projectId, workspaceRoot: project.workspaceRoot },
+        worktreePath,
+        branch: run.branch,
+      });
+      if (removed) pruned.push(run.threadId);
+    }
+    return pruned;
+  });
+
+  const launchScheduleRun = Effect.fn("WorkerGatewayHost.launchScheduleRun")(function* (
+    input: BoardGatewayLaunchScheduleRunInput,
+    caller: GatewayCaller,
+  ) {
+    const { centralEnvironmentId, threadId } = input;
+    const refuse = (detail: string) =>
+      new BoardWorkerGatewayError({
+        kind: "refused",
+        operation: "launchScheduleRun",
+        threadId,
+        detail,
+      });
+    if (caller.boardId === null) return yield* noBoard("launchScheduleRun");
+    if (caller.boardId !== centralEnvironmentId) {
+      return yield* refuse("A board may launch runs only for itself.");
+    }
+    if (input.branch !== scheduleRunBranchOf(threadId)) {
+      return yield* refuse("That isn't a schedule run's branch.");
+    }
+    const runs = Option.isSome(scheduleRuns) ? scheduleRuns.value.current() : null;
+    if (runs === null) {
+      return yield* new BoardWorkerGatewayError({
+        kind: "failed",
+        operation: "launchScheduleRun",
+        threadId,
+        detail: "This worker can't run schedules.",
+      });
+    }
+    yield* relay
+      .claim(centralEnvironmentId, caller.sessionId)
+      .pipe(Effect.mapError(refused("launchScheduleRun", threadId)));
+    // Pruned before reserving: a slow prune would spend the agent slot's reservation window.
+    const pruned = yield* pruneRuns(input, caller);
+    yield* refuseOverAgentCap("launchScheduleRun", threadId, input.modelSelection.instanceId);
+    return yield* Effect.gen(function* () {
+      const recordFailed = (cause: { readonly cause?: unknown }) =>
+        new BoardWorkerGatewayError({
+          kind: "failed",
+          operation: "launchScheduleRun",
+          threadId,
+          detail: `Couldn't record the thread for the board: ${String(cause.cause)}`,
+        });
+      const current = yield* store
+        .relayedThreadCentral(threadId)
+        .pipe(Effect.mapError(recordFailed));
+      if (current !== null && current !== centralEnvironmentId) {
+        return yield* refuse("That thread belongs to another board.");
+      }
+      // Recorded before the launch: the run's first board tool call relays.
+      yield* store
+        .recordRelayedThread(threadId, centralEnvironmentId)
+        .pipe(Effect.mapError(recordFailed));
+      yield* runs
+        .launch({
+          commandId: input.commandId,
+          threadId,
+          projectId: input.projectId,
+          title: input.title,
+          prompt: input.prompt,
+          modelSelection: input.modelSelection,
+          branch: input.branch,
+        })
+        .pipe(
+          Effect.mapError(
+            (error) =>
+              new BoardWorkerGatewayError({
+                kind: "failed",
+                operation: "launchScheduleRun",
+                threadId,
+                detail: error.message,
+              }),
+          ),
+        );
+      return { pruned } satisfies BoardGatewayLaunchScheduleRunResult;
+    }).pipe(Effect.tapError(() => releaseAgentStart(threadId)));
+  });
+
+  const pruneScheduleRuns = Effect.fn("WorkerGatewayHost.pruneScheduleRuns")(function* (
+    input: BoardGatewayPruneScheduleRunsInput,
+    caller: GatewayCaller,
+  ) {
+    if (caller.boardId === null) return yield* noBoard("pruneScheduleRuns");
+    if (caller.boardId !== input.centralEnvironmentId) {
+      return yield* new BoardWorkerGatewayError({
+        kind: "refused",
+        operation: "pruneScheduleRuns",
+        threadId: null,
+        detail: "A board may prune only its own runs.",
+      });
+    }
+    return {
+      pruned: yield* pruneRuns(input, caller),
+    } satisfies BoardGatewayLaunchScheduleRunResult;
+  });
+
   return {
+    launchScheduleRun,
+    pruneScheduleRuns,
     spawn: Effect.fn("WorkerGatewayHost.spawn")(function* (
       { centralEnvironmentId, force, ...input },
       caller,

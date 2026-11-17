@@ -294,6 +294,52 @@ export const BoardGatewayPullRequestLinkInput = Schema.Struct({
 export type BoardGatewayPullRequestLinkInput = typeof BoardGatewayPullRequestLinkInput.Type;
 
 /**
+ * T3o: one run of a t3o.json schedule, launched on the worker (T3O-118). The worker records the
+ * thread as relayed to the calling board, prunes the schedule's older runs, then launches a
+ * fresh worktree off its own checkout's default branch, exactly as a local scheduled run.
+ */
+export const BoardGatewayLaunchScheduleRunInput = Schema.Struct({
+  commandId: CommandId,
+  threadId: ThreadId,
+  /** The WORKER's project id: the board resolves it from the worker's checkouts. */
+  projectId: ProjectId,
+  title: Schema.String,
+  prompt: Schema.String,
+  modelSelection: ModelSelection,
+  /** Created off the worker's default branch for this run alone. */
+  branch: TrimmedNonEmptyString,
+  centralEnvironmentId: EnvironmentId,
+  /** The schedule's runs old enough for retention. The worker removes each settled one that
+      touched no card, and answers which it removed. */
+  previousRuns: Schema.Array(
+    Schema.Struct({
+      threadId: ThreadId,
+      branch: Schema.NullOr(Schema.String),
+      touchedCard: Schema.Boolean,
+    }),
+  ),
+});
+export type BoardGatewayLaunchScheduleRunInput = typeof BoardGatewayLaunchScheduleRunInput.Type;
+
+export const BoardGatewayLaunchScheduleRunResult = Schema.Struct({
+  /** Previous runs whose thread, worktree and branch are gone from the worker. */
+  pruned: Schema.Array(ThreadId),
+});
+export type BoardGatewayLaunchScheduleRunResult = typeof BoardGatewayLaunchScheduleRunResult.Type;
+
+/**
+ * T3o: retention for a schedule's runs on a worker it no longer launches on (T3O-118): the
+ * schedule moved or the worker can't take a run, so no launch carries the runs to prune.
+ */
+export const BoardGatewayPruneScheduleRunsInput = Schema.Struct({
+  /** The WORKER's project id. */
+  projectId: ProjectId,
+  centralEnvironmentId: EnvironmentId,
+  previousRuns: BoardGatewayLaunchScheduleRunInput.fields.previousRuns,
+});
+export type BoardGatewayPruneScheduleRunsInput = typeof BoardGatewayPruneScheduleRunsInput.Type;
+
+/**
  * A gateway call the worker answered with a failure. `refused` and `failed`
  * mirror the gateway's command errors and `read` its read error, so the
  * central server hands the supervisor exactly what a local gateway would.
@@ -416,6 +462,9 @@ export const BoardGatewayCall = Schema.Union([
   }),
   // T3o: a step's measured actuals (T3O-87). An older worker refuses the tag: not measured.
   Schema.TaggedStruct("actuals", { input: BoardWorkerActualsInput }),
+  // T3o: a t3o.json schedule's run (T3O-118). Below protocol 6 the board never sends it.
+  Schema.TaggedStruct("launchScheduleRun", { input: BoardGatewayLaunchScheduleRunInput }),
+  Schema.TaggedStruct("pruneScheduleRuns", { input: BoardGatewayPruneScheduleRunsInput }),
 ]);
 export type BoardGatewayCall = typeof BoardGatewayCall.Type;
 
@@ -452,6 +501,8 @@ export const BOARD_GATEWAY_CALL_RESULTS = {
   checkReadiness: BoardWorkerReadiness,
   readinessOutput: Schema.NullOr(Schema.String),
   actuals: Schema.NullOr(BoardStepReading),
+  launchScheduleRun: BoardGatewayLaunchScheduleRunResult,
+  pruneScheduleRuns: BoardGatewayLaunchScheduleRunResult,
 } as const satisfies Record<BoardGatewayCall["_tag"], Schema.Top>;
 
 /**

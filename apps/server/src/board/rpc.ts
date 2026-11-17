@@ -36,7 +36,16 @@ import {
   type BoardProjectConfigInput,
   type BoardProjectImportCandidatesInput,
   type BoardProjectImportInput,
+  type BoardProjectExportInput,
   type BoardSettingsClientCommand,
+  // T3o: t3o.json schedules (T3O-117).
+  AuthOrchestrationOperateScope,
+  BOARD_SCHEDULE_WS_METHODS,
+  BoardScheduleError,
+  type BoardScheduleListInput,
+  type BoardScheduleRef,
+  type BoardScheduleRetryInput,
+  type BoardScheduleSetMachineInput,
   OrchestrationClientOrigin,
   type ProjectId,
   type BoardWorkerId,
@@ -75,6 +84,7 @@ import {
   type BoardProjectConfigServiceShape,
 } from "./projectConfig/BoardProjectConfigService.ts";
 import { BoardQueries } from "./BoardQueries.ts";
+import { BoardSchedules, type BoardSchedulesShape } from "./schedules/BoardSchedules.ts";
 import { boardCardDetailWakes } from "./cardDetailRelations.ts";
 import type { BoardQueriesShape } from "./projection.ts";
 import { subscribeBoard } from "./boardSubscription.ts";
@@ -168,6 +178,7 @@ export const boardRpcHandlers = Effect.fn("boardRpc.handlers")(function* (
       stampActor,
       projectActorName,
       projectConfig: yield* makeBoardProjectConfigService,
+      schedules: Option.getOrNull(yield* Effect.serviceOption(BoardSchedules)),
       withPlanReviewDefaults: Option.isNone(serverSettings)
         ? Effect.succeed
         : (command) =>
@@ -223,6 +234,8 @@ function makeBoardRpcHandlers(
     readonly stampActor: (command: BoardCommand) => Effect.Effect<void>;
     readonly projectActorName: (projectId: ProjectId) => Effect.Effect<string>;
     readonly projectConfig: BoardProjectConfigServiceShape;
+    /** T3o: null on a harness without the schedules layer (T3O-117). */
+    readonly schedules: BoardSchedulesShape | null;
     readonly mover: BoardCardMoverShape;
     readonly ciLogWorker: BoardCiLogDeps<unknown>["worker"];
     readonly projectTokenStatus: ReturnType<typeof boardProjectTokenStatus>;
@@ -292,6 +305,13 @@ function makeBoardRpcHandlers(
           message: error instanceof Error ? error.message : "Attachment operation failed.",
           cause: error,
         });
+
+  const withSchedules = <A>(
+    use: (schedules: BoardSchedulesShape) => Effect.Effect<A, BoardScheduleError>,
+  ): Effect.Effect<A, BoardScheduleError> =>
+    services.schedules === null
+      ? Effect.fail(new BoardScheduleError({ message: "Schedules aren't running on this server." }))
+      : use(services.schedules);
 
   const detailItem = (detail: BoardCardDetail): BoardCardDetailStreamItem => ({
     kind: "card-detail",
@@ -386,18 +406,55 @@ function makeBoardRpcHandlers(
       authorized(
         BOARD_WS_METHODS.importProjectFile,
         Effect.gen(function* () {
+          // T3o: placing a schedule creates an unattended full-access agent (T3O-117).
+          const places = Object.values(input.schedulePlacements ?? {}).some((env) => env !== null);
+          if (places && !deps.currentSession.scopes.includes(AuthOrchestrationOperateScope)) {
+            return yield* new EnvironmentAuthorizationError({
+              message: `Scheduling needs the ${AuthOrchestrationOperateScope} scope. Import with every schedule on Don't schedule, or sign in with it.`,
+              requiredScope: AuthOrchestrationOperateScope,
+            });
+          }
           const actor = boardHumanActor(yield* services.projectActorName(input.projectId));
           return yield* services.projectConfig.importFile(input, actor);
         }),
       ),
 
-    [BOARD_WS_METHODS.exportProjectFile]: (input: BoardProjectConfigInput) =>
+    [BOARD_WS_METHODS.exportProjectFile]: (input: BoardProjectExportInput) =>
       authorized(
         BOARD_WS_METHODS.exportProjectFile,
         Effect.gen(function* () {
           const actor = boardHumanActor(yield* services.projectActorName(input.projectId));
-          return yield* services.projectConfig.exportFile(input.projectId, actor);
+          return yield* services.projectConfig.exportFile(input.projectId, actor, {
+            excludeHandMade: input.excludeHandMade === true,
+          });
         }),
+      ),
+
+    // T3o: the Schedules tab and the Scheduled tasks page's marker (T3O-117).
+    [BOARD_SCHEDULE_WS_METHODS.list]: (input: BoardScheduleListInput) =>
+      authorized(
+        BOARD_SCHEDULE_WS_METHODS.list,
+        withSchedules((schedules) => schedules.list(input)),
+      ),
+    [BOARD_SCHEDULE_WS_METHODS.setMachine]: (input: BoardScheduleSetMachineInput) =>
+      authorized(
+        BOARD_SCHEDULE_WS_METHODS.setMachine,
+        withSchedules((schedules) => schedules.setMachine(input)),
+      ),
+    [BOARD_SCHEDULE_WS_METHODS.runNow]: (input: BoardScheduleRef) =>
+      authorized(
+        BOARD_SCHEDULE_WS_METHODS.runNow,
+        withSchedules((schedules) => schedules.runNow(input)),
+      ),
+    [BOARD_SCHEDULE_WS_METHODS.retry]: (input: BoardScheduleRetryInput) =>
+      authorized(
+        BOARD_SCHEDULE_WS_METHODS.retry,
+        withSchedules((schedules) => schedules.retry(input)),
+      ),
+    [BOARD_SCHEDULE_WS_METHODS.managedTasks]: (_input: Record<string, never>) =>
+      authorized(
+        BOARD_SCHEDULE_WS_METHODS.managedTasks,
+        withSchedules((schedules) => schedules.managedTasks()),
       ),
 
     /** Each project's GitHub token source and check, when Settings asks. */

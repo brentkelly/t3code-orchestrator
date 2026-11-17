@@ -123,8 +123,9 @@ injection, so no provider adapter changes. The worker's board toolkit recognises
 server placed and forwards the call over the connection the **central server** holds open to it (a
 relay stream plus a respond RPC, carried over the worker's own outbound tunnel since `T3O-84`, so
 agents never learn the board's address). The central server authorizes twice:
-the calling thread must be linked to a card, **and** that card must be placed on the worker the
-call arrived from, so one worker cannot touch another worker's cards. Relayed calls must be safe to
+the calling thread must be linked to a card **or** be a t3o.json schedule run the board recorded
+(`T3O-118`), **and** that card or run must be on the worker the call arrived from, so one worker
+cannot touch another worker's cards. Relayed calls must be safe to
 repeat, because a dropped connection can deliver one twice. When the central server is not
 connected the tool returns a retryable "board unreachable" error, never a silent success.
 

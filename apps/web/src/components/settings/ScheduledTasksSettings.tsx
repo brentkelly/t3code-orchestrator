@@ -92,6 +92,12 @@ import { readEnvironmentScope } from "~/state/session";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { EnvironmentRow, useEnvironmentTransportLabel } from "./EnvironmentRow";
 import { SettingsGroup } from "./SettingsGroup";
+// T3o: tasks a project's t3o.json manages carry its marker (T3O-117).
+import {
+  BoardScheduledTaskEditNote,
+  BoardScheduledTaskStatus,
+  BoardScheduledTasksIntro,
+} from "../../board/schedules/BoardScheduledTaskMarkers";
 // T3o: webhook tasks can be board rules (T3O-78).
 import { BoardWebhookActionFields } from "../../board/BoardWebhookActionFields";
 import { BOARD_RULE_PROMPT } from "@t3tools/contracts";
@@ -485,6 +491,8 @@ export function ScheduledTasksSettings(target: {
           </Button>
         }
       >
+        {/* T3o: explains the t3o.json marker (T3O-117). */}
+        <BoardScheduledTasksIntro />
         {scope.kind === "unavailable" ? (
           <SettingsSection title="Unavailable selection">
             <SettingsRow title={scope.message} />
@@ -820,9 +828,12 @@ function ScheduledTaskRow({
               "Not scheduled"
             )}
           </span>
-          {task.lastRunStatus !== "never" ? (
-            <Badge variant={statusVariant(task.lastRunStatus)}>{task.lastRunStatus}</Badge>
-          ) : null}
+          {/* T3o: a t3o.json task shows the board's own outcome instead (T3O-117). */}
+          <BoardScheduledTaskStatus environmentId={environmentId} task={task}>
+            {task.lastRunStatus !== "never" ? (
+              <Badge variant={statusVariant(task.lastRunStatus)}>{task.lastRunStatus}</Badge>
+            ) : null}
+          </BoardScheduledTaskStatus>
           {/* T3o: board rules are labelled (T3O-78). */}
           {task.boardAction !== undefined ? <Badge variant="outline">Board rule</Badge> : null}
           {task.threadId !== null && scheduledTaskThreadMode(task) !== "new_thread" ? (
@@ -1192,6 +1203,8 @@ function ScheduledTaskEditorDialog({
     >
       {/* The form owns the draft so a keystroke re-renders it, not the dialog chrome. */}
       <DialogPopup className="max-w-xl">
+        {/* T3o: the t3o.json banner or hand-made note (T3O-117). */}
+        <BoardScheduledTaskEditNote environmentId={initialEnvironmentId} task={task} />
         <ScheduledTaskEditorForm
           initialEnvironmentId={initialEnvironmentId}
           task={task}

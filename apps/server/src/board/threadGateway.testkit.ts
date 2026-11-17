@@ -160,6 +160,9 @@ export interface FakeThreadGatewayOptions {
   readonly lastSignalAt?: (threadId: ThreadId) => string | null;
   readonly pendingTurnStartAt?: (threadId: ThreadId) => string | null;
   readonly subagentAwaitingApproval?: (threadId: ThreadId) => boolean;
+  /** Refuse a delete when this answers true. As the engine's receipt does, a refused command id
+      stays refused on every later dispatch. */
+  readonly refuseDelete?: (threadId: ThreadId) => boolean;
 }
 
 interface FakeRecord extends BoardThreadRecord {
@@ -230,6 +233,7 @@ export const makeFakeThreadGateway = (options: FakeThreadGatewayOptions = {}) =>
       Effect.fail(new ThreadCommandRefusedError({ command, threadId, detail }));
 
     const handledCommandIds = new Set<string>();
+    const refusedCommandIds = new Set<string>();
     const pullRequestKey = (input: ThreadPullRequestUnlinkInput) =>
       `${input.host}/${input.repository}#${input.number}`;
     const changePullRequestLinks = (
@@ -361,6 +365,11 @@ export const makeFakeThreadGateway = (options: FakeThreadGatewayOptions = {}) =>
       delete: (input) =>
         Effect.gen(function* () {
           yield* record({ type: "thread.delete", ...input });
+          const commandId = String(input.commandId);
+          if (refusedCommandIds.has(commandId) || options.refuseDelete?.(input.threadId) === true) {
+            refusedCommandIds.add(commandId);
+            return yield* refuse("thread.delete", input.threadId, "Refused.");
+          }
           // As the real engine does: the thread stays readable, as deleted.
           const id = String(input.threadId);
           const projectId =

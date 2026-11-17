@@ -12,6 +12,7 @@ import {
   type BoardClientCommand,
   type BoardCardWorkerMoveRequest,
   type BoardProjectImportCandidatesInput,
+  type BoardProjectExportInput,
   type BoardProjectImportInput,
   type BoardSettingsClientCommand,
   type ProjectId,
@@ -602,7 +603,7 @@ export const getBoardProjectImportCandidates = (input: BoardProjectImportCandida
 export const importBoardProjectFile = (input: BoardProjectImportInput) =>
   request(BOARD_WS_METHODS.importProjectFile, input);
 
-export const exportBoardProjectFile = (input: { readonly projectId: ProjectId }) =>
+export const exportBoardProjectFile = (input: BoardProjectExportInput) =>
   request(BOARD_WS_METHODS.exportProjectFile, input);
 
 export const startBoardStageThread: (input: StartBoardStageThreadInput) => CommandEffect =

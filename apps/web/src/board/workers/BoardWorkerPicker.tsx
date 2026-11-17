@@ -82,6 +82,9 @@ export function BoardWorkerPinMenu(props: {
   readonly onPick: (workerId: BoardWorkerId | null) => void;
   readonly onSetUp?: (workerId: BoardWorkerId) => void;
   readonly note?: string;
+  /** The first row's sub-line, and the heading over the worker rows (T3O-117). */
+  readonly followSub?: string;
+  readonly sectionLabel?: string;
 }) {
   return (
     <>
@@ -102,32 +105,47 @@ export function BoardWorkerPinMenu(props: {
           ) : null}
         </span>
         <span className="text-board-11 text-muted-foreground">
-          The board picks the best ready worker when the build starts
+          {props.followSub ?? "The board picks the best ready worker when the build starts"}
         </span>
       </button>
       <p className="px-2 pt-2 pb-1 text-board-11 font-medium text-muted-foreground">
-        Pin builds to
+        {props.sectionLabel ?? "Pin builds to"}
       </p>
       {props.choices.map((choice) => {
         const row = (
           <div
             className={cn(
-              "flex h-7 items-center gap-1.5 rounded-md px-2 text-board-12-5",
+              "flex items-center gap-1.5 rounded-md px-2 text-board-12-5",
+              choice.sub === undefined ? "h-7" : "py-1",
               choice.selectable ? "cursor-pointer hover:bg-accent" : "text-muted-foreground",
             )}
             key={choice.workerId}
           >
             <button
-              className="flex min-w-0 flex-1 items-center gap-1.5 text-left disabled:cursor-default"
+              className="flex min-w-0 flex-1 flex-col items-stretch text-left disabled:cursor-default"
               disabled={!choice.selectable}
               onClick={() => props.onPick(choice.workerId)}
               type="button"
             >
-              <span className="min-w-0 flex-1 truncate">{choice.label}</span>
-              {props.pinnedWorkerId === choice.workerId ? (
-                <CheckIcon className="size-3 shrink-0 text-muted-foreground" />
-              ) : null}
-              <span className="shrink-0 text-board-11 text-muted-foreground">{choice.detail}</span>
+              <span className="flex min-w-0 items-center gap-1.5">
+                <span className="min-w-0 flex-1 truncate">{choice.label}</span>
+                {props.pinnedWorkerId === choice.workerId ? (
+                  <CheckIcon className="size-3 shrink-0 text-muted-foreground" />
+                ) : null}
+                <span className="shrink-0 text-board-11 text-muted-foreground">
+                  {choice.detail}
+                </span>
+              </span>
+              {choice.sub === undefined ? null : (
+                <span
+                  className={cn(
+                    "truncate text-board-11",
+                    choice.sub.warning ? "text-warning-foreground" : "text-muted-foreground",
+                  )}
+                >
+                  {choice.sub.text}
+                </span>
+              )}
             </button>
             {choice.canSetUp && props.onSetUp !== undefined ? (
               <button
