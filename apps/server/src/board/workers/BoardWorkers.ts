@@ -21,6 +21,7 @@ import {
   CommandId,
   EMPTY_BOARD_STATE,
   ProjectId,
+  type BoardCardThreadLink,
   type BoardWorker,
   type BoardWorkerJoinCodeCreated,
   type BoardWorkerRemovePreview,
@@ -348,35 +349,34 @@ export const makeBoardWorkers = Effect.gen(function* () {
     Effect.map((model) => model.board ?? EMPTY_BOARD_STATE),
   );
 
-  /** Titles read before, kept because a worker's titles are fixed at spawn: a thread on a worker
-      that did not answer this read keeps the one it had. */
+  /** Titles read before, kept because a worker's titles are fixed at spawn: a thread whose
+      worker did not answer keeps the one it had. Pruned to the board's live worker links. */
   const knownTitles = yield* Ref.make(new Map<ThreadId, string>());
+
+  const liveWorkerThreadIds = (links: ReadonlyArray<BoardCardThreadLink>) =>
+    links.flatMap((link) =>
+      link.tombstonedAt === null && boardThreadLinkWorkerId(link) !== BOARD_LOCAL_WORKER_ID
+        ? [link.threadId]
+        : [],
+    );
 
   const threadTitles: BoardWorkersShape["threadTitles"] = Effect.fn("BoardWorkers.threadTitles")(
     function* (cardId) {
-      const card = (yield* readBoard).cards.find((candidate) => candidate.id === cardId);
+      const board = yield* readBoard;
+      const card = board.cards.find((candidate) => candidate.id === cardId);
       if (card === undefined)
         return yield* actionError("not-found", "That card isn't on this board.");
-      const threadIds = card.threadLinks.flatMap((link) =>
-        link.tombstonedAt === null && boardThreadLinkWorkerId(link) !== BOARD_LOCAL_WORKER_ID
-          ? [link.threadId]
-          : [],
-      );
+      const threadIds = liveWorkerThreadIds(card.threadLinks);
       if (threadIds.length === 0) return {};
-      const records = yield* threads
-        .threadRecords(threadIds)
-        .pipe(
-          Effect.mapError(() =>
-            actionError("not-online", "No worker holding this card's threads answered."),
-          ),
-        );
-      return yield* Ref.modify(knownTitles, (known) => {
-        const next = new Map(known);
+      const records = yield* threads.threadRecords(threadIds).pipe(Effect.option);
+      const live = new Set(board.cards.flatMap((each) => liveWorkerThreadIds(each.threadLinks)));
+      const titles = yield* Ref.modify(knownTitles, (known) => {
+        const next = new Map([...known].filter(([threadId]) => live.has(threadId)));
         const titles: Record<ThreadId, string> = {};
         for (const threadId of threadIds) {
-          const record = records.get(threadId);
+          const record = Option.isSome(records) ? records.value.get(threadId) : undefined;
           if (record === undefined) {
-            const title = known.get(threadId);
+            const title = next.get(threadId);
             if (title !== undefined) titles[threadId] = title;
           } else if (record.deleted || record.title === undefined) {
             next.delete(threadId);
@@ -387,6 +387,10 @@ export const makeBoardWorkers = Effect.gen(function* () {
         }
         return [titles, next] as const;
       });
+      // With no answer and nothing known, an error keeps the client's own last titles.
+      if (Option.isNone(records) && Object.keys(titles).length === 0)
+        return yield* actionError("not-online", "No worker holding this card's threads answered.");
+      return titles;
     },
   );
 

@@ -681,18 +681,30 @@ describe("BoardWorkers", () => {
       });
       assert.deepStrictEqual(asked, [[ON_WORKER, DELETED_ON_WORKER]]);
     }));
-  test("a worker thread keeps its known title when its worker misses a partial answer", () =>
+  test("a worker thread keeps its known title when its worker misses or fails a read", () =>
     Effect.gen(function* () {
       const answers = [
         new Map([record(ON_WORKER, { title: "T3O-1 · Building" })]),
         new Map([record(DELETED_ON_WORKER, { deleted: true })]),
+        undefined,
         new Map([record(ON_WORKER, { deleted: true })]),
+        undefined,
       ];
-      const { workers } = yield* titlesSetup(() => Effect.sync(() => answers.shift()!));
+      const { workers } = yield* titlesSetup(() =>
+        Effect.suspend(() => {
+          const answer = answers.shift();
+          return answer === undefined
+            ? Effect.fail(new ThreadReadError({ operation: "threadRecords", detail: "offline" }))
+            : Effect.succeed(answer);
+        }),
+      );
       const expected = { [ON_WORKER]: "T3O-1 · Building" };
       assert.deepStrictEqual(yield* workers.threadTitles(TITLED_CARD), expected);
       assert.deepStrictEqual(yield* workers.threadTitles(TITLED_CARD), expected);
+      assert.deepStrictEqual(yield* workers.threadTitles(TITLED_CARD), expected);
       assert.deepStrictEqual(yield* workers.threadTitles(TITLED_CARD), {});
+      const error = yield* Effect.flip(workers.threadTitles(TITLED_CARD));
+      assert.strictEqual(error.code, "not-online");
     }));
   test("worker thread titles: nothing asked without worker links, unknown card, no answer", () =>
     Effect.gen(function* () {
