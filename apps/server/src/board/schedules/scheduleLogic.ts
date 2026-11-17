@@ -10,7 +10,7 @@ import {
   type BoardScheduleWhen,
   type ScheduledTask,
   type T3oFileSchedule,
-  type ThreadId,
+  ThreadId,
 } from "@t3tools/contracts";
 
 import * as DateTime from "effect/DateTime";
@@ -30,7 +30,18 @@ const OVERLAP_CAP_MS = 6 * HOUR_MS;
 const LAUNCH_GRACE_MS = 5 * MINUTE_MS;
 
 /** Every schedule run's branch starts so; a worker prunes no other branch for a board. */
-export const SCHEDULE_RUN_BRANCH_PREFIX = "t3o/schedule-run-";
+const SCHEDULE_RUN_BRANCH_PREFIX = "t3o/schedule-run-";
+const SCHEDULE_RUN_THREAD_PREFIX = "thread-schedule-";
+
+/** A run's thread id and branch share one UUID, so either names the other. */
+export const scheduleRunThreadId = (uuid: string) =>
+  ThreadId.make(`${SCHEDULE_RUN_THREAD_PREFIX}${uuid}`);
+export const scheduleRunBranch = (uuid: string) => `${SCHEDULE_RUN_BRANCH_PREFIX}${uuid}`;
+/** The only branch a run with this thread id may have, or null when it isn't a run's thread. */
+export const scheduleRunBranchOf = (threadId: ThreadId): string | null =>
+  threadId.startsWith(SCHEDULE_RUN_THREAD_PREFIX)
+    ? scheduleRunBranch(threadId.slice(SCHEDULE_RUN_THREAD_PREFIX.length))
+    : null;
 
 export const SKIPPED_NOT_SCHEDULED = "Skipped: not scheduled";
 export const SKIPPED_STILL_GOING = "Skipped: previous run still going";

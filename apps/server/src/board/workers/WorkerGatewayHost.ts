@@ -40,6 +40,7 @@ import {
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as FileSystem from "effect/FileSystem";
@@ -70,7 +71,7 @@ import {
 import { McpRelayHost, type McpRelayRefused } from "./McpRelayHost.ts";
 import { BoardCiRunner, boardCiLogDir } from "../ci/BoardCiRunner.ts";
 import { toWireCiDone } from "../ci/remoteCiRunner.ts";
-import { SCHEDULE_RUN_BRANCH_PREFIX, retentionKeeps } from "../schedules/scheduleLogic.ts";
+import { retentionKeeps, scheduleRunBranchOf } from "../schedules/scheduleLogic.ts";
 import { WorkerScheduleRunsSlot } from "../schedules/WorkerScheduleRuns.ts";
 import { isSafeBoardCiLogTarget, readBoardCiLogFile } from "../ci/ciLog.ts";
 
@@ -527,7 +528,7 @@ export const makeWorkerGatewayHost = Effect.gen(function* () {
   /**
    * Retention for a board's schedule (T3O-118): the board can't remove a worktree it doesn't
    * hold, so the worker removes each settled previous run that touched no card. Only threads
-   * this board placed here, or that are already gone, and only branches a schedule run makes.
+   * this board placed here, or that are already gone, and only the branch that thread's run made.
    */
   const pruneRuns = Effect.fn("WorkerGatewayHost.pruneRuns")(function* (
     input: BoardGatewayPruneScheduleRunsInput,
@@ -540,7 +541,7 @@ export const makeWorkerGatewayHost = Effect.gen(function* () {
     const pruned: Array<ThreadId> = [];
     for (const run of input.previousRuns) {
       if (run.touchedCard) continue;
-      if (run.branch !== null && !run.branch.startsWith(SCHEDULE_RUN_BRANCH_PREFIX)) continue;
+      if (run.branch !== null && run.branch !== scheduleRunBranchOf(run.threadId)) continue;
       const read = yield* local.threadState(run.threadId).pipe(Effect.result);
       const state = read._tag === "Failure" ? ("unknown" as const) : read.success;
       if (retentionKeeps(state, false)) continue;
@@ -550,7 +551,8 @@ export const makeWorkerGatewayHost = Effect.gen(function* () {
         worktreePath = state.worktreePath;
         const deleted = yield* local
           .delete({
-            commandId: CommandId.make(`server:board-schedule-prune:${run.threadId}`),
+            // Fresh per attempt: the engine replays a rejected command id's refusal for good.
+            commandId: CommandId.make(`server:board-schedule-prune:${SecureRandom.uuidV4Unsafe()}`),
             threadId: run.threadId,
           })
           .pipe(Effect.result);
@@ -582,7 +584,7 @@ export const makeWorkerGatewayHost = Effect.gen(function* () {
     if (caller.boardId !== centralEnvironmentId) {
       return yield* refuse("A board may launch runs only for itself.");
     }
-    if (!input.branch.startsWith(SCHEDULE_RUN_BRANCH_PREFIX)) {
+    if (input.branch !== scheduleRunBranchOf(threadId)) {
       return yield* refuse("That isn't a schedule run's branch.");
     }
     const runs = Option.isSome(scheduleRuns) ? scheduleRuns.value.current() : null;

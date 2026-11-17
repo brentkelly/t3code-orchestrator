@@ -95,6 +95,7 @@ export const makeInProcessWorker = (
     /** Runs before each call the worker's thread engine takes. */
     readonly onThreadCall?: FakeThreadGatewayOptions["onCall"];
     readonly subagentAwaitingApproval?: FakeThreadGatewayOptions["subagentAwaitingApproval"];
+    readonly refuseDelete?: FakeThreadGatewayOptions["refuseDelete"];
     /** More checkouts on the worker, beside the board's own repository. */
     readonly extraProjects?: ReadonlyArray<{
       readonly projectId: ProjectId;
@@ -113,6 +114,7 @@ export const makeInProcessWorker = (
       ...(options.subagentAwaitingApproval === undefined
         ? {}
         : { subagentAwaitingApproval: options.subagentAwaitingApproval }),
+      ...(options.refuseDelete === undefined ? {} : { refuseDelete: options.refuseDelete }),
       projects: [
         {
           id: WORKER_PROJECT_ID,

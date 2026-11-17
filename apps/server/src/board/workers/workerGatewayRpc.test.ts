@@ -30,6 +30,7 @@ import { TestClock } from "effect/testing";
 import type { AuthenticatedSession } from "../../auth/EnvironmentAuth.ts";
 import { aliveThread, fakeThreadState } from "../threadGateway.testkit.ts";
 import { makeInProcessWorker, WORKER_PROJECT_ID } from "./distributed.testkit.ts";
+import { scheduleRunBranchOf } from "../schedules/scheduleLogic.ts";
 import { decodeGatewayCallResult } from "./gatewayWire.ts";
 import { makeMcpRelayHost, type McpRelayHostShape } from "./McpRelayHost.ts";
 import type { BoardRelayStoreShape } from "./BoardRelayStore.ts";
@@ -382,13 +383,18 @@ describe("a board's schedule run on the worker (T3O-118)", () => {
       title: "walls nightly full run",
       prompt: "Run the suite.",
       modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5-codex" },
-      branch: "t3o/schedule-run-run-1",
+      branch: "t3o/schedule-run-run",
       centralEnvironmentId: CENTRAL,
       previousRuns,
     },
   });
   /** A worker whose schedule port records each launch and removal. */
-  const workerWithRuns = (options: { readonly agentCapRefusal?: () => string | null } = {}) =>
+  const workerWithRuns = (
+    options: {
+      readonly agentCapRefusal?: () => string | null;
+      readonly refuseDelete?: (threadId: ThreadId) => boolean;
+    } = {},
+  ) =>
     Effect.gen(function* () {
       const launched: Array<{ projectId: string; relayedTo: EnvironmentId | null }> = [];
       const removed: Array<{ worktreePath: string | null; branch: string | null }> = [];
@@ -483,11 +489,11 @@ describe("a board's schedule run on the worker (T3O-118)", () => {
     Effect.scoped(
       Effect.gen(function* () {
         const { env, removed, run } = yield* workerWithRuns();
-        const settled = ThreadId.make("run-settled");
-        const touched = ThreadId.make("run-touched");
-        const turning = ThreadId.make("run-turning");
-        const foreign = ThreadId.make("run-other-board");
-        const gone = ThreadId.make("run-gone");
+        const settled = ThreadId.make("thread-schedule-settled");
+        const touched = ThreadId.make("thread-schedule-touched");
+        const turning = ThreadId.make("thread-schedule-turning");
+        const foreign = ThreadId.make("thread-schedule-other-board");
+        const gone = ThreadId.make("thread-schedule-gone");
         yield* Ref.update(env.threads.states, (states) =>
           new Map(states)
             .set(settled, fakeThreadState(settled, { worktreePath: "/home/worker/run-settled" }))
@@ -501,7 +507,7 @@ describe("a board's schedule run on the worker (T3O-118)", () => {
         yield* env.relayStore.store.recordRelayedThread(foreign, EnvironmentId.make("env-other"));
         const previous = (threadId: ThreadId, touchedCard = false) => ({
           threadId,
-          branch: `t3o/schedule-run-${threadId}`,
+          branch: scheduleRunBranchOf(threadId),
           touchedCard,
         });
         const encoded = yield* run(
@@ -511,15 +517,16 @@ describe("a board's schedule run on the worker (T3O-118)", () => {
             previous(turning),
             previous(foreign),
             previous(gone),
-            // Never a branch a schedule run didn't make.
-            { threadId: ThreadId.make("run-odd"), branch: "main", touchedCard: false },
+            // Never a branch that thread's run didn't make.
+            { threadId: ThreadId.make("thread-schedule-odd"), branch: "main", touchedCard: false },
+            { threadId: gone, branch: "t3o/schedule-run-other", touchedCard: false },
           ]),
         );
         const { pruned } = yield* decodeGatewayCallResult("launchScheduleRun", encoded);
         assert.deepStrictEqual(pruned, [settled, gone]);
         assert.deepStrictEqual(removed, [
-          { worktreePath: "/home/worker/run-settled", branch: "t3o/schedule-run-run-settled" },
-          { worktreePath: null, branch: "t3o/schedule-run-run-gone" },
+          { worktreePath: "/home/worker/run-settled", branch: "t3o/schedule-run-settled" },
+          { worktreePath: null, branch: "t3o/schedule-run-gone" },
         ]);
         const deletes = (yield* env.threads.calls).filter((call) => call.type === "thread.delete");
         assert.deepStrictEqual(
@@ -530,11 +537,43 @@ describe("a board's schedule run on the worker (T3O-118)", () => {
     ),
   );
 
+  it.effect("prunes a run on a later pass after its first delete is refused", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let refuse = true;
+        const { env, removed, run } = yield* workerWithRuns({ refuseDelete: () => refuse });
+        const settled = ThreadId.make("thread-schedule-settled");
+        yield* Ref.update(env.threads.states, (states) =>
+          new Map(states).set(settled, fakeThreadState(settled)),
+        );
+        yield* env.relayStore.store.recordRelayedThread(settled, CENTRAL);
+        const pruneCall: BoardGatewayCall = {
+          _tag: "pruneScheduleRuns",
+          input: {
+            projectId: WORKER_PROJECT_ID,
+            centralEnvironmentId: CENTRAL,
+            previousRuns: [
+              { threadId: settled, branch: scheduleRunBranchOf(settled), touchedCard: false },
+            ],
+          },
+        };
+        const prune = run(pruneCall).pipe(
+          Effect.flatMap((encoded) => decodeGatewayCallResult("pruneScheduleRuns", encoded)),
+        );
+        assert.deepStrictEqual((yield* prune).pruned, []);
+        assert.deepStrictEqual(removed, []);
+        refuse = false;
+        assert.deepStrictEqual((yield* prune).pruned, [settled]);
+        assert.strictEqual(removed.length, 1);
+      }),
+    ),
+  );
+
   it.effect("prunes without launching, only for the board's own runs", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const { env, launched, removed, run, refusalOf } = yield* workerWithRuns();
-        const settled = ThreadId.make("run-settled");
+        const settled = ThreadId.make("thread-schedule-settled");
         yield* Ref.update(env.threads.states, (states) =>
           new Map(states).set(
             settled,
@@ -548,7 +587,7 @@ describe("a board's schedule run on the worker (T3O-118)", () => {
             projectId: WORKER_PROJECT_ID,
             centralEnvironmentId,
             previousRuns: [
-              { threadId: settled, branch: "t3o/schedule-run-run-settled", touchedCard: false },
+              { threadId: settled, branch: "t3o/schedule-run-settled", touchedCard: false },
             ],
           },
         });
@@ -562,7 +601,7 @@ describe("a board's schedule run on the worker (T3O-118)", () => {
         assert.deepStrictEqual(pruned, [settled]);
         assert.deepStrictEqual(launched, []);
         assert.deepStrictEqual(removed, [
-          { worktreePath: "/home/worker/run-settled", branch: "t3o/schedule-run-run-settled" },
+          { worktreePath: "/home/worker/run-settled", branch: "t3o/schedule-run-settled" },
         ]);
       }),
     ),

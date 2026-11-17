@@ -46,7 +46,8 @@ import type {
 } from "./BoardScheduleStore.ts";
 import { BoardScheduleRunError } from "./scheduleRuns.ts";
 import {
-  SCHEDULE_RUN_BRANCH_PREFIX,
+  scheduleRunBranch,
+  scheduleRunThreadId,
   SKIPPED_NOT_SCHEDULED,
   SKIPPED_STILL_GOING,
   adoptChanges,
@@ -1084,8 +1085,8 @@ export const makeBoardSchedules = (deps: BoardSchedulesDeps): BoardSchedulesShap
     const target = yield* workers.target({ workerId, projectId: row.projectId, modelSelection });
     if (target.kind === "skip") return yield* skip(`Skipped: ${target.reason}`);
     const uuid = yield* deps.uuid;
-    const threadId = ThreadId.make(`thread-schedule-${uuid}`);
-    const branch = `${SCHEDULE_RUN_BRANCH_PREFIX}${uuid}`;
+    const threadId = scheduleRunThreadId(uuid);
+    const branch = scheduleRunBranch(uuid);
     yield* store
       .recordRun({
         threadId,
@@ -1173,9 +1174,9 @@ export const makeBoardSchedules = (deps: BoardSchedulesDeps): BoardSchedulesShap
       return yield* runOnWorker(row, row.environmentId, task);
     }
     const uuid = yield* deps.uuid;
-    const threadId = ThreadId.make(`thread-schedule-${uuid}`);
+    const threadId = scheduleRunThreadId(uuid);
     // A name of the board's own, so retention deletes exactly this branch and nothing renames it.
-    const branch = `${SCHEDULE_RUN_BRANCH_PREFIX}${uuid}`;
+    const branch = scheduleRunBranch(uuid);
     // Recorded before anything launches, so a crash mid-launch still leaves the run.
     yield* store
       .recordRun({
