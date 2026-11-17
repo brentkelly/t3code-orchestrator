@@ -1420,6 +1420,49 @@ it.effect("behind again after the update (a busy base) holds; no second update",
   ),
 );
 
+it.effect("behind with checks still running waits on the checks; no branch update", () =>
+  withGovernor(
+    setup({
+      cards: [cardAtMerge({ autoMerge: true })],
+      mergeFailure: "The head branch is not up to date with the base branch.",
+      mergeState: probe({ blockedReason: "behind", passed: 1, pending: 1 }),
+    }),
+    (h) =>
+      Effect.gen(function* () {
+        yield* h.reactor.drain;
+        assert.strictEqual(startedFixes(yield* h.commands).length, 0);
+        assert.strictEqual(cardOf(yield* h.board)?.mergeStay?.branchUpdates ?? 0, 0);
+        assert.notStrictEqual(holdOf(yield* h.board)?.retryAt ?? null, null);
+      }),
+  ),
+);
+
+it.effect.each(["behind", "conflict"] as const)(
+  "a %s fix whose start is refused does not spend the stay's fix",
+  (blockedReason) =>
+    withGovernor(
+      {
+        ...setup({
+          cards: [cardAtMerge({ autoMerge: true })],
+          mergeFailure: "the host refused",
+          mergeState: probe({ blockedReason, passed: 2 }),
+        }),
+        onDispatch: (command) =>
+          command.type === "board.card.start-stage-thread"
+            ? Effect.die("start refused")
+            : Effect.void,
+      },
+      (h) =>
+        Effect.gen(function* () {
+          yield* h.reactor.drain;
+          assert.strictEqual((yield* h.mergeAttempts).length, 1);
+          const stay = cardOf(yield* h.board)?.mergeStay ?? null;
+          assert.strictEqual(stay?.conflictFixes ?? 0, 0);
+          assert.strictEqual(stay?.branchUpdates ?? 0, 0);
+        }),
+    ),
+);
+
 it.effect("one conflict fix per stay: a second conflict after a restart is a hard stop", () =>
   withGovernor(
     setup({

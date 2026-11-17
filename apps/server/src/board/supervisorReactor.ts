@@ -6360,6 +6360,17 @@ const make = Effect.gen(function* () {
     });
   });
 
+  /** T3o: hand back a fix spent on a start that never landed: no fix ran (T3O-116). */
+  const refundMergeFix = Effect.fn("board-supervisor-refundMergeFix")(function* (card: BoardCard) {
+    yield* dispatchOptional({
+      type: "board.card.update",
+      commandId: yield* commandId("merge-stay-refund"),
+      cardId: card.id,
+      mergeStay: card.mergeStay ?? null,
+      createdAt: yield* nowIso,
+    });
+  });
+
   /** T3o: a human's Merge click or someone else's push grants the fixes again (T3O-116). */
   const resetMergeFixes = Effect.fn("board-supervisor-resetMergeFixes")(function* (
     card: BoardCard,
@@ -8734,15 +8745,19 @@ const make = Effect.gen(function* () {
         });
         if (!started) {
           disarmPendingMerge(fresh.id);
+          yield* refundMergeFix(fresh);
           return { outcome: "refused" as const, detail };
         }
         return { outcome: "conflict" as const, detail };
       }
-      // T3o: a branch behind its base is brought up to date once per stay, through the same fix
-      // step as a conflict (the stage's prompt merges the base in), then the merge retries
-      // (T3O-116). Behind again after that is a hold: a busy base must not loop it.
+      // T3o: a branch behind its base, and only behind (its checks green), is updated once per
+      // stay through the conflict fix step, then the merge retries (T3O-116). An update would not
+      // clear running or failed checks, and behind again after it holds: a busy base must not loop.
       if (
         state?.blockedReason === "behind" &&
+        !state.checksUnread &&
+        state.checks.failed === 0 &&
+        state.checks.pending === 0 &&
         spent.branchUpdates === 0 &&
         pullRequest.headBranch === fresh.worktree?.branch
       ) {
@@ -8766,6 +8781,7 @@ const make = Effect.gen(function* () {
             };
           }
           disarmPendingMerge(fresh.id);
+          yield* refundMergeFix(fresh);
         }
       }
       // Failing CI gets one automatic fix until the next Merge click (`checksFixSpent`); conflicts
