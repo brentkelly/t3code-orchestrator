@@ -7,7 +7,7 @@ import * as NodePath from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 
 const SCRIPT = NodePath.resolve(import.meta.dirname, "../.t3/cleanup.sh");
-const LONG_AGO = new Date("2020-01-01T00:00:00Z");
+const LONG_AGO = 1_577_836_800; // 2020-01-01T00:00:00Z, in epoch seconds
 
 function makeEntry(root: string, name: string, age: "old" | "new") {
   const path = NodePath.join(root, name);
