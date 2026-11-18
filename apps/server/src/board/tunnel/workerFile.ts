@@ -321,8 +321,13 @@ export function readWorkerStatus(home: string): WorkerStatusFile | null {
 function writeJsonAtomic(path: string, value: unknown): void {
   NodeFS.mkdirSync(NodePath.dirname(path), { recursive: true });
   const temporary = `${path}.${process.pid}.${Date.now()}.tmp`;
-  NodeFS.writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
-  NodeFS.renameSync(temporary, path);
+  try {
+    NodeFS.writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
+    NodeFS.renameSync(temporary, path);
+  } finally {
+    // A failed write or rename (a full disk) must not leave the temporary file behind.
+    NodeFS.rmSync(temporary, { force: true });
+  }
 }
 
 export function writeWorkerFile(home: string, file: WorkerFile): void {

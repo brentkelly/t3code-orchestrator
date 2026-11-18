@@ -18,6 +18,7 @@ import {
   upsertWorkerBoard,
   workerFilePath,
   writeWorkerFile,
+  writeWorkerStatus,
 } from "./workerFile.ts";
 
 const homes: string[] = [];
@@ -54,6 +55,14 @@ describe("worker.json", () => {
     expect(() => readWorkerFile(home)).toThrow(WorkerFileInvalidError);
     NodeFS.writeFileSync(workerFilePath(home), JSON.stringify({ boards: "nope" }));
     expect(() => readWorkerFile(home)).toThrow(WorkerFileInvalidError);
+  });
+
+  it("leaves no temporary file behind when the write fails (T3O-123)", () => {
+    const home = makeHome();
+    // A folder where the status file goes makes the rename fail, as a full disk fails a write.
+    NodeFS.mkdirSync(NodePath.join(home, "worker-status.json"));
+    expect(() => writeWorkerStatus(home, { boards: [] } as never)).toThrow();
+    expect(NodeFS.readdirSync(home)).toEqual(["worker-status.json"]);
   });
 
   it("names the boards whose records outlived them, never this server's own", () => {
