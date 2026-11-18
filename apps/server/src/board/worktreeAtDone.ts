@@ -15,6 +15,7 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import { ChildProcessSpawner } from "effect/process";
 
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import {
@@ -60,6 +61,8 @@ const diskBytes = async (path: string): Promise<number> => {
   return total;
 };
 
+const MAX_OUTPUT_BYTES = 64 * 1024 * 1024;
+
 const run = (
   git: GitVcsDriver.GitVcsDriver["Service"],
   operation: string,
@@ -67,15 +70,29 @@ const run = (
   args: ReadonlyArray<string>,
   env?: NodeJS.ProcessEnv,
 ) =>
-  git.execute({
-    operation: `boardWorktreeAtDone.${operation}`,
-    cwd,
-    args,
-    allowNonZeroExit: true,
-    timeoutMs: 120_000,
-    maxOutputBytes: 64 * 1024 * 1024,
-    ...(env === undefined ? {} : { env }),
-  });
+  git
+    .execute({
+      operation: `boardWorktreeAtDone.${operation}`,
+      cwd,
+      args,
+      allowNonZeroExit: true,
+      timeoutMs: 120_000,
+      maxOutputBytes: MAX_OUTPUT_BYTES,
+      ...(env === undefined ? {} : { env }),
+    })
+    .pipe(
+      // A cut-off listing must not be acted on (a truncated path can name a tracked directory),
+      // so it reads as a failed command, which every caller already refuses.
+      Effect.map((result) =>
+        result.stdoutTruncated
+          ? {
+              ...result,
+              exitCode: ChildProcessSpawner.ExitCode(1),
+              stderr: `git ${args[0] ?? ""} output exceeded ${formatBoardBytes(MAX_OUTPUT_BYTES)}`,
+            }
+          : result,
+      ),
+    );
 
 /** `yyyymmddThhmmss` in UTC, for a snapshot ref's name. */
 export const snapshotStamp = (nowMs: number): string =>
@@ -259,6 +276,13 @@ export const snapshotBoardWorktree = Effect.fn("snapshotBoardWorktree")(function
   }).pipe(Effect.ensuring(Effect.promise(() => NodeFSP.rm(index, { force: true }))));
 });
 
+export const writeStripPendingMarker = (gitDir: string, reason: string) =>
+  Effect.promise(() =>
+    NodeFSP.writeFile(NodePath.join(gitDir, STRIP_PENDING_MARKER), `${reason}\n`).catch(
+      () => undefined,
+    ),
+  );
+
 /**
  * Delete what git ignores in the worktree, except `.env*` files and `.claude/`, `.vscode/`,
  * `.idea/`; tracked files are never listed, so never touched. Clears the setup markers so a
@@ -286,35 +310,44 @@ export const stripBoardWorktree = Effect.fn("stripBoardWorktree")(function* (inp
   const entries = listed.stdout
     .split("\0")
     .filter((entry) => entry.length > 0 && !isKeptIgnoredEntry(entry));
-  const freedBytes = yield* Effect.promise(async () => {
+  const { freedBytes, undeleted } = yield* Effect.promise(async () => {
     let freed = 0;
+    let failed = 0;
     for (const entry of entries) {
       const target = NodePath.join(input.worktreePath, entry);
       // `ls-files` names paths inside the worktree; refuse anything that resolves outside it.
       const relative = NodePath.relative(input.worktreePath, target);
       if (relative === "" || relative.startsWith("..") || NodePath.isAbsolute(relative)) continue;
-      freed += await diskBytes(target);
-      await NodeFSP.rm(target, { recursive: true, force: true }).catch(() => undefined);
+      const bytes = await diskBytes(target);
+      const removed = await NodeFSP.rm(target, { recursive: true, force: true }).then(
+        () => true,
+        () => false,
+      );
+      if (removed) freed += bytes;
+      else failed += 1;
     }
-    return freed;
+    return { freedBytes: freed, undeleted: failed };
   });
   yield* Effect.promise(async () => {
     for (const marker of [SETUP_DONE_MARKER, SETUP_FAILED_MARKER, STRIP_PENDING_MARKER]) {
       await NodeFSP.rm(NodePath.join(input.gitDir, marker), { force: true }).catch(() => undefined);
     }
-    await NodeFSP.writeFile(NodePath.join(input.gitDir, STRIPPED_MARKER), "stripped\n").catch(
-      () => undefined,
-    );
   });
+  // Anything left behind stays owed, so the sweep retries it rather than calling it stripped.
+  if (undeleted > 0) {
+    yield* writeStripPendingMarker(
+      input.gitDir,
+      `${undeleted} ignored entries could not be deleted`,
+    );
+  } else {
+    yield* Effect.promise(() =>
+      NodeFSP.writeFile(NodePath.join(input.gitDir, STRIPPED_MARKER), "stripped\n").catch(
+        () => undefined,
+      ),
+    );
+  }
   return { freedBytes };
 });
-
-export const writeStripPendingMarker = (gitDir: string, reason: string) =>
-  Effect.promise(() =>
-    NodeFSP.writeFile(NodePath.join(gitDir, STRIP_PENDING_MARKER), `${reason}\n`).catch(
-      () => undefined,
-    ),
-  );
 
 export const hasMarker = (gitDir: string, marker: string) =>
   Effect.promise(() =>

@@ -1038,6 +1038,33 @@ describe("worktreeAtDone: remove (T3O-123)", () => {
     ),
   );
 
+  it.effect("a merged card whose branch Done deletes is removed only when clean", () =>
+    withGovernor(
+      {
+        board: {
+          nextCardNumberByProject: {},
+          cards: [doneCard({ pullRequest: cachedPr("merged") })],
+        },
+        settings: settings("remove"),
+        pullRequest: forgePr("merged"),
+        // Commits made after the merge live only on the branch Done is about to delete.
+        worktreeUndurable: true,
+        workspaces: withWorktreeOps({
+          snapshotWorktree: () => Effect.die("a branch Done deletes must not be force-removed"),
+          retireWorktree: () => Effect.die("a branch Done deletes must not be force-removed"),
+        }),
+      },
+      (h) =>
+        Effect.gen(function* () {
+          yield* h.reactor.drainWorktreeSweep;
+          assert.deepEqual(yield* h.removedWorktrees, []);
+          const kept = (yield* h.board).cards[0]!.worktree;
+          assert.equal(kept?.status, "ready");
+          assert.include(kept?.reclaimBlockedReason ?? "", "its merged branch is deleted at Done");
+        }),
+    ),
+  );
+
   it.effect("falls back to the safety rule, saying why, when the changes are over the cap", () =>
     withGovernor(
       {
@@ -1148,6 +1175,44 @@ describe("worktreeAtDone: kept worktrees are stripped (T3O-123)", () => {
           assert.deepEqual(cleanupNotes(yield* h.commands), [
             "Removed 3.0 GB of ignored files from the kept worktree",
           ]);
+        }),
+    );
+  });
+
+  it.effect("strips nothing of a card put back to work after the cleanup judged it", () => {
+    const calls: Array<boolean> = [];
+    const backToWork: { model: Ref.Ref<BoardReadModel> | null } = { model: null };
+    return withGovernor(
+      {
+        board: { nextCardNumberByProject: {}, cards: [doneCard()] },
+        settings: settings("keep"),
+        pullRequest: null,
+        workspaces: (local) => {
+          const workspaces = recordingStrip(calls)(local);
+          return {
+            ...workspaces,
+            // The card is dragged back out of Done just as its cleanup reaches the worker.
+            forCard: (card) =>
+              Effect.gen(function* () {
+                const model = backToWork.model;
+                if (model !== null) {
+                  backToWork.model = null;
+                  yield* editCard(model, "card-1", (current) => ({
+                    ...current,
+                    stage: BOARD_SEED_STAGE_IDS.building,
+                    pullRequestHistory: [...current.pullRequestHistory, cachedPr("open")],
+                  }));
+                }
+                return yield* workspaces.forCard(card);
+              }),
+          };
+        },
+      },
+      (h) =>
+        Effect.gen(function* () {
+          backToWork.model = h.model;
+          yield* h.reactor.drainWorktreeSweep;
+          assert.deepEqual(calls, []);
         }),
     );
   });

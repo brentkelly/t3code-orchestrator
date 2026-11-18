@@ -276,6 +276,23 @@ describe("stripBoardWorktree", () => {
       }).pipe(Effect.scoped, Effect.provide(GitLayer)),
   );
 
+  it.effect("counts no bytes for, and stays owed, what it could not delete", () =>
+    Effect.gen(function* () {
+      const { worktree, gitDir } = yield* repoWithWorktree;
+      const locked = NodePath.join(worktree, "target", "debug");
+      write(NodePath.join(locked, "app"), "z".repeat(2000));
+      NodeFS.chmodSync(locked, 0o555);
+      yield* Effect.addFinalizer(() => Effect.sync(() => NodeFS.chmodSync(locked, 0o755)));
+
+      const result = yield* stripBoardWorktree({ worktreePath: worktree, gitDir });
+
+      assert.equal(result.freedBytes, 0);
+      assert.isTrue(NodeFS.existsSync(NodePath.join(locked, "app")));
+      assert.isTrue(NodeFS.existsSync(NodePath.join(gitDir, STRIP_PENDING_MARKER)));
+      assert.isFalse(NodeFS.existsSync(NodePath.join(gitDir, STRIPPED_MARKER)));
+    }).pipe(Effect.scoped, Effect.provide(GitLayer)),
+  );
+
   it.effect("keeps what a strip must leave, at any depth", () =>
     Effect.sync(() => {
       assert.isTrue(isKeptIgnoredEntry(".env"));

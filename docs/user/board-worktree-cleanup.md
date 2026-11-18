@@ -20,8 +20,9 @@ the setting said; it now follows it.)
 A worktree that stays, for either reason, has the files git ignores deleted (see
 [Kept worktrees are slimmed down](#kept-worktrees-are-slimmed-down)).
 
-Cancelled work is never removed with changes in it, even under **Removed**: its branch is deleted
-once the worktree goes, so commits that exist nowhere else keep the worktree.
+Cancelled work, and a card whose merged branch is about to be deleted at Done, is never removed
+with changes in it, even under **Removed**: its branch goes with the worktree, so commits that
+exist nowhere else keep the worktree.
 
 The board also checks again when the server starts and whenever a worktree is created or removed,
 so a worktree that was kept earlier is collected once whatever held it back is gone. Leftover

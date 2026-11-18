@@ -7563,6 +7563,43 @@ const make = Effect.gen(function* () {
     return board.cards.find((candidate) => candidate.id === cardId) ?? null;
   });
 
+  /** Whether the merge stage's `deleteBranchOnDone` is on for the card's project. */
+  const deleteBranchOnDoneEnabled = Effect.fn("board-supervisor-deleteBranchOnDoneEnabled")(
+    function* (card: BoardCard) {
+      const settings = yield* boardSettings;
+      const board = yield* readBoard;
+      const mergeStage = boardStageWithRole(board, "merge");
+      if (mergeStage === null) return false;
+      const exec = resolveBoardStageExecution(
+        settings,
+        mergeStage.stageId,
+        boardProjectStageConfig(board, card.projectId),
+      );
+      return isBoardMergeStageExecution(exec) && exec.deleteBranchOnDone;
+    },
+  );
+
+  /**
+   * T3o (T3O-123): whether Done's branch cleanup will delete this card's own branch, the same
+   * tests `cleanupBranchOnDone` applies. A forced removal must not run then: the branch is the
+   * only place commits made after the merge survive.
+   */
+  const branchDeletedAtDone = Effect.fn("board-supervisor-branchDeletedAtDone")(function* (
+    card: BoardCard,
+  ) {
+    const pullRequest = card.pullRequest;
+    if (card.worktree === null || pullRequest === null || pullRequest.state !== "merged") {
+      return false;
+    }
+    if (pullRequest.headBranch !== card.worktree.branch) return false;
+    if (pullRequest.linked !== true && boardPullRequestPredatesCard(pullRequest, card.createdAt)) {
+      return false;
+    }
+    const stage = boardStageById(yield* readBoard, card.stage);
+    if (stage === null || effectiveBoardStageRole(stage) !== "done") return false;
+    return yield* deleteBranchOnDoneEnabled(card);
+  });
+
   /**
    * Delete a card's branch on arrival at Done when its PR is merged and `deleteBranchOnDone`
    * is on. Runs after a refresh, against what the forge says now. Best-effort: a failure is
@@ -7581,17 +7618,7 @@ const make = Effect.gen(function* () {
     ) {
       return;
     }
-
-    const settings = yield* boardSettings;
-    const board = yield* readBoard;
-    const mergeStage = boardStageWithRole(board, "merge");
-    if (mergeStage === null) return;
-    const exec = resolveBoardStageExecution(
-      settings,
-      mergeStage.stageId,
-      boardProjectStageConfig(board, card.projectId),
-    );
-    if (!isBoardMergeStageExecution(exec) || !exec.deleteBranchOnDone) return;
+    if (!(yield* deleteBranchOnDoneEnabled(card))) return;
 
     const workspace = yield* workspaceFor(card);
     if (workspace.checkoutPath === null) return;
@@ -7705,7 +7732,11 @@ const make = Effect.gen(function* () {
     workspace: BoardCardWorkspace,
     worktreePath: string,
     trigger: "finish" | "sweep",
+    stillWanted: Effect.Effect<boolean>,
   ) {
+    // The strip stops the card's terminals and sessions: a card put back to work since its
+    // caller judged it finished must not lose them.
+    if (!(yield* stillWanted)) return;
     const result = yield* workspace
       .stripWorktree({ worktreePath, onlyIfPending: trigger === "sweep" })
       .pipe(
@@ -7822,19 +7853,25 @@ const make = Effect.gen(function* () {
     }
     const trigger = options?.trigger ?? "sweep";
     const configured = (yield* boardSettings).lifecycle.worktreeAtDone;
+    // Cancelled work, and a merged card whose branch Done deletes, are removed only when clean:
+    // the branch goes with the worktree, so it cannot keep their unpushed commits.
+    const branchGoes =
+      configured === "remove" && options?.cancelled !== true && (yield* branchDeletedAtDone(card));
     const mode =
-      configured === "remove" && options?.cancelled === true ? "remove-if-clean" : configured;
+      configured === "remove" && (options?.cancelled === true || branchGoes)
+        ? "remove-if-clean"
+        : configured;
     const key = String(card.id);
     if (reclaimingCards.has(key)) return { outcome: "busy" } satisfies BoardCardReclaimAttempt;
+    const stillWanted = cardStillFinished(card, worktree.path);
     if (mode === "keep") {
       reclaimingCards.add(key);
-      yield* stripKeptWorktree(card, workspace, worktree.path, trigger).pipe(
+      yield* stripKeptWorktree(card, workspace, worktree.path, trigger, stillWanted).pipe(
         Effect.ensuring(Effect.sync(() => reclaimingCards.delete(key))),
       );
       return { outcome: "kept-by-setting" } satisfies BoardCardReclaimAttempt;
     }
     reclaimingCards.add(key);
-    const stillWanted = cardStillFinished(card, worktree.path);
     const forced =
       mode === "remove"
         ? yield* removeFinishedWorktree(
@@ -7851,7 +7888,11 @@ const make = Effect.gen(function* () {
             ),
             Effect.tapCause(() => Effect.sync(() => reclaimingCards.delete(key))),
           )
-        : { fallback: null };
+        : {
+            fallback: branchGoes
+              ? "It was not force-removed: its merged branch is deleted at Done, so only a clean worktree goes"
+              : null,
+          };
     if (forced === null || forced === "failed") {
       reclaimingCards.delete(key);
       return forced === null ? null : ({ outcome: "failed" } satisfies BoardCardReclaimAttempt);
@@ -7921,7 +7962,7 @@ const make = Effect.gen(function* () {
       outcome === "removed" ? { outcome: "removed" } : { outcome: "kept", reason };
     if (outcome === "blocked") {
       reclaimingCards.add(key);
-      yield* stripKeptWorktree(card, workspace, worktree.path, trigger).pipe(
+      yield* stripKeptWorktree(card, workspace, worktree.path, trigger, stillWanted).pipe(
         Effect.ensuring(Effect.sync(() => reclaimingCards.delete(key))),
       );
     }
