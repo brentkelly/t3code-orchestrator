@@ -31,10 +31,10 @@ export const isKeptIgnoredEntry = (entry: string): boolean => {
   return base.startsWith(".env") || segments.some((segment) => KEPT_FOLDERS.has(segment));
 };
 
-/** Bytes for activity text: GB once there is a tenth of one, else MB. */
+/** Bytes for activity text: GB from one up, else MB. */
 export const formatBoardBytes = (bytes: number): string => {
   const gb = bytes / 1024 ** 3;
-  if (gb >= 0.1) return `${gb.toFixed(1)} GB`;
+  if (gb >= 1) return `${gb.toFixed(1)} GB`;
   return `${Math.round(bytes / 1024 ** 2)} MB`;
 };
 
