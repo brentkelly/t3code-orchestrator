@@ -154,6 +154,7 @@ describe("boardProjectLearned", () => {
     setupTimeoutMinutes: null,
     readinessPath: null,
     readinessTimeoutSeconds: null,
+    readinessChecks: [],
   });
 
   it("marks an increase no ready worker could place at M, so it isn't applied", () => {

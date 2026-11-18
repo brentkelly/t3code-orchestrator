@@ -84,7 +84,9 @@ import {
   boardStepErrorSummary,
   boardStageIndex,
   boardCardHasLiveBranch,
-  boardReadinessIsFor,
+  boardReadinessRequest,
+  boardProjectTrustsReadinessScript,
+  boardWorkerNeedsReadinessRequest,
   boardStageWithRole,
   parseReviewStepId,
   resolveBoardCardEffectiveBase,
@@ -166,7 +168,6 @@ import {
   type BoardProvisionClaim,
   type BoardStepQueuedDetail,
   type ProviderInstanceId,
-  resolveBoardProjectResourceSettings,
   type BoardResourceProfile,
   type BoardCapacityHoldInput,
   resolveBoardProjectBaseline,
@@ -972,6 +973,17 @@ const make = Effect.gen(function* () {
     Effect.catchCause(() => Effect.succeed(DEFAULT_BOARD_SETTINGS)),
   );
 
+  /** T3o (T3O-124): whether readiness would run anything for a project (checks, or trust). */
+  const readinessConfigured = (
+    board: BoardState,
+    settings: typeof DEFAULT_BOARD_SETTINGS,
+    projectId: ProjectId,
+  ) =>
+    boardReadinessRequest(
+      boardProjectStageConfig(board, projectId)?.resources ?? null,
+      boardProjectTrustsReadinessScript(settings, projectId),
+    ).configured;
+
   /**
    * A stage with no model runs on the board's default, else the project's default override, else
    * the project-resolved text-generation selection. No compiled-in pair (it may not be installed),
@@ -1752,6 +1764,7 @@ const make = Effect.gen(function* () {
   ) {
     const board = yield* readBoard;
     const workersState = yield* workersNow;
+    const settingsNow = yield* boardSettings;
     const repositoryKey = yield* projectRepositoryKey(card.projectId);
     const profile = requestedProfileOf(board, card);
     const facts: Array<PlacementWorkerFacts> = [];
@@ -1788,6 +1801,7 @@ const make = Effect.gen(function* () {
           snapshot,
           repositoryKey,
           projectId: String(card.projectId),
+          readinessConfigured: readinessConfigured(board, settingsNow, card.projectId),
           providerInstanceId: claimFor.providerInstanceId,
           granted: pass.grants.get(workerId) ?? null,
           // T3o: closed when held for another card, or a grow hold waits there (T3O-87).
@@ -2043,6 +2057,7 @@ const make = Effect.gen(function* () {
     if (Option.isNone(capacityClient)) return ready;
     const workersState = yield* workersNow;
     const repositoryKey = yield* projectRepositoryKey(projectId);
+    const configured = readinessConfigured(board, yield* boardSettings, projectId);
     for (const workerId of [BOARD_LOCAL_WORKER_ID, ...(board.workers ?? []).map((w) => w.id)]) {
       const snapshot = yield* capacityClient.value.latest(workerId);
       if (snapshot === null) continue;
@@ -2059,6 +2074,7 @@ const make = Effect.gen(function* () {
           snapshot,
           repositoryKey,
           projectId: String(projectId),
+          readinessConfigured: configured,
         })
       )
         ready.push({ workerId, declared: snapshot.declared });
@@ -12241,29 +12257,35 @@ const make = Effect.gen(function* () {
     const projects = new Set(
       board.cards.filter((card) => card.archivedAt === null).map((card) => card.projectId),
     );
+    const settingsNow = yield* boardSettings;
     for (const workerId of workers) {
       const snapshot = yield* client.latest(workerId);
       if (snapshot === null) continue;
       for (const projectId of projects) {
         const repositoryKey = yield* projectRepositoryKey(projectId);
-        const settings = resolveBoardProjectResourceSettings(
+        const request = boardReadinessRequest(
           boardProjectStageConfig(board, projectId)?.resources ?? null,
+          boardProjectTrustsReadinessScript(settingsNow, projectId),
         );
-        const known = snapshot.readiness.some(
-          (entry) =>
-            boardReadinessIsFor(entry, repositoryKey, projectId) &&
-            entry.path === settings.readinessPath,
-        );
-        const key = `${workerId}\0${repositoryKey ?? projectId}\0${settings.readinessPath}`;
-        if (known || readinessAsked.has(key)) continue;
+        // T3o (T3O-124): never a worker that would drop `runScript`; a trust change or edited
+        // checks are a new request, asked at once.
+        const key = `${workerId}\0${repositoryKey ?? projectId}\0${request.path}\0${request.configKey}`;
+        if (
+          !boardWorkerNeedsReadinessRequest(snapshot, repositoryKey, projectId, request) ||
+          readinessAsked.has(key)
+        ) {
+          continue;
+        }
         readinessAsked.add(key);
         const workspace = yield* workspaces.forWorker(workerId, projectId);
         if (workspace.checkoutPath === null) continue;
         yield* client
           .checkReadiness(workerId, {
             repositoryKey,
-            path: settings.readinessPath,
-            timeoutSeconds: settings.readinessTimeoutSeconds,
+            path: request.path,
+            timeoutSeconds: request.timeoutSeconds,
+            checks: request.checks,
+            runScript: request.runScript,
             projectId: String(workspace.projectId),
           })
           .pipe(Effect.ensuring(Effect.sync(() => readinessAsked.delete(key))), Effect.forkDetach);

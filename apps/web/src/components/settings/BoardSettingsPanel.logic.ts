@@ -65,6 +65,7 @@ export function setBoardProjectSetting(
   const current: BoardProjectSettings = projects[projectId] ?? {
     keyPrefix: null,
     hidden: false,
+    trustReadinessScript: false,
   };
   return { ...projects, [projectId]: { ...current, ...patch } };
 }

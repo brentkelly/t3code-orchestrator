@@ -10,7 +10,6 @@ import {
   type ProviderInstanceId,
 } from "@t3tools/contracts";
 import * as NodeOS from "node:os";
-import * as NodePath from "node:path";
 
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { projectScriptRuntimeEnv, setupProjectScript } from "@t3tools/shared/projectScripts";
@@ -273,8 +272,8 @@ const makeBoardWorkerCapacityLive = Effect.gen(function* () {
         config.baseDir,
         NodeOS.tmpdir(),
         "/tmp",
-        NodePath.join(home, "tmp"),
-        NodePath.join(home, ".cache"),
+        path.join(home, "tmp"),
+        path.join(home, ".cache"),
       ];
     }),
   };

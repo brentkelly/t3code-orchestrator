@@ -2,11 +2,13 @@
 /**
  * A project's readiness on a worker (T3O-86): the committed script, one run shared by every
  * board, a failed fetch keeping the last result, a new version keeping a ready worker ready
- * until it has run, and two scheduled failures before not-ready.
+ * until it has run, and two scheduled failures before not-ready. T3O-124: declarative checks
+ * run first, and the script only when the board trusts the project.
  */
 import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
 
-import { BOARD_CAPACITY_LOG_MAX_BYTES } from "@t3tools/contracts";
+import { BOARD_CAPACITY_LOG_MAX_BYTES, type BoardReadinessCheck } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -33,12 +35,36 @@ const makeHarness = () => {
     gate: null as Deferred.Deferred<void> | null,
     /** What the script writes to its log file, beyond the tail. */
     log: null as string | null,
+    /** Everything run, in order: check commands as `check <argv>`, the script as `script`. */
+    events: [] as Array<string>,
+    /** Whether each check's cwd was an empty folder when it ran. */
+    checkCwds: [] as Array<{ readonly cwd: string; readonly empty: boolean }>,
+    /** Repository files the checks read, by path. */
+    files: new Map<string, string>(),
   };
   const readiness = makeReadiness({
     git: {
       checkout: () => Effect.sync(() => state.checkout),
       fetch: () => Effect.sync(() => state.fetchOk),
-      committed: () => Effect.sync(() => state.script),
+      committed: (_checkout, path) =>
+        Effect.sync(() =>
+          path === ".t3/ready.sh" || path.endsWith("ready.sh")
+            ? state.script
+            : state.files.has(path)
+              ? { version: `blob:${path}`, text: state.files.get(path)! }
+              : null,
+        ),
+      has: (_checkout, path) => Effect.sync(() => state.files.has(path)),
+    },
+    host: {
+      run: (call) =>
+        Effect.sync(() => {
+          state.events.push(`check ${call.args.join(" ")}`);
+          state.checkCwds.push({ cwd: call.cwd, empty: NodeFS.readdirSync(call.cwd).length === 0 });
+          return { exitCode: 0, stdout: "", stderr: "", timedOut: false };
+        }),
+      env: { PATH: "", HOME: "/nonexistent-home", TMPDIR: "/nonexistent-tmp" },
+      forbiddenRoots: Effect.succeed([]),
     },
     runStep: ((input: {
       readonly command: string;
@@ -47,6 +73,7 @@ const makeHarness = () => {
     }) =>
       Effect.gen(function* () {
         state.runs.push(input.command);
+        state.events.push("script");
         if (state.log !== null && input.logPath !== undefined) {
           NodeFS.writeFileSync(input.logPath, state.log);
         }
@@ -58,7 +85,13 @@ const makeHarness = () => {
   return { state, readiness };
 };
 
-const input = { repositoryKey: "github.com/acme/app", path: ".t3/ready.sh", timeoutSeconds: 60 };
+const input = {
+  repositoryKey: "github.com/acme/app",
+  path: ".t3/ready.sh",
+  timeoutSeconds: 60,
+  checks: [] as ReadonlyArray<BoardReadinessCheck>,
+  runScript: true,
+};
 
 it.effect("runs the committed script with the checkout named, and reads its exit", () =>
   Effect.gen(function* () {
@@ -73,16 +106,13 @@ it.effect("runs the committed script with the checkout named, and reads its exit
     });
     assert.match(state.runs[0]!, /^T3O_READY_CHECKOUT='\/repo' sh '/);
     // The full output is fetched on demand, never in the snapshot.
-    assert.include(
-      readiness.output(input.repositoryKey, undefined, input.path) ?? "",
-      "checking docker",
-    );
+    assert.include(readiness.output(readiness.forBoard("board-a")[0]!) ?? "", "checking docker");
     assert.notInclude(JSON.stringify(readiness.forBoard("board-a")), "checking docker");
     assert.strictEqual(readiness.notReady("board-a", input.repositoryKey, undefined), "not-ready");
     // A long log keeps its last 64 KB, read from the run's log file.
     state.log = `${"x".repeat(70_000)}the end`;
     yield* readiness.check("board-b", { ...input, path: "b/ready.sh" });
-    const output = readiness.output(input.repositoryKey, undefined, "b/ready.sh") ?? "";
+    const output = readiness.output(readiness.forBoard("board-b")[0]!) ?? "";
     assert.strictEqual(output.length, BOARD_CAPACITY_LOG_MAX_BYTES);
     assert.isTrue(output.endsWith("the end"));
   }),
@@ -226,5 +256,98 @@ it.effect("a failed fetch on a not-ready project still reads not-ready, not chec
       state: "not-ready",
       fetchFailed: true,
     });
+  }).pipe(Effect.provide(TestClock.layer())),
+);
+
+it.effect("an untrusted script is not run, is reported, and the worker stays ready", () =>
+  Effect.gen(function* () {
+    const { state, readiness } = makeHarness();
+    state.exits.push({ status: "failed", exitCode: 1 });
+    const result = yield* readiness.check("board-a", { ...input, runScript: false });
+    assert.lengthOf(state.runs, 0);
+    assert.deepInclude(result, { state: "ready", scriptSkipped: "not-trusted", version: null });
+    assert.include(readiness.output(result) ?? "", "not run: not trusted");
+    assert.isNull(readiness.notReady("board-a", input.repositoryKey, undefined));
+  }),
+);
+
+it.effect("checks run first from an empty folder; a trusted script runs after them", () =>
+  Effect.gen(function* () {
+    const { state, readiness } = makeHarness();
+    state.files.set(".node-version", "22\n");
+    const checks: ReadonlyArray<BoardReadinessCheck> = [
+      { exists: ".node-version" },
+      { git: "identity" },
+    ];
+    const result = yield* readiness.check("board-a", { ...input, checks });
+    assert.deepStrictEqual(state.events.at(-1), "script");
+    assert.isTrue(state.events.slice(0, -1).every((event) => event.startsWith("check ")));
+    // git is not on this harness's PATH, so the identity check fails.
+    assert.strictEqual(result.state, "not-ready");
+    assert.include(result.lastLine ?? "", "git identity");
+    assert.deepInclude(result, { checks: { passed: 1, failed: 1, warned: 0 } });
+    const output = readiness.output(result) ?? "";
+    assert.match(output, /^pass {2}\.node-version/);
+    assert.include(output, "FAIL  git identity");
+    assert.include(output, "checking docker");
+
+    // A failing check marked warn is a warning: the worker is ready.
+    yield* TestClock.adjust(60_000);
+    const warned = yield* readiness.check("board-a", {
+      ...input,
+      checks: [{ exists: ".node-version" }, { git: "identity", warn: true }],
+      requested: true,
+    });
+    assert.deepInclude(warned, { state: "ready", checks: { passed: 1, failed: 0, warned: 1 } });
+  }).pipe(Effect.provide(TestClock.layer())),
+);
+
+it.effect("a check that runs a command starts in an empty folder, never the checkout", () =>
+  Effect.gen(function* () {
+    const { state, readiness } = makeHarness();
+    const bin = NodeFS.mkdtempSync(`${NodeOS.tmpdir()}/t3o-ready-test-bin-`);
+    try {
+      NodeFS.writeFileSync(`${bin}/tool`, "#!/bin/sh\necho 9.1.0\n", { mode: 0o755 });
+      yield* readiness.check("board-a", {
+        ...input,
+        runScript: false,
+        checks: [{ command: "tool", paths: [bin], version: { atLeast: "1" } }],
+      });
+      assert.lengthOf(state.checkCwds, 1);
+      assert.isTrue(state.checkCwds[0]!.empty);
+      assert.notStrictEqual(state.checkCwds[0]!.cwd, "/repo");
+      // The run folder is gone afterwards.
+      assert.isFalse(NodeFS.existsSync(state.checkCwds[0]!.cwd));
+    } finally {
+      NodeFS.rmSync(bin, { recursive: true, force: true });
+    }
+  }),
+);
+
+it.effect("trust and checks key separate entries; the sweep reruns what each asked", () =>
+  Effect.gen(function* () {
+    const { state, readiness } = makeHarness();
+    state.files.set("marker", "x");
+    const trusted = { ...input, checks: [{ exists: "marker" }] as const, runScript: true };
+    const untrusted = { ...trusted, runScript: false };
+    const a = yield* readiness.check("board-a", trusted);
+    const b = yield* readiness.check("board-b", untrusted);
+    assert.notStrictEqual(a.configKey, b.configKey);
+    assert.lengthOf(state.runs, 1);
+    assert.isUndefined(a.scriptSkipped);
+    assert.strictEqual(b.scriptSkipped, "not-trusted");
+    // An hour on, the sweep re-runs both with their own checks and trust: one script run more.
+    yield* TestClock.adjust(READINESS_PASSING_INTERVAL_MS);
+    state.files.delete("marker");
+    yield* readiness.sweep();
+    assert.lengthOf(state.runs, 2);
+    assert.strictEqual(readiness.forBoard("board-b")[0]?.scriptSkipped, "not-trusted");
+    // The stored checks ran again: the missing marker now fails both (a scheduled second
+    // failure is needed to turn a ready worker not-ready, so they hold ready once).
+    assert.strictEqual(readiness.forBoard("board-a")[0]?.state, "ready");
+    yield* TestClock.adjust(READINESS_PASSING_INTERVAL_MS);
+    yield* readiness.sweep();
+    assert.strictEqual(readiness.forBoard("board-a")[0]?.state, "not-ready");
+    assert.strictEqual(readiness.forBoard("board-b")[0]?.state, "not-ready");
   }).pipe(Effect.provide(TestClock.layer())),
 );

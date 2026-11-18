@@ -359,6 +359,26 @@ export function boardReadinessRequest(
   };
 }
 
+/**
+ * Whether the board should ask a worker to check a project: the worker speaks the readiness
+ * protocol and has no entry for this exact request (path and `configKey`), so edited checks or a
+ * trust change are asked at once.
+ */
+export function boardWorkerNeedsReadinessRequest(
+  snapshot: Pick<BoardWorkerCapacitySnapshot, "readiness" | "readinessProtocol">,
+  repositoryKey: string | null,
+  projectId: string,
+  request: { readonly path: string; readonly configKey: string },
+): boolean {
+  if (!boardWorkerSpeaksReadiness(snapshot)) return false;
+  return !snapshot.readiness.some(
+    (entry) =>
+      boardReadinessIsFor(entry, repositoryKey, projectId) &&
+      entry.path === request.path &&
+      entry.configKey === request.configKey,
+  );
+}
+
 /** Whether a worker's snapshot says it runs checks and honours `runScript`. */
 export function boardWorkerSpeaksReadiness(snapshot: {
   readonly readinessProtocol?: number;

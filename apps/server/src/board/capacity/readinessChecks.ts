@@ -313,19 +313,14 @@ export const runReadinessChecks = Effect.fn("Readiness.runChecks")(function* (in
       case "file": {
         const path = classifyBoardReadinessCheckPath(check.file!, { glob: false, repo: true });
         if (path === null) return { ok: false, detail: "unusable path" };
-        let text: string | null;
-        if (path.kind === "repo") text = yield* repo.file(path.path);
-        else {
-          try {
-            text = NodeFS.readFileSync(expandMachinePath(path.path, host.env), "utf8");
-          } catch {
-            text = null;
-          }
-        }
+        const text =
+          path.kind === "repo"
+            ? yield* repo.file(path.path)
+            : readMachineFile(expandMachinePath(path.path, host.env));
         if (text === null) return { ok: false, detail: `${path.path} not found` };
         return text.includes(check.contains ?? "")
-          ? { ok: true, detail: `${path.path} contains ${JSON.stringify(check.contains)}` }
-          : { ok: false, detail: `${path.path} doesn't contain ${JSON.stringify(check.contains)}` };
+          ? { ok: true, detail: `${path.path} contains "${check.contains}"` }
+          : { ok: false, detail: `${path.path} doesn't contain "${check.contains}"` };
       }
       case "exists": {
         const path = classifyBoardReadinessCheckPath(check.exists!, { glob: true, repo: true });
@@ -383,18 +378,8 @@ export const runReadinessChecks = Effect.fn("Readiness.runChecks")(function* (in
           ? { ok: true, detail: `signed in to ${check.gh!}` }
           : { ok: false, detail: `not signed in to ${check.gh!}` };
       }
-      case "writable": {
-        const dir = expandMachinePath(check.writable!, host.env);
-        try {
-          if (!NodeFS.statSync(dir).isDirectory()) return { ok: false, detail: `${dir} is not a folder` };
-          const probe = NodePath.join(dir, `.t3o-ready-${Math.random().toString(36).slice(2)}`);
-          NodeFS.writeFileSync(probe, "", { flag: "wx" });
-          NodeFS.rmSync(probe, { force: true });
-          return { ok: true, detail: `${dir} is writable` };
-        } catch (cause) {
-          return { ok: false, detail: `${dir}: ${cause instanceof Error ? clip(cause.message) : "not writable"}` };
-        }
-      }
+      case "writable":
+        return probeWritable(expandMachinePath(check.writable!, host.env));
       case null:
         return { ok: false, detail: "not a check this worker knows" };
     }
@@ -414,6 +399,27 @@ export const runReadinessChecks = Effect.fn("Readiness.runChecks")(function* (in
   }
   return results;
 });
+
+const readMachineFile = (path: string): string | null => {
+  try {
+    return NodeFS.readFileSync(path, "utf8");
+  } catch {
+    return null;
+  }
+};
+
+/** The folder exists and a file can be created and removed in it. */
+function probeWritable(dir: string): Outcome {
+  try {
+    if (!NodeFS.statSync(dir).isDirectory()) return { ok: false, detail: `${dir} is not a folder` };
+    const probe = NodeFS.mkdtempSync(NodePath.join(dir, ".t3o-ready-"));
+    NodeFS.writeFileSync(NodePath.join(probe, "probe"), "");
+    NodeFS.rmSync(probe, { recursive: true, force: true });
+    return { ok: true, detail: `${dir} is writable` };
+  } catch (cause) {
+    return { ok: false, detail: `${dir}: ${cause instanceof Error ? clip(cause.message) : "not writable"}` };
+  }
+}
 
 /** Credentials in a URL never reach the output. */
 const redactCredentials = (text: string) => text.replace(/(\w+:\/\/)[^@/\s]+@/g, "$1***@");

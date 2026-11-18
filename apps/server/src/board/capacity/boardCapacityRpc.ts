@@ -3,6 +3,10 @@
  * pin picker and a queued card open, and the actions a human takes on readiness and setup.
  */
 import {
+  boardProjectTrustsReadinessScript,
+  boardReadinessRequest,
+  boardWorkerSpeaksReadiness,
+  DEFAULT_BOARD_SETTINGS,
   boardCardEffectiveWorkerId,
   boardReadinessIsFor,
   BOARD_LOCAL_WORKER_ID,
@@ -24,6 +28,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 
+import { ServerSettingsService } from "../../serverSettings.ts";
 import { BoardEngine } from "../BoardEngine.ts";
 import { ThreadGateway } from "../ThreadGateway.ts";
 import { BoardWorkspaces } from "../workspace/BoardWorkspace.ts";
@@ -114,15 +119,26 @@ const recheck = Effect.fn("BoardCapacityRpc.recheck")(function* (
   const workspaces = yield* BoardWorkspaces;
   const board = (yield* engine.getReadModel).board ?? EMPTY_BOARD_STATE;
   const project = yield* threads.project(projectId).pipe(Effect.orElseSucceed(() => null));
-  const settings = resolveBoardProjectResourceSettings(
-    boardProjectStageConfig(board, projectId)?.resources ?? null,
+  const serverSettings = yield* ServerSettingsService;
+  const boardSettings = yield* serverSettings.getSettings.pipe(
+    Effect.map((settings) => settings.board),
+    Effect.orElseSucceed(() => DEFAULT_BOARD_SETTINGS),
   );
+  const request = boardReadinessRequest(
+    boardProjectStageConfig(board, projectId)?.resources ?? null,
+    boardProjectTrustsReadinessScript(boardSettings, projectId),
+  );
+  // T3o (T3O-124): a worker that would drop `runScript` is never asked.
+  const snapshot = yield* client.latest(workerId);
+  if (snapshot !== null && !boardWorkerSpeaksReadiness(snapshot)) return null;
   const workspace = yield* workspaces.forWorker(workerId, projectId);
   if (workspace.checkoutPath === null) return null;
   const result = yield* client.checkReadiness(workerId, {
     repositoryKey: boardRepositoryGroupingKey(project?.repositoryIdentity),
-    path: settings.readinessPath,
-    timeoutSeconds: settings.readinessTimeoutSeconds,
+    path: request.path,
+    timeoutSeconds: request.timeoutSeconds,
+    checks: request.checks,
+    runScript: request.runScript,
     projectId: String(workspace.projectId),
     requested: true,
   });

@@ -141,6 +141,7 @@ describe("the Resources form", () => {
       setupTimeoutMinutes: null,
       readinessPath: null,
       readinessTimeoutSeconds: null,
+      readinessChecks: [],
     };
     const draft = { ...boardResourcesDraftOf(previous), readinessPath: "./ci/ready.sh" };
     expect(boardResourcesDraftOf(previous)["setupTimeoutMinutes"]).toBe("");
@@ -154,6 +155,7 @@ describe("the Resources form", () => {
         setupTimeoutMinutes: null,
         readinessPath: null,
         readinessTimeoutSeconds: null,
+        readinessChecks: [],
       },
     });
   });
@@ -164,6 +166,7 @@ describe("the Resources form", () => {
       setupTimeoutMinutes: null,
       readinessPath: null,
       readinessTimeoutSeconds: null,
+      readinessChecks: [],
     };
     const edited = boardResourcesOf(
       { ...boardResourcesDraftOf(previous), cpuCores: "3" },

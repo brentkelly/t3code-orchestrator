@@ -12,6 +12,7 @@ const baseline = {
   setupTimeoutMinutes: null,
   readinessPath: null,
   readinessTimeoutSeconds: null,
+  readinessChecks: [],
 };
 
 const resources = (overrides: Partial<BoardCardResources>): BoardCardResources => ({

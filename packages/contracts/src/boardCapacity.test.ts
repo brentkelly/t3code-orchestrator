@@ -54,6 +54,7 @@ describe("boardProjectConfigVersion", () => {
           setupTimeoutMinutes: null,
           readinessPath: null,
           readinessTimeoutSeconds: null,
+          readinessChecks: [],
         },
       }),
     ).toBe(before);
@@ -65,6 +66,7 @@ describe("boardProjectConfigVersion", () => {
           setupTimeoutMinutes: null,
           readinessPath: null,
           readinessTimeoutSeconds: null,
+          readinessChecks: [],
         },
       }),
     ).not.toBe(before);
@@ -78,6 +80,7 @@ describe("boardProjectConfigVersion", () => {
           setupTimeoutMinutes: null,
           readinessPath: null,
           readinessTimeoutSeconds: null,
+          readinessChecks: [],
           learned: { computedAt: NOW, cpu: learnedOnly, ram: learnedOnly, disk: learnedOnly },
         },
       }),
@@ -102,6 +105,7 @@ const resourcesWith = (input: {
   setupTimeoutMinutes: null,
   readinessPath: null,
   readinessTimeoutSeconds: null,
+  readinessChecks: [],
   ...(input.pin === undefined ? {} : { pinDeclared: input.pin }),
   learned: {
     computedAt: NOW,

@@ -338,6 +338,7 @@ describe("export", () => {
       setupTimeoutMinutes: 20,
       readinessPath: null,
       readinessTimeoutSeconds: 60,
+      readinessChecks: [],
     });
     expect(back.delta.warnings.join("\n")).toContain("resources.readiness.path");
     const file = buildT3oProjectFile({

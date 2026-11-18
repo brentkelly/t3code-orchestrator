@@ -6,6 +6,7 @@ import {
   BOARD_LOCAL_WORKER_ID,
   boardThreadLinkWorkerId,
   boardReadinessIsFor,
+  boardWorkerSpeaksReadiness,
   type BoardCard,
   type BoardState,
   boardResourceProfileOverflow,
@@ -304,10 +305,15 @@ export function boardWorkerReadyForProject(input: {
   readonly snapshot: BoardWorkerCapacitySnapshot;
   readonly repositoryKey: string | null;
   readonly projectId: string;
+  /** T3o (T3O-124): the project's readiness runs something, so an old worker can't be asked. */
+  readonly readinessConfigured?: boolean;
 }): boolean {
   if (input.workerId === BOARD_LOCAL_WORKER_ID && !localIsBuildCandidate(input.snapshot.declared))
     return false;
   if (input.gate !== "ready") return false;
+  if (input.readinessConfigured === true && !boardWorkerSpeaksReadiness(input.snapshot)) {
+    return false;
+  }
   const readiness = input.snapshot.readiness.find((entry) =>
     boardReadinessIsFor(entry, input.repositoryKey, input.projectId),
   );
@@ -326,6 +332,8 @@ export function placementFacts(input: {
   readonly snapshot: BoardWorkerCapacitySnapshot | null;
   readonly repositoryKey: string | null;
   readonly projectId: string;
+  /** T3o (T3O-124): see `boardWorkerReadyForProject`. */
+  readonly readinessConfigured?: boolean;
   readonly providerInstanceId: string | null;
   readonly granted: BoardResourceProfile | null;
   readonly closed: boolean;
@@ -335,8 +343,11 @@ export function placementFacts(input: {
     snapshot?.readiness.find((entry) =>
       boardReadinessIsFor(entry, input.repositoryKey, input.projectId),
     ) ?? null;
-  const readiness: PlacementWorkerFacts["readiness"] =
-    readinessEntry === null || readinessEntry.state === "ready"
+  const tooOld =
+    input.readinessConfigured === true && snapshot !== null && !boardWorkerSpeaksReadiness(snapshot);
+  const readiness: PlacementWorkerFacts["readiness"] = tooOld
+    ? "failed"
+    : readinessEntry === null || readinessEntry.state === "ready"
       ? "ready"
       : readinessEntry.state === "cloning" || readinessEntry.state === "checking"
         ? "pending"
