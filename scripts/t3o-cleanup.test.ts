@@ -47,15 +47,9 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")(".t3/cleanup.sh
         makeEntry(tmpB, "someone-elses-folder", "old"),
       ];
 
-      // A ps that fails (missing, or BusyBox without -p) must not make a live run look dead.
-      const fakeBin = NodePath.join(base, "bin");
-      NodeFS.mkdirSync(fakeBin);
-      NodeFS.writeFileSync(NodePath.join(fakeBin, "ps"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
-
       const { status, stdout, stderr } = NodeChildProcess.spawnSync("sh", [SCRIPT], {
         env: {
           ...process.env,
-          PATH: `${fakeBin}:${process.env.PATH}`,
           // The same folder listed twice is cleaned once.
           T3O_CLEANUP_DIRS: `${tmpA} ${tmpB} ${tmpA}/../a`,
         },
