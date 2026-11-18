@@ -246,6 +246,12 @@ it.effect(
         assert.include(results[1]!.detail, "doesn't know how to ask mytool");
         assert.include(results[2]!.detail, "version not checked for script tools");
         assert.lengthOf(calls, 0);
+        // On macOS the same magic is a universal binary, so its version is asked.
+        const onMac = yield* run(host({ platform: "darwin", answer: () => ok("v22.1.0\n") }), [
+          { command: "node", version: { atLeast: "1" } },
+        ]);
+        assert.deepStrictEqual(statuses(onMac), ["pass"]);
+        assert.lengthOf(calls, 1);
       }),
     ),
 );
