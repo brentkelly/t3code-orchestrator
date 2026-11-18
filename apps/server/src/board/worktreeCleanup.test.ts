@@ -18,6 +18,7 @@ import {
   BOARD_SEED_STAGE_IDS,
   type BoardCard,
   type BoardCardPullRequest,
+  type BoardWorktreeAtDone,
   type VcsStatusChangeRequest,
 } from "@t3tools/contracts";
 
@@ -34,8 +35,9 @@ import {
 } from "./supervisorHarness.testkit.ts";
 import type { BoardReadModel } from "./projector.ts";
 
-const settings = (reclaimWorktreeOnDone = true) =>
-  settingsWith({ building: [codexStep], globalMaxConcurrent: 4, reclaimWorktreeOnDone });
+/** `remove-if-clean` unless a test says otherwise: most of this suite is the safety rule. */
+const settings = (worktreeAtDone: BoardWorktreeAtDone = "remove-if-clean") =>
+  settingsWith({ building: [codexStep], globalMaxConcurrent: 4, worktreeAtDone });
 
 const cachedPr = (state: BoardCardPullRequest["state"]): BoardCardPullRequest => ({
   number: 284 as BoardCardPullRequest["number"],
@@ -269,7 +271,7 @@ describe("reclaim at Done (D2)", () => {
     withGovernor(
       {
         board: { nextCardNumberByProject: {}, cards: [doneCard()] },
-        settings: settings(false),
+        settings: settings("keep"),
         pullRequest: null,
       },
       (h) =>
@@ -362,7 +364,7 @@ describe("the cleanup sweep (D3/D4)", () => {
     ),
   );
 
-  it.effect("reclaims an archived card's worktree even with reclaimWorktreeOnDone off", () =>
+  it.effect("keeps an archived card's worktree under keep, unflagged (T3O-123)", () =>
     withGovernor(
       {
         board: {
@@ -374,46 +376,47 @@ describe("the cleanup sweep (D3/D4)", () => {
             },
           ],
         },
-        settings: settings(false),
+        settings: settings("keep"),
         pullRequest: null,
       },
       (h) =>
         Effect.gen(function* () {
           yield* h.reactor.drainWorktreeSweep;
-          assert.deepEqual(yield* h.removedWorktrees, ["/tmp/wt/card-1"]);
+          // Archive follows the setting now; it used to always reclaim.
+          assert.deepEqual(yield* h.removedWorktrees, []);
+          assert.equal(reclaims(yield* h.commands).length, 0);
+          assert.equal((yield* h.board).cards[0]!.worktree?.status, "ready");
         }),
     ),
   );
 
-  it.effect(
-    "Check again reclaims a kept archived card outside Done with reclaimWorktreeOnDone off",
-    () =>
-      withGovernor(
-        {
-          board: {
-            nextCardNumberByProject: {},
-            cards: [
-              {
-                ...doneCard({ stage: String(BOARD_SEED_STAGE_IDS.building) }),
-                archivedAt: "2026-01-01T00:00:00.000Z" as BoardCard["archivedAt"],
-              },
-            ],
-          },
-          settings: settings(false),
-          pullRequest: null,
-          worktreeUndurable: true,
+  it.effect("Check again reclaims a kept archived card outside Done", () =>
+    withGovernor(
+      {
+        board: {
+          nextCardNumberByProject: {},
+          cards: [
+            {
+              ...doneCard({ stage: String(BOARD_SEED_STAGE_IDS.building) }),
+              archivedAt: "2026-01-01T00:00:00.000Z" as BoardCard["archivedAt"],
+            },
+          ],
         },
-        (h) =>
-          Effect.gen(function* () {
-            yield* h.reactor.drainWorktreeSweep;
-            assert.deepEqual(yield* h.removedWorktrees, []);
-            // The work has since reached the remote; the human asks again.
-            h.setWorktreeUndurable(false);
-            const result = yield* h.reactor.checkWorktree((yield* h.board).cards[0]!.id);
-            assert.deepEqual(result, { outcome: "removed" });
-            assert.deepEqual(yield* h.removedWorktrees, ["/tmp/wt/card-1"]);
-          }),
-      ),
+        settings: settings(),
+        pullRequest: null,
+        worktreeUndurable: true,
+      },
+      (h) =>
+        Effect.gen(function* () {
+          yield* h.reactor.drainWorktreeSweep;
+          assert.deepEqual(yield* h.removedWorktrees, []);
+          // The work has since reached the remote; the human asks again.
+          h.setWorktreeUndurable(false);
+          const result = yield* h.reactor.checkWorktree((yield* h.board).cards[0]!.id);
+          assert.deepEqual(result, { outcome: "removed" });
+          assert.deepEqual(yield* h.removedWorktrees, ["/tmp/wt/card-1"]);
+        }),
+    ),
   );
 
   it.effect("Check again answers a repeat refusal, though it writes nothing new", () =>
@@ -466,7 +469,7 @@ describe("the cleanup sweep (D3/D4)", () => {
     withGovernor(
       {
         board: { nextCardNumberByProject: {}, cards: [doneCard()] },
-        settings: settings(false),
+        settings: settings("keep"),
         pullRequest: null,
       },
       (h) =>

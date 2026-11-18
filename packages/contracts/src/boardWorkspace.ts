@@ -104,6 +104,34 @@ export const BoardWorkspaceBranchCleanup = Schema.Struct({
 });
 export type BoardWorkspaceBranchCleanup = typeof BoardWorkspaceBranchCleanup.Type;
 
+/** T3o (T3O-123): where a forced removal saves a worktree's uncommitted work. */
+export const BOARD_DISCARDED_REF_PREFIX = "refs/t3o/discarded/";
+/** Snapshot refs older than this (by commit date) are pruned. */
+export const BOARD_DISCARDED_REF_MAX_AGE_DAYS = 30;
+/** Over this much changed and untracked data, a worktree is not snapshotted or force-removed. */
+export const BOARD_WORKTREE_SNAPSHOT_CAP_BYTES = 200 * 1024 * 1024;
+
+export const BoardWorkspaceSnapshotResult = Schema.Union([
+  Schema.Struct({
+    outcome: Schema.Literal("snapshotted"),
+    ref: TrimmedNonEmptyString,
+    sha: TrimmedNonEmptyString,
+  }),
+  /** Nothing uncommitted: the worktree can go as it is. */
+  Schema.Struct({ outcome: Schema.Literal("nothing") }),
+  Schema.Struct({ outcome: Schema.Literal("over-cap"), bytes: NonNegativeInt }),
+]);
+export type BoardWorkspaceSnapshotResult = typeof BoardWorkspaceSnapshotResult.Type;
+
+export const BoardWorkspaceStripResult = Schema.Union([
+  Schema.Struct({ outcome: Schema.Literal("stripped"), freedBytes: NonNegativeInt }),
+  /** Processes the board doesn't own still run there; marked for the sweep to retry. */
+  Schema.Struct({ outcome: Schema.Literal("pending"), reason: Schema.String }),
+  /** Already stripped, or (`onlyIfPending`) no strip pending. */
+  Schema.Struct({ outcome: Schema.Literal("skipped") }),
+]);
+export type BoardWorkspaceStripResult = typeof BoardWorkspaceStripResult.Type;
+
 export const BoardWorkspaceBaseBranchSync = Schema.Struct({
   updated: Schema.Boolean,
   skippedReason: Schema.NullOr(Schema.String),
@@ -209,6 +237,12 @@ export const BOARD_WORKER_GIT_WS_METHODS = {
   remoteBranchTip: "boardWorker.git.remoteBranchTip",
   // T3o: push a card's own branch before its worker is removed (T3O-87). Never forced.
   pushCardBranch: "boardWorker.git.pushCardBranch",
+  // T3o: finished cards' worktrees (T3O-123). New methods, never fields on `retireWorktree`:
+  // an old worker would drop an unknown field and force-remove without the snapshot.
+  snapshotWorktree: "boardWorker.git.snapshotWorktree",
+  stripWorktree: "boardWorker.git.stripWorktree",
+  pruneDiscardedRefs: "boardWorker.git.pruneDiscardedRefs",
+  deleteLeftoverBranch: "boardWorker.git.deleteLeftoverBranch",
   pullRequestByBranch: "boardWorker.git.pullRequestByBranch",
   getPullRequest: "boardWorker.git.getPullRequest",
   mergePullRequest: "boardWorker.git.mergePullRequest",
@@ -369,6 +403,38 @@ export const BOARD_WORKER_GIT_RPCS = [
     success: Schema.Struct({ pushed: Schema.Boolean, detail: Schema.NullOr(Schema.String) }),
     error: gitError,
   }),
+  Rpc.make(M.snapshotWorktree, {
+    payload: {
+      ...onProject,
+      worktreePath: path,
+      /** The card's key, which names the ref. */
+      cardKey: TrimmedNonEmptyString.check(
+        Schema.makeFilter((value: string) => /^[A-Za-z0-9][A-Za-z0-9-]*$/.test(value), {
+          expected: "a card key",
+        }),
+      ),
+    },
+    success: BoardWorkspaceSnapshotResult,
+    error: gitError,
+  }),
+  Rpc.make(M.stripWorktree, {
+    payload: { ...onProject, worktreePath: path, onlyIfPending: Schema.Boolean },
+    success: BoardWorkspaceStripResult,
+    error: gitError,
+  }),
+  Rpc.make(M.pruneDiscardedRefs, {
+    payload: onProject,
+    success: Schema.Struct({ deleted: NonNegativeInt }),
+    error: gitError,
+  }),
+  Rpc.make(M.deleteLeftoverBranch, {
+    payload: { ...onProject, branch: boardBranchName },
+    success: Schema.Struct({
+      deleted: Schema.Boolean,
+      skippedReason: Schema.NullOr(Schema.String),
+    }),
+    error: gitError,
+  }),
   Rpc.make(M.pullRequestByBranch, {
     payload: {
       ...onProject,
@@ -448,6 +514,10 @@ export const BOARD_WORKER_GIT_RPC_SCOPES = {
   [M.gitUserName]: AuthOrchestrationReadScope,
   [M.remoteBranchTip]: AuthSourceControlWriteScope,
   [M.pushCardBranch]: AuthSourceControlWriteScope,
+  [M.snapshotWorktree]: AuthSourceControlWriteScope,
+  [M.stripWorktree]: AuthSourceControlWriteScope,
+  [M.pruneDiscardedRefs]: AuthSourceControlWriteScope,
+  [M.deleteLeftoverBranch]: AuthSourceControlWriteScope,
   [M.pullRequestByBranch]: AuthOrchestrationReadScope,
   [M.getPullRequest]: AuthOrchestrationReadScope,
   [M.mergePullRequest]: AuthSourceControlWriteScope,

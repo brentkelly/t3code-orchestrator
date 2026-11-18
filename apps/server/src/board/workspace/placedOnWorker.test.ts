@@ -273,7 +273,7 @@ describe("a card placed on a worker (T3O-64)", () => {
         settings: settingsWith({
           building: [codexStep],
           globalMaxConcurrent: 4,
-          reclaimWorktreeOnDone: true,
+          worktreeAtDone: "remove-if-clean",
         }),
         pullRequest: null,
         registeredWorktrees: workerWorktrees(["/tmp/wt/card-1", "board/card-1"]),

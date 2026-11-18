@@ -6,7 +6,9 @@
  */
 import {
   BOARD_CI_STOPPED_BY_YOU_REASON,
+  BOARD_DISCARDED_REF_MAX_AGE_DAYS,
   BOARD_LOCAL_WORKER_ID,
+  BOARD_WORKTREE_SNAPSHOT_CAP_BYTES,
   BOARD_SEED_STAGE_IDS,
   DEFAULT_BOARD_CI_MAX_FIX_ATTEMPTS,
   areBoardStagesAdjacent,
@@ -188,6 +190,7 @@ import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Duration from "effect/Duration";
 import * as Random from "effect/Random";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -294,6 +297,7 @@ import { makeBoardCiPasses, type BoardCiPasses, type BoardCiPassFinished } from 
 import type { BoardCiFailure, BoardStagePlan } from "./stageExecutor.ts";
 import { boardCiSendBackFinding } from "./ci/ciStageExecutor.ts";
 import { BoardWorkspaces, type BoardCardWorkspace } from "./workspace/BoardWorkspace.ts";
+import { formatBoardBytes } from "./worktreeAtDone.ts";
 import {
   boardCompletionReopened,
   boardCompletionReopenedByAutoPlan,
@@ -7445,7 +7449,11 @@ const make = Effect.gen(function* () {
     if (refreshed === null) return outcome;
     const settling = movedToStage === undefined ? refreshed : { ...refreshed, stage: movedToStage };
     if (options?.deferSettle === true) {
-      yield* cardCleanupWorker.enqueue({ kind: "settle", card: settling });
+      yield* cardCleanupWorker.enqueue({
+        kind: "settle",
+        card: settling,
+        arrived: movedToStage !== undefined,
+      });
     } else {
       yield* settleCardAtDone(settling);
     }
@@ -7651,15 +7659,148 @@ const make = Effect.gen(function* () {
     Effect.orElseSucceed(() => false),
   );
 
+  /** T3o (T3O-123): the machine a card's worktree is on, for activity that names it. */
+  const machineOf = Effect.fn("board-supervisor-machineOf")(function* (
+    workspace: BoardCardWorkspace,
+  ) {
+    if (workspace.workerId === BOARD_LOCAL_WORKER_ID) return boardCiHostName();
+    const board = yield* readBoard;
+    return (
+      (board.workers ?? []).find((worker) => worker.id === workspace.workerId)?.label ??
+      String(workspace.workerId)
+    );
+  });
+
+  const recordWorktreeCleanup = Effect.fn("board-supervisor-recordWorktreeCleanup")(function* (
+    cardId: BoardCardId,
+    detail: string,
+  ) {
+    yield* dispatchOptional({
+      type: "board.card.record-note",
+      commandId: yield* commandId("worktree-cleanup"),
+      cardId,
+      kind: "card-worktree-cleanup",
+      detail,
+      createdAt: yield* nowIso,
+    });
+  });
+
   /**
-   * Remove a card's worktree when its work is durable, else keep it and record why. Never
-   * deletes uncommitted or unpushed work. Idempotent: a repeated refusal dispatches nothing.
-   * The card is re-read before removal, since the probe's fetches leave time for a human to
-   * bring it back into use.
+   * T3o (T3O-123): strip the files git ignores from a finished card's kept worktree. `finish`
+   * (Done, archive, cancel, Check again) strips once; `sweep` only retries one a foreign process
+   * held back, so worktrees kept before this existed are never stripped on upgrade.
+   */
+  const stripKeptWorktree = Effect.fn("board-supervisor-stripKeptWorktree")(function* (
+    card: BoardCard,
+    workspace: BoardCardWorkspace,
+    worktreePath: string,
+    trigger: "finish" | "sweep",
+  ) {
+    const result = yield* workspace
+      .stripWorktree({ worktreePath, onlyIfPending: trigger === "sweep" })
+      .pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("board supervisor: kept worktree strip failed", {
+            cardId: card.id,
+            error: error.message,
+          }).pipe(
+            Effect.as({
+              outcome: "failed" as const,
+              detail: error._tag === "BoardWorkerGitError" ? error.detail : error.message,
+            }),
+          ),
+        ),
+      );
+    if (result.outcome === "stripped") {
+      yield* recordWorktreeCleanup(
+        card.id,
+        `Removed ${formatBoardBytes(result.freedBytes)} of ignored files from the kept worktree`,
+      );
+    } else if (result.outcome === "pending" && trigger === "finish") {
+      yield* recordWorktreeCleanup(
+        card.id,
+        `Left the kept worktree's ignored files for now: ${result.reason}. The board retries once it has stopped`,
+      );
+    } else if (result.outcome === "failed" && trigger === "finish") {
+      const machine = yield* machineOf(workspace);
+      yield* recordWorktreeCleanup(
+        card.id,
+        `Couldn't remove the kept worktree's ignored files on ${machine}: ${result.detail}`,
+      );
+    }
+  });
+
+  /**
+   * T3o (T3O-123): the `remove` mode. Saves uncommitted work into a snapshot ref, then removes the
+   * worktree forced. `fallback` names why it could not (the caller then keeps the safety rule);
+   * null is abandoned, the card being wanted again; `failed` is the worker out of reach.
+   */
+  const removeFinishedWorktree = Effect.fn("board-supervisor-removeFinishedWorktree")(function* (
+    card: BoardCard,
+    workspace: BoardCardWorkspace,
+    worktree: { readonly path: string; readonly branch: string },
+    stillWanted: Effect.Effect<boolean>,
+  ) {
+    const gone = yield* workspace
+      .goneWorktreePath({ worktreePath: worktree.path, branch: worktree.branch })
+      .pipe(Effect.orElseSucceed(() => ({ path: null })));
+    // A folder already gone is the safety rule's to tidy: it only loses git's record.
+    if (gone.path !== null) return { fallback: null } as const;
+    if (!(yield* stillWanted)) return null;
+    const snapshot = yield* workspace
+      .snapshotWorktree({ worktreePath: worktree.path, cardKey: card.key })
+      .pipe(Effect.result);
+    if (Result.isFailure(snapshot)) {
+      if (snapshot.failure._tag === "WorkerUnavailable") return "failed" as const;
+      return {
+        fallback: `It was not force-removed: its uncommitted work couldn't be saved first (${snapshot.failure.detail})`,
+      } as const;
+    }
+    if (snapshot.success.outcome === "over-cap") {
+      return {
+        fallback: `It was not force-removed: its uncommitted changes (${formatBoardBytes(snapshot.success.bytes)}) are over the ${formatBoardBytes(BOARD_WORKTREE_SNAPSHOT_CAP_BYTES)} snapshot cap`,
+      } as const;
+    }
+    if (snapshot.success.outcome === "snapshotted") {
+      const machine = yield* machineOf(workspace);
+      const { ref } = snapshot.success;
+      yield* recordWorktreeCleanup(
+        card.id,
+        `Saved the worktree's uncommitted work to ${ref} in ${workspace.checkoutPath ?? "the project checkout"} on ${machine}, kept for ${BOARD_DISCARDED_REF_MAX_AGE_DAYS} days. Restore it there with git checkout -b <name> ${ref}`,
+      );
+    }
+    if (!(yield* stillWanted)) return null;
+    const retired = yield* workspace
+      .retireWorktree({ worktreePath: worktree.path, kind: "forced", verifiedClean: false })
+      .pipe(
+        Effect.map((value) => ({ value })),
+        Effect.catchTags({ WorkerUnavailable: () => Effect.succeed("failed" as const) }),
+      );
+    if (retired === "failed") return "failed" as const;
+    if (retired.value === null) return null;
+    if (retired.value.outcome === "blocked") {
+      return { fallback: retired.value.reason } as const;
+    }
+    return { removed: { hookWarning: retired.value.hookWarning } } as const;
+  });
+
+  /**
+   * Give a finished card's worktree back as `worktreeAtDone` says. `remove` saves uncommitted work
+   * and removes it forced (cancelled work only when clean: its branch goes with it);
+   * `remove-if-clean` removes it only when its work is durable, else keeps it and records why;
+   * `keep` keeps it. A worktree that stays is stripped (`stripKeptWorktree`). Idempotent: a
+   * repeated refusal dispatches nothing. The card is re-read before removal, since the probe's
+   * fetches leave time for a human to bring it back into use.
    */
   const reclaimCardWorktree = Effect.fn("board-supervisor-reclaimCardWorktree")(function* (
     card: BoardCard,
     fetchedBases?: Set<string>,
+    options?: {
+      /** Its work was cancelled; its branch is deleted once the worktree goes. */
+      readonly cancelled?: boolean;
+      /** `finish` when the card just finished (or Check again); else a sweep's re-probe. */
+      readonly trigger?: "finish" | "sweep";
+    },
   ) {
     const worktree = card.worktree;
     if (worktree === null || worktree.status !== "ready" || worktree.path === null) return null;
@@ -7672,9 +7813,56 @@ const make = Effect.gen(function* () {
       });
       return { outcome: "failed" } satisfies BoardCardReclaimAttempt;
     }
+    const trigger = options?.trigger ?? "sweep";
+    const configured = (yield* boardSettings).lifecycle.worktreeAtDone;
+    const mode =
+      configured === "remove" && options?.cancelled === true ? "remove-if-clean" : configured;
     const key = String(card.id);
     if (reclaimingCards.has(key)) return { outcome: "busy" } satisfies BoardCardReclaimAttempt;
+    if (mode === "keep") {
+      reclaimingCards.add(key);
+      yield* stripKeptWorktree(card, workspace, worktree.path, trigger).pipe(
+        Effect.ensuring(Effect.sync(() => reclaimingCards.delete(key))),
+      );
+      return null;
+    }
     reclaimingCards.add(key);
+    const stillWanted = cardStillFinished(card, worktree.path);
+    const forced =
+      mode === "remove"
+        ? yield* removeFinishedWorktree(
+            card,
+            workspace,
+            { path: worktree.path, branch: worktree.branch },
+            stillWanted,
+          ).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("board supervisor: worktree removal failed", {
+                cardId: card.id,
+                cause: Cause.pretty(cause),
+              }).pipe(Effect.as("failed" as const)),
+            ),
+            Effect.tapCause(() => Effect.sync(() => reclaimingCards.delete(key))),
+          )
+        : { fallback: null };
+    if (forced === null || forced === "failed") {
+      reclaimingCards.delete(key);
+      return forced === null ? null : ({ outcome: "failed" } satisfies BoardCardReclaimAttempt);
+    }
+    if ("removed" in forced) {
+      reclaimingCards.delete(key);
+      const { hookWarning } = forced.removed;
+      yield* dispatchOptional({
+        type: "board.card.reclaim-worktree",
+        commandId: yield* commandId("reclaim-worktree"),
+        cardId: card.id,
+        outcome: "removed",
+        ...(hookWarning === null ? {} : { hookWarning }),
+        createdAt: yield* nowIso,
+      });
+      return { outcome: "removed" } satisfies BoardCardReclaimAttempt;
+    }
+    const fallback = forced.fallback;
     const pullRequests = [
       ...card.pullRequestHistory,
       ...(card.pullRequest === null ? [] : [card.pullRequest]),
@@ -7701,7 +7889,7 @@ const make = Effect.gen(function* () {
             card.pullRequest?.state === "open" ? card.pullRequest.number : null,
           fetchedBases,
         },
-        cardStillFinished(card, worktree.path),
+        stillWanted,
       )
       .pipe(
         Effect.catchCause((cause) =>
@@ -7715,10 +7903,21 @@ const make = Effect.gen(function* () {
     if (reclaimed === "failed") return { outcome: "failed" } satisfies BoardCardReclaimAttempt;
     // Abandoned: the card was no longer finished by the time the probe ended.
     if (reclaimed === null) return null;
-    const { outcome, reason } = reclaimed;
+    const { outcome } = reclaimed;
+    // The safety rule's refusal, and why `remove` fell back to it.
+    const reason =
+      reclaimed.reason === null || fallback === null
+        ? reclaimed.reason
+        : `${reclaimed.reason}. ${fallback}`;
     const hookWarning = reclaimed.outcome === "removed" ? (reclaimed.hookWarning ?? null) : null;
     const attempt: BoardCardReclaimAttempt =
       outcome === "removed" ? { outcome: "removed" } : { outcome: "kept", reason };
+    if (outcome === "blocked") {
+      reclaimingCards.add(key);
+      yield* stripKeptWorktree(card, workspace, worktree.path, trigger).pipe(
+        Effect.ensuring(Effect.sync(() => reclaimingCards.delete(key))),
+      );
+    }
     if (outcome === "blocked" && reason === worktree.reclaimBlockedReason) return attempt;
     // Optional: a concurrent path (card delete, a forced removal) may have
     // settled the worktree while this probed, and the decider's refusal is
@@ -7752,7 +7951,7 @@ const make = Effect.gen(function* () {
   const settlingAtDone = new Set<string>();
 
   /**
-   * Reclaim the worktree (any archived card, or in Done with `reclaimWorktreeOnDone`), then
+   * Reclaim the worktree (as `worktreeAtDone` says), then
    * delete the branches (merged PR only, once per round). Order matters: a local branch held by
    * a worktree cannot be deleted. `"after-reclaim"` (the sweep) cleans branches only when this
    * call removed the worktree. Best-effort throughout.
@@ -7762,6 +7961,8 @@ const make = Effect.gen(function* () {
     options?: {
       readonly branchCleanup?: "always" | "after-reclaim";
       readonly fetchedBases?: Set<string>;
+      /** The card just reached Done, or Check again: a kept worktree is stripped. */
+      readonly trigger?: "finish" | "sweep";
     },
   ) {
     const board = yield* readBoard;
@@ -7771,20 +7972,19 @@ const make = Effect.gen(function* () {
     if (!inDone && !archived) return null;
     const round = boardCardRound(card);
 
-    const settings = yield* boardSettings;
     let removedHere = false;
     let attempt: BoardCardReclaimAttempt | null = null;
-    if (archived || settings.lifecycle.reclaimWorktreeOnDone) {
-      // Re-assert on the round before removing: the yields above let a human drag the card back out
-      // of Done and start work in this checkout. Not on the stage, which the read model can lag;
-      // the round only advances, and advances on exactly that move.
-      const current = yield* readCard(card.id);
-      if (current !== null && boardCardRound(current) === round) {
-        const wasReady = current.worktree?.status === "ready";
-        attempt = yield* reclaimCardWorktree(current, options?.fetchedBases);
-        const after = yield* readCard(card.id);
-        removedHere = wasReady && after?.worktree?.status === "reclaimed";
-      }
+    // Re-assert on the round before removing: the yields above let a human drag the card back out
+    // of Done and start work in this checkout. Not on the stage, which the read model can lag;
+    // the round only advances, and advances on exactly that move.
+    const current = yield* readCard(card.id);
+    if (current !== null && boardCardRound(current) === round) {
+      const wasReady = current.worktree?.status === "ready";
+      attempt = yield* reclaimCardWorktree(current, options?.fetchedBases, {
+        trigger: options?.trigger ?? "sweep",
+      });
+      const after = yield* readCard(card.id);
+      removedHere = wasReady && after?.worktree?.status === "reclaimed";
     }
 
     if (!inDone) return attempt;
@@ -7929,8 +8129,8 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * One worktree-cleanup pass over Done-role cards (when `reclaimWorktreeOnDone` is on), archived
-   * cards (always), and orphans. `refreshOpenPullRequests` (boot) re-reads Done cards still cached
+   * One worktree-cleanup pass over Done-role cards, archived cards and cancelled work (each as
+   * `worktreeAtDone` says), and orphans. `refreshOpenPullRequests` (boot) re-reads Done cards still cached
    * `open`, which may have merged since; that tiny set is the only forge call here.
    */
   // Pending group-archive discards the sweep has already retried this process.
@@ -7981,7 +8181,9 @@ const make = Effect.gen(function* () {
       if (card.worktree === null || card.worktree.status !== "ready") continue;
       if (
         options.eventCards !== null &&
-        card.worktree.reclaimBlockedReason !== null &&
+        // T3o (T3O-123): under `keep` every finished worktree is kept, for no reason.
+        (card.worktree.reclaimBlockedReason !== null ||
+          settings.lifecycle.worktreeAtDone === "keep") &&
         !options.eventCards.has(card.id) &&
         nowMs - (worktreeProbedAt.get(card.id) ?? 0) < KEPT_WORKTREE_REPROBE_MS
       ) {
@@ -7997,7 +8199,6 @@ const make = Effect.gen(function* () {
         yield* reclaimCancelledCardWorktree(card.id);
         continue;
       }
-      if (!settings.lifecycle.reclaimWorktreeOnDone) continue;
       const stage = boardStageById(board, card.stage);
       if (stage === null || effectiveBoardStageRole(stage) !== "done") continue;
       if (options.refreshOpenPullRequests && card.pullRequest?.state === "open") {
@@ -8075,14 +8276,16 @@ const make = Effect.gen(function* () {
   const cardCleanupWorker = yield* makeDrainableWorker(
     (
       request:
-        | { readonly kind: "settle"; readonly card: BoardCard }
+        | { readonly kind: "settle"; readonly card: BoardCard; readonly arrived?: boolean }
         | { readonly kind: "reclaim"; readonly cardId: BoardCardId }
         | { readonly kind: "discard"; readonly cardId: BoardCardId }
         | { readonly kind: "cancelled"; readonly cardId: BoardCardId },
     ) =>
       Effect.gen(function* () {
         if (request.kind === "settle") {
-          yield* settleCardAtDone(request.card);
+          yield* settleCardAtDone(request.card, {
+            trigger: request.arrived === true ? "finish" : "sweep",
+          });
           return;
         }
         if (request.kind === "discard") {
@@ -8090,11 +8293,11 @@ const make = Effect.gen(function* () {
           return;
         }
         if (request.kind === "cancelled") {
-          yield* reclaimCancelledCardWorktree(request.cardId);
+          yield* reclaimCancelledCardWorktree(request.cardId, "finish");
           return;
         }
         const card = yield* readCard(request.cardId);
-        if (card !== null) yield* reclaimCardWorktree(card);
+        if (card !== null) yield* reclaimCardWorktree(card, undefined, { trigger: "finish" });
         if (card !== null) yield* reclaimArchivedIntegrationBranch(card);
       }).pipe(
         Effect.catchCauseIf(
@@ -8224,8 +8427,8 @@ const make = Effect.gen(function* () {
     if (refreshed === null) return { outcome: "unknown-card" } as const;
     if (refreshed.worktree?.status !== "ready") return { outcome: "no-worktree" } as const;
     const attempt = holdsCancelledWork(refreshed)
-      ? yield* reclaimCancelledCardWorktree(refreshed.id)
-      : yield* settleCardAtDone(refreshed);
+      ? yield* reclaimCancelledCardWorktree(refreshed.id, "finish")
+      : yield* settleCardAtDone(refreshed, { trigger: "finish" });
     if (attempt === null) {
       // Ready a moment ago: either it went meanwhile, or the card is not one
       // the cleanup reclaims (left Done, or the setting is off).
@@ -10730,10 +10933,10 @@ const make = Effect.gen(function* () {
    * branch is kept until that reclaim removes the checkout, and goes with it.
    */
   const reclaimCancelledCardWorktree = Effect.fn("board-supervisor-reclaimCancelledCardWorktree")(
-    function* (cardId: BoardCardId) {
+    function* (cardId: BoardCardId, trigger: "finish" | "sweep" = "sweep") {
       const card = yield* readCard(cardId);
       if (card === null) return null;
-      const attempt = yield* reclaimCardWorktree(card);
+      const attempt = yield* reclaimCardWorktree(card, undefined, { cancelled: true, trigger });
       if (attempt?.outcome === "removed") yield* deleteCancelledCardBranch(cardId);
       return attempt;
     },

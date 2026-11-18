@@ -82,6 +82,7 @@ export class WorktreeRetirer extends Context.Service<
     readonly retire: (
       input: WorktreeRetireInput,
     ) => Effect.Effect<WorktreeRetireResult, GitCommandError>;
+    readonly stopForStrip: (worktreePath: string) => Effect.Effect<string | null>;
   }
 >()("t3/board/worktreeRetire/WorktreeRetirer") {}
 
@@ -572,7 +573,24 @@ export const makeWorktreeRetirer = Effect.fn("worktreeRetire.makeWorktreeRetirer
     },
   );
 
-  return WorktreeRetirer.of({ retire });
+  /** T3o (T3O-123): stop the worktree's own terminals and sessions before a strip, and name
+      what still runs there (null when nothing does). A worktree being retired counts as busy. */
+  const stopForStrip = Effect.fn("worktreeRetire.stopForStrip")(function* (worktreePath: string) {
+    if (retiring.has(NodePath.resolve(worktreePath))) return "the worktree is being removed";
+    const inWorktree = yield* threads.threadsInWorktree(worktreePath).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("worktree strip: threads unreadable", {
+          worktreePath,
+          cause: Cause.pretty(cause),
+        }).pipe(Effect.as([])),
+      ),
+    );
+    yield* stopOwnProcesses(inWorktree);
+    const survivors = yield* settledSurvivors(worktreePath);
+    return survivors.length > 0 ? survivorReason(survivors) : null;
+  });
+
+  return WorktreeRetirer.of({ retire, stopForStrip });
 });
 
 /**

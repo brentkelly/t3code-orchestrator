@@ -11,6 +11,7 @@ import {
   BoardStageId,
   DEFAULT_BOARD_AUTO_ARCHIVE_AFTER_DAYS,
   DEFAULT_BOARD_AUTO_ARCHIVE_DONE,
+  DEFAULT_BOARD_WORKTREE_AT_DONE,
   DEFAULT_BOARD_AUTO_COLLAPSE_EMPTY_STAGES,
   DEFAULT_BOARD_COST_EMPHASIS_USD,
   DEFAULT_BOARD_BUILD_PROMPT,
@@ -35,6 +36,7 @@ import {
   type BoardStageExecutionReview,
   type BoardCardWorktree,
   type BoardSettings,
+  type BoardWorktreeAtDone,
   type BoardStageExecution,
   type BoardState,
   type BoardCiPass,
@@ -375,10 +377,9 @@ export const settingsWith = (input: {
   /** Overrides for the Code review stage's config (`draftPullRequests`).
       Absent leaves it at the compiled-in defaults. */
   readonly review?: Partial<BoardStageExecutionReview>;
-  /** Whether a card reaching Done with a merged pull request has its worktree
-      reclaimed there rather than at archive. Defaults to the shipped default
-      (on), so a suite that says nothing exercises what users actually run. */
-  readonly reclaimWorktreeOnDone?: boolean;
+  /** What a finished card's worktree gets. Defaults to the shipped default (`remove`), so a
+      suite that says nothing exercises what users actually run. */
+  readonly worktreeAtDone?: BoardWorktreeAtDone;
   /** Overrides for the Build stage's `submit` step: the prompt, model
       and limits behind "Submit for merge — no review". Absent leaves the
       compiled-in defaults. */
@@ -430,7 +431,7 @@ export const settingsWith = (input: {
     workers: input.workers ?? {},
   },
   lifecycle: {
-    reclaimWorktreeOnDone: input.reclaimWorktreeOnDone ?? true,
+    worktreeAtDone: input.worktreeAtDone ?? DEFAULT_BOARD_WORKTREE_AT_DONE,
     autoArchiveDone: input.autoArchiveDone ?? DEFAULT_BOARD_AUTO_ARCHIVE_DONE,
     autoArchiveAfterDays: input.autoArchiveAfterDays ?? DEFAULT_BOARD_AUTO_ARCHIVE_AFTER_DAYS,
   },

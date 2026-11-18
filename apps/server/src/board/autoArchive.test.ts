@@ -122,7 +122,7 @@ it.effect("archives a Done card holding a worktree while reclaim at Done is off"
         building: [codexStep],
         globalMaxConcurrent: 3,
         autoArchiveDone: true,
-        reclaimWorktreeOnDone: false,
+        worktreeAtDone: "keep",
       }),
     },
     ({ reactor, board }) =>

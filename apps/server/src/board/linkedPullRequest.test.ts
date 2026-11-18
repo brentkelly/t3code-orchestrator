@@ -342,7 +342,7 @@ describe("settling a card with a linked pull request", () => {
           settings: settingsWith({
             building: [codexStep],
             globalMaxConcurrent: 4,
-            reclaimWorktreeOnDone: false,
+            worktreeAtDone: "keep",
           }),
           pullRequestByNumber: { ...layerPr, state: "merged" },
         },
