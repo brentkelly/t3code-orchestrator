@@ -13,7 +13,9 @@ import {
 const snapshot = (
   declared: BoardWorkerCapacitySnapshot["declared"],
   readiness: BoardWorkerCapacitySnapshot["readiness"],
+  readinessProtocol = 2,
 ): BoardWorkerCapacitySnapshot => ({
+  readinessProtocol,
   at: "2026-11-13T00:00:00.000Z",
   declared,
   headroom: declared,
@@ -26,6 +28,8 @@ const snapshot = (
 
 const local = "local" as BoardWorkerId;
 const small = "small" as BoardWorkerId;
+const old = "old" as BoardWorkerId;
+const trusted = "trusted" as BoardWorkerId;
 
 describe("boardProjectWorkerRows", () => {
   it("reads this project's readiness off each worker", () => {
@@ -34,6 +38,8 @@ describe("boardProjectWorkerRows", () => {
         { workerId: local, label: "This server" },
         { workerId: small, label: "build-02" },
         { workerId: "absent" as BoardWorkerId, label: "gone" },
+        { workerId: old, label: "old" },
+        { workerId: trusted, label: "build-03" },
       ],
       snapshots: new Map([
         [
@@ -47,6 +53,7 @@ describe("boardProjectWorkerRows", () => {
               checkedAt: null,
               exitCode: 1,
               lastLine: "missing docker",
+              configKey: "checks:now",
             },
             // Another project's entry on the same worker is not this one's.
             {
@@ -59,16 +66,53 @@ describe("boardProjectWorkerRows", () => {
           ]),
         ],
         [small, snapshot({ cpuCores: 8, ramGiB: 8, diskGB: 500 }, [])],
+        // Too old to honour runScript: the board never asks it, and says why.
+        [
+          old,
+          snapshot(
+            { cpuCores: 8, ramGiB: 8, diskGB: 500 },
+            [
+              {
+                repositoryKey: "github.com/acme/app",
+                path: ".t3/ready.sh",
+                state: "ready",
+                version: null,
+                checkedAt: null,
+                configKey: "checks:stale",
+              },
+            ],
+            0,
+          ),
+        ],
+        // Ready with a skipped script and a warning: worth a look.
+        [
+          trusted,
+          snapshot({ cpuCores: 8, ramGiB: 8, diskGB: 500 }, [
+            {
+              repositoryKey: "github.com/acme/app",
+              path: ".t3/ready.sh",
+              state: "ready",
+              version: null,
+              checkedAt: null,
+              configKey: "checks:now",
+              scriptSkipped: "not-trusted",
+              checks: { passed: 2, failed: 0, warned: 1 },
+            },
+          ]),
+        ],
       ]),
       repositoryKey: "github.com/acme/app",
       projectId: "project-1",
       readinessPath: ".t3/ready.sh",
+      readinessConfigKey: "checks:now",
+      readinessConfigured: true,
     });
     expect(rows).toEqual([
       {
         workerId: local,
         label: "This server",
         state: "not-ready",
+        hasNotice: false,
         detail: "Exit 1 · missing docker",
         declared: { cpuCores: 16, ramGiB: 64, diskGB: 500 },
       },
@@ -76,10 +120,40 @@ describe("boardProjectWorkerRows", () => {
         workerId: small,
         label: "build-02",
         state: null,
+        hasNotice: false,
         detail: null,
         declared: { cpuCores: 8, ramGiB: 8, diskGB: 500 },
       },
+      {
+        workerId: old,
+        label: "old",
+        state: null,
+        hasNotice: false,
+        detail: "Update this worker to check readiness",
+        declared: { cpuCores: 8, ramGiB: 8, diskGB: 500 },
+      },
+      {
+        workerId: trusted,
+        label: "build-03",
+        state: "ready",
+        hasNotice: true,
+        detail:
+          "2 checks passed, 1 warning · readiness script not run: not trusted for this project",
+        declared: { cpuCores: 8, ramGiB: 8, diskGB: 500 },
+      },
     ]);
+  });
+
+  it("flags an old worker only when the project asks for readiness", () => {
+    const rows = boardProjectWorkerRows({
+      workers: [{ workerId: old, label: "old" }],
+      snapshots: new Map([[old, snapshot({ cpuCores: 8, ramGiB: 8, diskGB: 500 }, [], 0)]]),
+      repositoryKey: "github.com/acme/app",
+      projectId: "project-1",
+      readinessPath: ".t3/ready.sh",
+      readinessConfigured: false,
+    });
+    expect(rows.map((row) => row.detail)).toEqual([null]);
   });
 });
 
@@ -141,6 +215,7 @@ describe("the Resources form", () => {
       setupTimeoutMinutes: null,
       readinessPath: null,
       readinessTimeoutSeconds: null,
+      readinessChecks: [],
     };
     const draft = { ...boardResourcesDraftOf(previous), readinessPath: "./ci/ready.sh" };
     expect(boardResourcesDraftOf(previous)["setupTimeoutMinutes"]).toBe("");
@@ -154,6 +229,7 @@ describe("the Resources form", () => {
         setupTimeoutMinutes: null,
         readinessPath: null,
         readinessTimeoutSeconds: null,
+        readinessChecks: [],
       },
     });
   });
@@ -164,6 +240,7 @@ describe("the Resources form", () => {
       setupTimeoutMinutes: null,
       readinessPath: null,
       readinessTimeoutSeconds: null,
+      readinessChecks: [],
     };
     const edited = boardResourcesOf(
       { ...boardResourcesDraftOf(previous), cpuCores: "3" },

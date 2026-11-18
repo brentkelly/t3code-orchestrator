@@ -9,6 +9,8 @@ import {
   type ProjectId,
   type ProviderInstanceId,
 } from "@t3tools/contracts";
+import * as NodeOS from "node:os";
+
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { projectScriptRuntimeEnv, setupProjectScript } from "@t3tools/shared/projectScripts";
 import * as Clock from "effect/Clock";
@@ -50,6 +52,12 @@ import { EMPTY_CAPACITY_STATE, type CapacityRecord } from "./capacityModel.ts";
 import { makeCardSetup } from "./cardSetup.ts";
 import { BoardMachine, bytesToGB } from "./machine.ts";
 import { makeReadiness } from "./readiness.ts";
+import {
+  READINESS_GIT_GUARD,
+  READINESS_HOMEBREW_PREFIXES,
+  type ReadinessCheckHost,
+} from "./readinessChecks.ts";
+import { spawnReadinessProbe } from "./readinessSpawn.ts";
 
 const RecordJson = Schema.fromJsonString(
   Schema.Array(
@@ -232,7 +240,32 @@ const makeBoardWorkerCapacityLive = Effect.gen(function* () {
     ]))?.trim();
     return originHead !== undefined && originHead.startsWith("origin/") ? originHead : "HEAD";
   });
+  const home = yield* HostProcess.HomeDirectory;
+  const platform = yield* HostProcess.Platform;
+  const readinessHost: ReadinessCheckHost = {
+    run: (input) => spawnReadinessProbe(input, platform),
+    env: yield* HostProcess.Environment,
+    home,
+    tmpdir: NodeOS.tmpdir(),
+    platform,
+    arch: yield* HostProcess.Architecture,
+    uid: (yield* HostProcess.UserId) ?? null,
+    homebrewPrefixes: READINESS_HOMEBREW_PREFIXES,
+    forbiddenRoots: Effect.gen(function* () {
+      const projects = yield* local.projects().pipe(Effect.orElseSucceed(() => []));
+      return [
+        ...projects
+          .filter((project) => !project.deleted && project.workspaceRoot.length > 0)
+          .map((project) => project.workspaceRoot),
+        config.worktreesDir,
+        config.baseDir,
+        "/tmp",
+        "/var/tmp",
+      ];
+    }),
+  };
   const readiness = makeReadiness({
+    host: readinessHost,
     git: {
       checkout: (repositoryKey, projectId) => checkoutOf(repositoryKey, projectId),
       fetch: Effect.fn("BoardWorkerCapacity.readinessFetch")(function* (checkout: string) {
@@ -240,7 +273,13 @@ const makeBoardWorkerCapacityLive = Effect.gen(function* () {
           .resolvePrimaryRemoteName(checkout)
           .pipe(Effect.orElseSucceed(() => null));
         if (remote === null) return true;
-        return (yield* gitRead(checkout, ["fetch", "--quiet", remote], 60_000)) !== null;
+        return (
+          (yield* gitRead(
+            checkout,
+            [...READINESS_GIT_GUARD, "fetch", "--quiet", remote],
+            60_000,
+          )) !== null
+        );
       }),
       committed: Effect.fn("BoardWorkerCapacity.readinessScript")(function* (
         checkout: string,
@@ -249,6 +288,15 @@ const makeBoardWorkerCapacityLive = Effect.gen(function* () {
         const ref = yield* defaultRef(checkout);
         return yield* committedReadinessScript((args) => gitRead(checkout, args), ref, scriptPath);
       }),
+      blob: Effect.fn("BoardWorkerCapacity.readinessBlob")(function* (
+        checkout: string,
+        repoPath: string,
+      ) {
+        const ref = yield* defaultRef(checkout);
+        return yield* committedReadinessBlob((args) => gitRead(checkout, args), ref, repoPath);
+      }),
+      remote: (checkout) =>
+        git.resolvePrimaryRemoteName(checkout).pipe(Effect.orElseSucceed(() => null)),
     },
   });
   const setup = makeCardSetup({
@@ -409,9 +457,7 @@ const makeBoardWorkerCapacityLive = Effect.gen(function* () {
         const entry = readiness
           .forBoard(boardId)
           .find((entry) => entry.repositoryKey === repositoryKey && entry.path === scriptPath);
-        return entry === undefined
-          ? null
-          : readiness.output(repositoryKey, entry.projectId, scriptPath);
+        return entry === undefined ? null : readiness.output(entry);
       }),
     boardIds: made.service.boardIds.pipe(
       Effect.map((recorded) => [...new Set([...recorded, ...readiness.boards()])]),
@@ -450,5 +496,24 @@ export const committedReadinessScript = Effect.fn("BoardWorkerCapacity.committed
     if (version === undefined || version === "") return null;
     const text = yield* read(["show", object]);
     return text === null ? null : { version, text };
+  },
+);
+
+/** A check's repository file (`version.from`, `rustToolchain`): its size is checked before it is
+    read, at most 64 KB, as the raw blob (no filters, textconv or replace refs). */
+export const committedReadinessBlob = Effect.fn("BoardWorkerCapacity.committedReadinessBlob")(
+  function* (
+    read: (args: ReadonlyArray<string>) => Effect.Effect<string | null>,
+    ref: string,
+    path: string,
+  ) {
+    const normalized = normalizeBoardReadinessPath(path);
+    if (normalized === null) return null;
+    const object = `${ref}:${normalized}`;
+    const git = ["--no-replace-objects", "cat-file"];
+    if ((yield* read([...git, "-t", object]))?.trim() !== "blob") return null;
+    const size = Number((yield* read([...git, "-s", object]))?.trim());
+    if (!Number.isInteger(size) || size > 64 * 1024) return null;
+    return yield* read([...git, "blob", object]);
   },
 );

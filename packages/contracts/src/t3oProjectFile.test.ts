@@ -327,6 +327,96 @@ describe("export", () => {
     expect(boardProjectDeltasEqual(back.delta, config)).toBe(true);
   });
 
+  it("parses each readiness check kind and drops what it can't use, with warnings (T3O-124)", () => {
+    const checks = [
+      { command: "cmake", fix: "sudo apt install cmake", os: ["linux"] },
+      { command: "node", version: { from: "./.node-version" } },
+      { command: "pnpm", version: { atLeast: 10 }, warn: true },
+      { rustToolchain: "rust-toolchain.toml" },
+      { cargoConfig: { contains: "rustc-slot" } },
+      { exists: "$PLAYWRIGHT_BROWSERS_PATH/chromium-*" },
+      { exists: "~/.local/state/seed/refresh.log", maxAgeHours: 3, warn: true },
+      { env: "ANDROID_HOME" },
+      { docker: { plugins: ["compose", "buildx"], loggedIn: ["ghcr.io"] } },
+      { git: "identity" },
+      { git: "push", name: "push \u001b[31maccess\u0007" },
+      { gh: "github.com" },
+      { writable: "$TMPDIR" },
+      { command: "mytool", version: { atLeast: "1" } },
+      // Dropped:
+      { kubectl: "context" },
+      { command: "node", git: "fetch" },
+      { command: "../bin/node" },
+      { command: "-rf" },
+      { command: "x".repeat(65) },
+      { exists: "~/.cache/**/chromium" },
+      { exists: "src/*.ts" },
+      { exists: "~/a/../../etc" },
+      { exists: "~/*/x" },
+      { exists: "/opt/*/*/*/bin" },
+      { exists: "$SECRET_DIR/x" },
+      { writable: "build" },
+      { git: "pull" },
+      { command: "node", version: { atLeast: "10", from: "package.json" } },
+      { command: "node", version: { from: "../package.json" } },
+      { command: "node", version: { from: "notes.txt" } },
+      { docker: { plugins: ["--host=x"] } },
+      { docker: { plugins: [], loggedIn: ["-x"] } },
+      { gh: "--hostname" },
+      { command: "node", os: ["plan9"] },
+      { rustToolchain: "/etc/rust-toolchain" },
+    ];
+    const back = resolve({
+      resources: { readiness: { checks, path: ".t3/ready.sh", future: true } },
+    });
+    expect(back.delta.resources?.readinessChecks).toEqual([
+      { command: "cmake", fix: "sudo apt install cmake", os: ["linux"] },
+      { command: "node", version: { from: ".node-version" } },
+      { command: "pnpm", version: { atLeast: "10" }, warn: true },
+      { rustToolchain: "rust-toolchain.toml" },
+      { cargoConfig: { contains: "rustc-slot" } },
+      { exists: "$PLAYWRIGHT_BROWSERS_PATH/chromium-*" },
+      { exists: "~/.local/state/seed/refresh.log", maxAgeHours: 3, warn: true },
+      { env: "ANDROID_HOME" },
+      { docker: { plugins: ["compose", "buildx"], loggedIn: ["ghcr.io"] } },
+      { git: "identity" },
+      { git: "push", name: "push access" },
+      { gh: "github.com" },
+      { writable: "$TMPDIR" },
+      // A version t3o can't ask for warns and becomes an existence check.
+      { command: "mytool" },
+    ]);
+    const warnings = back.delta.warnings.join("\n");
+    expect(warnings).toContain("resources.readiness.future: unknown key");
+    expect(warnings).toContain("checks[13].version: t3o doesn't know how to ask mytool");
+    expect(warnings).toContain("checks[14]: not a check this board knows");
+    expect(warnings).toContain("checks[15]: names more than one check");
+    for (let index = 16; index < checks.length; index++) {
+      expect(warnings).toContain(`checks[${index}]`);
+    }
+    // More than 50 checks warn: the rest are reported as not run.
+    const many = resolve({
+      resources: { readiness: { checks: Array.from({ length: 60 }, () => ({ git: "fetch" })) } },
+    });
+    expect(many.delta.warnings.join("\n")).toContain("more than 50 checks");
+    // timeoutSeconds is clamped to 600.
+    const slow = resolve({ resources: { readiness: { timeoutSeconds: 10 ** 9 } } });
+    expect(slow.delta.resources?.readinessTimeoutSeconds).toBe(600);
+    // An unknown field on a known check warns and is dropped; the check stays.
+    const extra = resolve({
+      resources: { readiness: { checks: [{ git: "fetch", retries: 3 }] } },
+    });
+    expect(extra.delta.resources?.readinessChecks).toEqual([{ git: "fetch" }]);
+    expect(extra.delta.warnings.join("\n")).toContain("checks[0].retries");
+    // Checks export and import back unchanged.
+    const file = buildT3oProjectFile({ board: EMPTY_BOARD_STATE, config: back.delta });
+    expect((file.resources as { readiness: { checks: unknown } }).readiness.checks).toEqual(
+      back.delta.resources?.readinessChecks,
+    );
+    const again = resolve(JSON.parse(JSON.stringify(file)));
+    expect(boardProjectDeltasEqual(again.delta, back.delta)).toBe(true);
+  });
+
   it("round-trips the project's resources, and drops a bad entry with a warning (T3O-86)", () => {
     const back = resolve({
       resources: {
@@ -340,6 +430,7 @@ describe("export", () => {
       setupTimeoutMinutes: 20,
       readinessPath: null,
       readinessTimeoutSeconds: 60,
+      readinessChecks: [],
     });
     expect(back.delta.warnings.join("\n")).toContain("resources.readiness.path");
     const file = buildT3oProjectFile({

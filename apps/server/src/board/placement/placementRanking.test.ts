@@ -289,6 +289,7 @@ describe("placement ranking (T3O-87)", () => {
         snapshot: snap,
         repositoryKey: "repo",
         projectId: "p",
+        readinessConfigured: false,
       });
     expect(ready(W1, "ready", snapshot(big))).toBe(true);
     expect(ready(W1, "ready", snapshot(big, "ready"))).toBe(true);
@@ -300,6 +301,20 @@ describe("placement ranking (T3O-87)", () => {
       ready(BOARD_LOCAL_WORKER_ID, "ready", snapshot({ cpuCores: 0, ramGiB: 0, diskGB: 50 })),
     ).toBe(false);
     expect(ready(BOARD_LOCAL_WORKER_ID, "ready", snapshot(big))).toBe(true);
+    // T3o (T3O-124): a worker too old to honour runScript is never ready for a project whose
+    // readiness runs something, even with an old ready result; with nothing to run, it is.
+    const configured = (snap: BoardWorkerCapacitySnapshot) =>
+      boardWorkerReadyForProject({
+        workerId: W1,
+        gate: "ready",
+        snapshot: snap,
+        repositoryKey: "repo",
+        projectId: "p",
+        readinessConfigured: true,
+      });
+    expect(configured(snapshot(big, "ready"))).toBe(false);
+    expect(configured({ ...snapshot(big, "ready"), readinessProtocol: 2 })).toBe(true);
+    expect(ready(W1, "ready", snapshot(big, "ready"))).toBe(true);
   });
 });
 

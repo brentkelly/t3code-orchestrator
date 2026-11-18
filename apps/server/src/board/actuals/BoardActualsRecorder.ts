@@ -7,6 +7,7 @@ import {
   BOARD_LEARNED_WINDOW_DAYS,
   BOARD_LOCAL_WORKER_ID,
   CommandId,
+  DEFAULT_BOARD_SETTINGS,
   EMPTY_BOARD_STATE,
   EMPTY_BOARD_WORKERS_STATE,
   type EnvironmentId,
@@ -18,6 +19,8 @@ import {
   boardProjectLearned,
   boardProjectLearnedEqual,
   boardProjectStageConfig,
+  boardProjectTrustsReadinessScript,
+  boardReadinessRequest,
   boardRepositoryGroupingKey,
   boardStepNotMeasured,
   boardThreadLinkWorkerId,
@@ -39,6 +42,7 @@ import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import { ServerSettingsService } from "../../serverSettings.ts";
 import { BoardEngine } from "../BoardEngine.ts";
 import { boardWorkerReadyForProject } from "../placement/placementRanking.ts";
 import { ThreadGateway } from "../ThreadGateway.ts";
@@ -317,6 +321,7 @@ export const BoardActualsRecorderLive = Layer.effect(
     const usage = yield* Effect.serviceOption(BoardUsageRecorder);
     const placement = yield* Effect.serviceOption(BoardPlacement);
     const threads = yield* ThreadGateway;
+    const serverSettings = yield* Effect.serviceOption(ServerSettingsService);
 
     const relay: BoardActualsRelay = (workerId, input) => {
       if (workerId === BOARD_LOCAL_WORKER_ID) {
@@ -363,6 +368,16 @@ export const BoardActualsRecorderLive = Layer.effect(
           Effect.map((project) => boardRepositoryGroupingKey(project?.repositoryIdentity)),
           Effect.catchCause(() => Effect.succeed(null)),
         );
+        const boardSettings = Option.isNone(serverSettings)
+          ? DEFAULT_BOARD_SETTINGS
+          : yield* serverSettings.value.getSettings.pipe(
+              Effect.map((settings) => settings.board ?? DEFAULT_BOARD_SETTINGS),
+              Effect.catchCause(() => Effect.succeed(DEFAULT_BOARD_SETTINGS)),
+            );
+        const readinessConfigured = boardReadinessRequest(
+          boardProjectStageConfig(board, projectId)?.resources ?? null,
+          boardProjectTrustsReadinessScript(boardSettings, projectId),
+        ).configured;
         const profiles: Array<BoardResourceProfile> = [];
         for (const workerId of [BOARD_LOCAL_WORKER_ID, ...(board.workers ?? []).map((w) => w.id)]) {
           const snapshot = yield* capacity.value.latest(workerId);
@@ -380,6 +395,7 @@ export const BoardActualsRecorderLive = Layer.effect(
               snapshot,
               repositoryKey,
               projectId: String(projectId),
+              readinessConfigured,
             })
           )
             profiles.push(snapshot.declared);

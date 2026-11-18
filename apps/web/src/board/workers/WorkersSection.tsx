@@ -8,6 +8,7 @@ import {
   BOARD_LOCAL_WORKER_ABBREVIATION,
   BOARD_LOCAL_WORKER_ID,
   BOARD_WORKER_PROTOCOL_FLOOR_T3O_VERSION,
+  boardReadinessRequest,
   type BoardWorkerCapacitySnapshot,
   type BoardWorkerId,
   type BoardWorkerJoinCodeCreated,
@@ -31,6 +32,7 @@ import { useEnvironment } from "../../state/environments";
 import { environmentShell } from "../../state/shell";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { BoardHint } from "../BoardHint";
+import { useBoardSettings } from "../useBoardEnvironmentId";
 import { describeBoardCommandFailure } from "../boardCommandFeedback";
 import { AddWorkerDialog } from "./AddWorkerDialog";
 import { BoardServerPlanningCallouts } from "./BoardServerPlanningCallouts";
@@ -173,7 +175,17 @@ export function WorkersSection(props: {
   const capacityResult = useAtomValue(boardEnvironment.capacityAtom({ environmentId, input: {} }));
   const capacity = AsyncResult.isSuccess(capacityResult) ? capacityResult.value : null;
   const shellState = useAtomValue(environmentShell.stateValueAtom(environmentId));
-  const projects = (Option.getOrNull(shellState.snapshot)?.projects ?? []).map(workerProject);
+  const stageConfigs = useAtomValue(boardEnvironment.projectStageConfigsAtom(environmentId));
+  const boardProjects = useBoardSettings((settings) => settings.board.projects);
+  const projects = (Option.getOrNull(shellState.snapshot)?.projects ?? []).map((project) =>
+    workerProject(
+      project,
+      boardReadinessRequest(
+        stageConfigs[project.id]?.resources,
+        boardProjects[project.id]?.trustReadinessScript ?? false,
+      ).configured,
+    ),
+  );
   const cardsByProject = useAtomValue(boardEnvironment.cardsByProjectAtom(environmentId));
   const cardKeyOf = (cardId: string) =>
     [...cardsByProject.values()]
@@ -292,6 +304,9 @@ export function WorkersSection(props: {
             projects={projects}
             setups={state.setups}
             readiness={localSnapshot?.readiness ?? []}
+            readinessProtocol={
+              localSnapshot == null ? null : (localSnapshot.readinessProtocol ?? 0)
+            }
             live
             nowMs={nowMs}
             onDetails={setFailedSetup}
@@ -344,6 +359,7 @@ export function WorkersSection(props: {
                 projects={projects}
                 setups={state.setups}
                 readiness={snapshot?.readiness ?? []}
+                readinessProtocol={snapshot == null ? null : (snapshot.readinessProtocol ?? 0)}
                 live={live}
                 nowMs={nowMs}
                 onDetails={setFailedSetup}

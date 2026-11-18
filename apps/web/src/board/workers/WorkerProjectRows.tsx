@@ -7,6 +7,7 @@
 import {
   boardReadinessIsFor,
   boardRepositoryGroupingKey,
+  boardWorkerSpeaksReadiness,
   resolveBoardWorkerCheckout,
   type BoardWorkerId,
   type BoardWorkerReadiness,
@@ -42,6 +43,7 @@ import {
   checkoutCell,
   clockTime,
   cloneStageLabel,
+  readyDetail,
   remoteHost,
   setupFailureCopy,
   workerProjectState,
@@ -56,9 +58,14 @@ export interface WorkerProject {
   readonly workspaceRoot: string;
   readonly repositoryKey: string | null;
   readonly repositoryName: string;
+  /** Whether the project asks for any readiness checks or a trusted script. */
+  readonly readinessConfigured: boolean;
 }
 
-export function workerProject(project: OrchestrationProjectShell): WorkerProject {
+export function workerProject(
+  project: OrchestrationProjectShell,
+  readinessConfigured: boolean,
+): WorkerProject {
   const repositoryKey = boardRepositoryGroupingKey(project.repositoryIdentity);
   return {
     id: project.id,
@@ -67,6 +74,7 @@ export function workerProject(project: OrchestrationProjectShell): WorkerProject
     repositoryKey,
     repositoryName:
       project.repositoryIdentity?.name ?? repositoryKey?.split("/").at(-1) ?? project.title,
+    readinessConfigured,
   };
 }
 
@@ -86,6 +94,8 @@ export function WorkerProjectRows(props: {
   readonly projects: ReadonlyArray<WorkerProject>;
   readonly setups: ReadonlyArray<BoardWorkerSetup>;
   readonly readiness: ReadonlyArray<BoardWorkerReadiness>;
+  /** T3o (T3O-124): the worker's `readinessProtocol`, or null before its first snapshot. */
+  readonly readinessProtocol: number | null;
   /** False while the worker is out of reach: what it last reported, and no actions. */
   readonly live: boolean;
   readonly nowMs: number;
@@ -132,7 +142,14 @@ export function WorkerProjectRows(props: {
             project={project}
             live={props.live}
             state={
-              cell === "connecting" ? { kind: "checking" } : workerProjectState(cell, readiness)
+              cell === "connecting"
+                ? { kind: "checking" }
+                : cell.kind === "checked-out" &&
+                    project.readinessConfigured &&
+                    props.readinessProtocol !== null &&
+                    !boardWorkerSpeaksReadiness({ readinessProtocol: props.readinessProtocol })
+                  ? { kind: "update-readiness" }
+                  : workerProjectState(cell, readiness)
             }
             onDetails={props.onDetails}
           />
@@ -181,16 +198,65 @@ function ProjectRow(props: {
     </BoardHint>
   );
 
+  /** The checks' and script's full output, read from the worker for the run it came from. */
+  const outputViewer = (checkedAt: string | null, lastLine: string | null) => (
+    <ReadinessOutput
+      lastLine={lastLine}
+      output={output?.checkedAt === checkedAt ? output.text : undefined}
+      canRead={props.live}
+      onToggle={() => {
+        if (output?.checkedAt === checkedAt) {
+          setOutput(null);
+          return;
+        }
+        setOutput({ checkedAt, text: null });
+        void capacityAction({
+          environmentId: props.environmentId,
+          input: {
+            action: "readinessOutput",
+            workerId: props.workerId,
+            projectId: project.id,
+          },
+        }).then((result) =>
+          setOutput((current) =>
+            current?.checkedAt !== checkedAt
+              ? current
+              : {
+                  checkedAt,
+                  text:
+                    result._tag === "Success"
+                      ? result.value || "The script printed nothing."
+                      : `Couldn't read the output from ${props.workerLabel}.`,
+                },
+          ),
+        );
+      }}
+    />
+  );
+
   let status: ReactNode;
   let detail: ReactNode = null;
   let actions: ReactNode = null;
   switch (state.kind) {
-    case "ready":
+    case "ready": {
       status = <Status icon="tick">Ready</Status>;
-      detail = state.noScript
-        ? "No readiness script: a checkout counts as ready"
-        : `Readiness script passed${state.checkedAt === null ? "" : ` · ${clockTime(state.checkedAt)}`}`;
+      const line = `${readyDetail(state)}${state.checkedAt === null ? "" : ` · ${clockTime(state.checkedAt)}`}`;
+      // T3o (T3O-124): warnings and a skipped script are worth reading even when ready.
+      detail =
+        (state.checks?.warned ?? 0) > 0 || state.scriptSkipped ? (
+          <span className="flex min-w-0 flex-col gap-1">
+            <span>{line}</span>
+            {outputViewer(state.checkedAt, null)}
+          </span>
+        ) : (
+          line
+        );
       actions = recheck;
+      break;
+    }
+    case "update-readiness":
+      status = <Status icon="tick">Checked out</Status>;
+      detail = "Update this worker to check readiness";
       break;
     case "checked-out":
       status = <Status icon="tick">Checked out</Status>;
@@ -217,51 +283,26 @@ function ProjectRow(props: {
       );
       detail = (
         <span className="flex min-w-0 flex-col gap-1">
-          <span>
-            Readiness script <span className="font-mono text-board-11">{state.path}</span>
-            {state.exitCode === null ? " failed" : ` exited ${state.exitCode}`}
-            {state.checkedAt === null ? "" : ` · ${clockTime(state.checkedAt)}`}
-          </span>
-          <ReadinessOutput
-            lastLine={state.lastLine}
-            output={output?.checkedAt === state.checkedAt ? output.text : undefined}
-            canRead={props.live}
-            onToggle={() => {
-              if (output?.checkedAt === state.checkedAt) {
-                setOutput(null);
-                return;
-              }
-              const checkedAt = state.checkedAt;
-              setOutput({ checkedAt, text: null });
-              void capacityAction({
-                environmentId: props.environmentId,
-                input: {
-                  action: "readinessOutput",
-                  workerId: props.workerId,
-                  projectId: project.id,
-                },
-              }).then((result) =>
-                setOutput((current) =>
-                  current?.checkedAt !== checkedAt
-                    ? current
-                    : {
-                        checkedAt,
-                        text:
-                          result._tag === "Success"
-                            ? result.value || "The script printed nothing."
-                            : `Couldn't read the output from ${props.workerLabel}.`,
-                      },
-                ),
-              );
-            }}
-          />
+          {state.checkFailed ? (
+            <span>
+              A readiness check failed
+              {state.checkedAt === null ? "" : ` · ${clockTime(state.checkedAt)}`}
+            </span>
+          ) : (
+            <span>
+              Readiness script <span className="font-mono text-board-11">{state.path}</span>
+              {state.exitCode === null ? " failed" : ` exited ${state.exitCode}`}
+              {state.checkedAt === null ? "" : ` · ${clockTime(state.checkedAt)}`}
+            </span>
+          )}
+          {outputViewer(state.checkedAt, state.lastLine)}
         </span>
       );
       actions = recheck;
       break;
     case "checking":
       status = <Status icon="running">Checking…</Status>;
-      detail = "Running the readiness script";
+      detail = "Running the readiness checks";
       break;
     case "cloning":
       status = (
@@ -380,7 +421,7 @@ function ReadinessOutput(props: {
         type="button"
       >
         <ChevronRightIcon className={cn("size-3 shrink-0", open && "rotate-90")} />
-        <span className="truncate">{props.lastLine ?? "Show the script's output"}</span>
+        <span className="truncate">{props.lastLine ?? "Show the output"}</span>
       </button>
       {open ? (
         <pre className="max-h-72 overflow-auto border-t border-border px-2 py-1.5 font-mono text-board-11 whitespace-pre-wrap">

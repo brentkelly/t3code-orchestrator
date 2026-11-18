@@ -5,7 +5,11 @@ import {
   boardBaselineWithLearned,
   boardPlannerUse,
   boardProjectConfigVersion,
+  boardReadinessConfigKey,
+  boardReadinessRequest,
   boardResourceProfile,
+  boardWorkerNeedsReadinessRequest,
+  EMPTY_BOARD_PROJECT_RESOURCES,
   normalizeBoardReadinessPath,
   resolveBoardProjectBaseline,
   type BoardProjectResources,
@@ -54,6 +58,7 @@ describe("boardProjectConfigVersion", () => {
           setupTimeoutMinutes: null,
           readinessPath: null,
           readinessTimeoutSeconds: null,
+          readinessChecks: [],
         },
       }),
     ).toBe(before);
@@ -65,6 +70,7 @@ describe("boardProjectConfigVersion", () => {
           setupTimeoutMinutes: null,
           readinessPath: null,
           readinessTimeoutSeconds: null,
+          readinessChecks: [],
         },
       }),
     ).not.toBe(before);
@@ -78,6 +84,7 @@ describe("boardProjectConfigVersion", () => {
           setupTimeoutMinutes: null,
           readinessPath: null,
           readinessTimeoutSeconds: null,
+          readinessChecks: [],
           learned: { computedAt: NOW, cpu: learnedOnly, ram: learnedOnly, disk: learnedOnly },
         },
       }),
@@ -102,6 +109,7 @@ const resourcesWith = (input: {
   setupTimeoutMinutes: null,
   readinessPath: null,
   readinessTimeoutSeconds: null,
+  readinessChecks: [],
   ...(input.pin === undefined ? {} : { pinDeclared: input.pin }),
   learned: {
     computedAt: NOW,
@@ -177,5 +185,79 @@ describe("boardPlannerUse", () => {
       ),
     ).toMatchObject({ value: 4, heldIncrease: 6 });
     expect(boardPlannerUse(resourcesWith({ baseline: human, learned: {} }), "cpu").value).toBe(4);
+  });
+});
+
+describe("readiness requests (T3O-124)", () => {
+  const resources = {
+    ...EMPTY_BOARD_PROJECT_RESOURCES,
+    readinessChecks: [{ git: "identity" as const }],
+  };
+  const entry = (configKey: string | undefined) => ({
+    repositoryKey: "github.com/acme/app",
+    path: ".t3/ready.sh",
+    state: "ready" as const,
+    version: null,
+    checkedAt: null,
+    ...(configKey === undefined ? {} : { configKey }),
+  });
+
+  it("keys checks and trust together, independent of field order", () => {
+    expect(boardReadinessConfigKey([{ name: "a", git: "push" }], false)).toBe(
+      boardReadinessConfigKey([{ git: "push", name: "a" }], false),
+    );
+    expect(boardReadinessConfigKey([], true)).not.toBe(boardReadinessConfigKey([], false));
+    expect(boardReadinessConfigKey([{ git: "push" }], false)).not.toBe(
+      boardReadinessConfigKey([{ git: "fetch" }], false),
+    );
+  });
+
+  it("runs the script only when trusted, and counts as configured with checks or trust", () => {
+    expect(boardReadinessRequest(null, false)).toMatchObject({
+      path: ".t3/ready.sh",
+      runScript: false,
+      configured: false,
+    });
+    expect(boardReadinessRequest(null, true).configured).toBe(true);
+    expect(boardReadinessRequest(resources, false)).toMatchObject({
+      checks: [{ git: "identity" }],
+      configured: true,
+    });
+  });
+
+  it("asks only a worker on protocol 2, and again when trust or checks change", () => {
+    const untrusted = boardReadinessRequest(resources, false);
+    const trusted = boardReadinessRequest(resources, true);
+    const known = { readiness: [entry(untrusted.configKey)], readinessProtocol: 2 };
+    // An old worker would drop runScript and run the script: never asked.
+    expect(
+      boardWorkerNeedsReadinessRequest({ readiness: [] }, "github.com/acme/app", "p", untrusted),
+    ).toBe(false);
+    expect(boardWorkerNeedsReadinessRequest(known, "github.com/acme/app", "p", untrusted)).toBe(
+      false,
+    );
+    expect(boardWorkerNeedsReadinessRequest(known, "github.com/acme/app", "p", trusted)).toBe(true);
+    // An entry from before keys existed is a different request.
+    expect(
+      boardWorkerNeedsReadinessRequest(
+        { readiness: [entry(undefined)], readinessProtocol: 2 },
+        "github.com/acme/app",
+        "p",
+        untrusted,
+      ),
+    ).toBe(true);
+  });
+
+  it("leaves a config version unchanged when it has no checks", () => {
+    const delta = { stageSwitches: {}, overrides: {}, ci: { steps: [] } };
+    const withPath = { ...EMPTY_BOARD_PROJECT_RESOURCES, readinessPath: "x.sh" };
+    const legacy = boardProjectConfigVersion({
+      ...delta,
+      resources: (({ readinessChecks: _c, ...rest }) => rest)(withPath) as never,
+    });
+    expect(boardProjectConfigVersion({ ...delta, resources: withPath })).toBe(legacy);
+    expect(
+      boardProjectConfigVersion({ ...delta, resources: { ...withPath, ...resources } }),
+    ).not.toBe(legacy);
   });
 });

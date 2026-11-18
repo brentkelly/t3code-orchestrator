@@ -1,14 +1,19 @@
 // @effect-diagnostics nodeBuiltinImport:off - the committed script is written to a temp file to run.
 /**
- * A project's readiness on this worker (T3O-86): the readiness script as committed on the
- * default branch, cached per version and shared by every board; one run at a time.
+ * A project's readiness on this worker (T3O-86): its declarative checks (T3O-124), then the
+ * readiness script as committed on the default branch when the board trusts the project; cached
+ * per repository, path and configuration, shared by every board; one run at a time.
  */
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import {
+  BOARD_READINESS_MAX_TIMEOUT_SECONDS,
+  boardReadinessConfigKey,
   normalizeBoardReadinessPath,
+  stripBoardReadinessText,
+  type BoardReadinessCheck,
   type BoardWorkerCheckReadinessInput,
   type BoardWorkerReadiness,
 } from "@t3tools/contracts";
@@ -16,9 +21,17 @@ import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Semaphore from "effect/Semaphore";
 
 import { BoardCiTail, runBoardCiStep } from "../ci/BoardCiRunner.ts";
 import { readLogTail } from "./logTail.ts";
+import {
+  formatReadinessChecks,
+  readinessGithubToken,
+  runReadinessChecks,
+  type ReadinessCheckHost,
+  type ReadinessCheckResult,
+} from "./readinessChecks.ts";
 
 /** A result asked for within this long of the last one is that one. */
 const REUSE_MS = 30_000;
@@ -40,10 +53,35 @@ export interface ReadinessGit {
     checkout: string,
     path: string,
   ) => Effect.Effect<{ readonly version: string; readonly text: string } | null>;
+  /** A blob on the default branch for a check to parse: at most 64 KB, no filters; else null. */
+  readonly blob: (checkout: string, path: string) => Effect.Effect<string | null>;
+  /** The remote `resolvePrimaryRemoteName` picks, or null with none. */
+  readonly remote: (checkout: string) => Effect.Effect<string | null>;
 }
+
+/** Readiness runs at most this many at once on a worker, across projects and boards. */
+const MAX_CONCURRENT_RUNS = 2;
+
+/** `timeoutSeconds` as a run uses it: at least 1, at most 600 (Node timers misfire past 2^31 ms). */
+const clampTimeoutSeconds = (seconds: number) =>
+  Number.isFinite(seconds)
+    ? Math.min(BOARD_READINESS_MAX_TIMEOUT_SECONDS, Math.max(1, seconds))
+    : BOARD_READINESS_MAX_TIMEOUT_SECONDS;
+
+/** A stable share of `interval` in [0, interval/4), so entries made together don't sweep together. */
+const sweepOffset = (key: string, interval: number) => {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < key.length; index++) {
+    hash = Math.imul(hash ^ key.charCodeAt(index), 0x01000193) >>> 0;
+  }
+  return (hash / 0x1_0000_0000) * (interval / 4);
+};
 
 interface Entry {
   readonly key: string;
+  /** Stored so the hourly sweep re-runs what the board last asked for. */
+  readonly checks: ReadonlyArray<BoardReadinessCheck>;
+  readonly runScript: boolean;
   readiness: BoardWorkerReadiness;
   /** Consecutive scheduled failures, for the two-in-a-row rule. */
   failures: number;
@@ -66,37 +104,47 @@ const whose = (repositoryKey: string | null, projectId: string | undefined) => (
 
 export const makeReadiness = (deps: {
   readonly git: ReadinessGit;
+  readonly host: ReadinessCheckHost;
   readonly runStep?: typeof runBoardCiStep;
 }) => {
   const runStep = deps.runStep ?? runBoardCiStep;
+  const slots = Semaphore.makeUnsafe(MAX_CONCURRENT_RUNS);
   const entries = new Map<string, Entry>();
   /** Per board, the entry it last asked about for each repository: the path it uses now. */
   const asked = new Map<string, Map<string, string>>();
-  const keyOf = (repositoryKey: string | null, projectId: string | undefined, path: string) =>
-    `${repositoryIdentity(repositoryKey, projectId)}\0${path}`;
+  const keyOf = (
+    repositoryKey: string | null,
+    projectId: string | undefined,
+    path: string,
+    configKey: string,
+  ) => `${repositoryIdentity(repositoryKey, projectId)}\0${path}\0${configKey}`;
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
   const entryFor = (input: BoardWorkerCheckReadinessInput) => {
-    const key = keyOf(input.repositoryKey, input.projectId, input.path);
+    const configKey = boardReadinessConfigKey(input.checks, input.runScript);
+    const key = keyOf(input.repositoryKey, input.projectId, input.path, configKey);
     const existing = entries.get(key);
     if (existing !== undefined) {
-      existing.timeoutSeconds = input.timeoutSeconds;
+      existing.timeoutSeconds = clampTimeoutSeconds(input.timeoutSeconds);
       return existing;
     }
     const entry: Entry = {
       key,
+      checks: input.checks,
+      runScript: input.runScript,
       readiness: {
         ...whose(input.repositoryKey, input.projectId),
         path: input.path,
         state: "checking",
         version: null,
         checkedAt: null,
+        configKey,
       },
       failures: 0,
       lastRunAt: null,
       output: null,
       inFlight: null,
-      timeoutSeconds: input.timeoutSeconds,
+      timeoutSeconds: clampTimeoutSeconds(input.timeoutSeconds),
       boards: new Set(),
     };
     entries.set(key, entry);
@@ -127,12 +175,16 @@ export const makeReadiness = (deps: {
     requested: boolean,
     before: BoardWorkerReadiness,
   ) {
-    const { repositoryKey, projectId, path } = entry.readiness;
+    const { repositoryKey, projectId, path, configKey } = entry.readiness;
+    const base = {
+      ...whose(repositoryKey, projectId),
+      path,
+      ...(configKey === undefined ? {} : { configKey }),
+    };
     if (normalizeBoardReadinessPath(path) === null) {
       // Never read as "no script": that would count the worker ready.
       entry.readiness = {
-        ...whose(repositoryKey, projectId),
-        path,
+        ...base,
         state: "not-ready",
         version: null,
         checkedAt: yield* nowIso,
@@ -147,70 +199,115 @@ export const makeReadiness = (deps: {
     }
     const fetched = yield* deps.git.fetch(checkout);
     const committed = yield* deps.git.committed(checkout, path);
-    const checkedAt = yield* nowIso;
     if (!fetched && before.checkedAt !== null) {
       // A failed fetch is not a result: the last one stands.
       entry.readiness = { ...before, fetchFailed: true };
       return entry.readiness;
     }
-    if (committed === null) {
-      // No script: a checkout counts as ready.
-      entry.failures = 0;
-      entry.readiness = {
-        ...whose(repositoryKey, projectId),
-        path,
-        state: "ready",
-        version: null,
-        checkedAt,
-        noScript: true,
-        ...(fetched ? {} : { fetchFailed: true }),
-      };
-      return entry.readiness;
+    const scriptBlob = entry.runScript ? committed : null;
+    if (before.state === "ready" && scriptBlob !== null && before.version !== scriptBlob.version) {
+      entry.readiness = { ...before, pendingVersion: scriptBlob.version };
     }
-    const previous = before;
-    if (previous.state === "ready" && previous.version !== committed.version) {
-      entry.readiness = { ...previous, pendingVersion: committed.version };
-    }
-    const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3o-ready-"));
-    const scriptPath = NodePath.join(dir, NodePath.basename(path));
-    NodeFS.writeFileSync(scriptPath, committed.text, { mode: 0o700 });
-    const tail = new BoardCiTail(400);
     const started = yield* Clock.currentTimeMillis;
-    const quote = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;
-    const logPath = NodePath.join(dir, "ready.log");
-    const { exit, full } = yield* runStep({
-      command: `T3O_READY_CHECKOUT=${quote(checkout)} sh ${quote(scriptPath)}`,
-      cwd: checkout,
-      timeoutMs: entry.timeoutSeconds * 1000,
-      tail,
-      logPath,
-      resultPath: NodePath.join(dir, "ready.result.json"),
-      ciEnvironment: false,
-    }).pipe(
+    // The checks and the script share the project's timeout.
+    const budgetMs = entry.timeoutSeconds * 1000;
+    let dir: string | null = null;
+    const run = Effect.gen(function* () {
+      const checkResults: ReadonlyArray<ReadinessCheckResult> =
+        entry.checks.length === 0
+          ? []
+          : yield* runReadinessChecks({
+              checks: entry.checks,
+              host: deps.host,
+              budgetMs,
+              repo: {
+                checkout,
+                remote: deps.git.remote(checkout),
+                file: (file) => deps.git.blob(checkout, file),
+                githubToken: (repository) => readinessGithubToken(checkout, repository),
+              },
+            });
+      if (scriptBlob === null) return { checkResults, script: null };
+      const remainingMs = budgetMs - ((yield* Clock.currentTimeMillis) - started);
+      dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3o-ready-"));
+      const scriptPath = NodePath.join(dir, NodePath.basename(path));
+      NodeFS.writeFileSync(scriptPath, scriptBlob.text, { mode: 0o700 });
+      const tail = new BoardCiTail(400);
+      const quote = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;
+      const logPath = NodePath.join(dir, "ready.log");
+      const exit = yield* runStep({
+        command: `T3O_READY_CHECKOUT=${quote(checkout)} sh ${quote(scriptPath)}`,
+        cwd: checkout,
+        timeoutMs: Math.max(1000, remainingMs),
+        tail,
+        logPath,
+        resultPath: NodePath.join(dir, "ready.result.json"),
+        ciEnvironment: false,
+      });
       // The full output is the log's last 64 KB, read before the directory goes.
-      Effect.map((exit) => ({ exit, full: readLogTail(logPath) })),
-      Effect.ensuring(Effect.sync(() => NodeFS.rmSync(dir, { recursive: true, force: true }))),
+      return {
+        checkResults,
+        script: { exit, tail, full: readLogTail(logPath), version: scriptBlob.version },
+      };
+    });
+    const { checkResults, script } = yield* run.pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (dir !== null) NodeFS.rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
     );
+    const checkedAt = yield* nowIso;
     const durationMs = (yield* Clock.currentTimeMillis) - started;
-    const text = tail.text();
-    entry.output = full ?? text;
-    const lastLine = (text.trimEnd().split("\n").at(-1) ?? "").slice(0, LAST_LINE_CHARS);
-    const passed = exit.status === "passed";
+    const failedCheck = checkResults.find((result) => result.status === "fail");
+    const counted = (status: ReadinessCheckResult["status"]) =>
+      checkResults.filter((result) => result.status === status).length;
+    const scriptText =
+      script === null ? "" : stripBoardReadinessText(script.tail.text(), { keepLines: true });
+    const skipped = committed !== null && !entry.runScript;
+    entry.output = [
+      checkResults.length === 0 ? null : formatReadinessChecks(checkResults),
+      skipped ? `Readiness script ${path} not run: not trusted for this project.` : null,
+      script === null
+        ? null
+        : script.full === null || script.full === undefined
+          ? scriptText
+          : stripBoardReadinessText(script.full, { keepLines: true }),
+    ]
+      .filter((part) => part !== null && part !== "")
+      .join("\n\n");
+    const scriptPassed = script === null || script.exit.status === "passed";
+    const passed = failedCheck === undefined && scriptPassed;
+    const lastLine = (
+      failedCheck !== undefined
+        ? `${failedCheck.label}: ${failedCheck.detail}`
+        : (scriptText.trimEnd().split("\n").at(-1) ?? "")
+    ).slice(0, LAST_LINE_CHARS);
     entry.failures = passed ? 0 : entry.failures + 1;
     // A scheduled re-check turns a ready worker not-ready only after two failures in a row;
     // a first check, or one a human asked for, counts at once.
-    const holdReady = !passed && !requested && previous.state === "ready" && entry.failures < 2;
+    const holdReady = !passed && !requested && before.state === "ready" && entry.failures < 2;
     entry.readiness = holdReady
-      ? { ...previous, checkedAt, pendingVersion: null }
+      ? { ...before, checkedAt, pendingVersion: null }
       : {
-          ...whose(repositoryKey, projectId),
-          path,
+          ...base,
           state: passed ? "ready" : "not-ready",
-          version: committed.version,
+          version: script === null ? null : script.version,
           checkedAt,
-          exitCode: exit.exitCode,
-          lastLine,
+          ...(script === null ? {} : { exitCode: script.exit.exitCode }),
+          ...(script === null && failedCheck === undefined ? {} : { lastLine }),
           durationMs,
+          ...(committed === null ? { noScript: true } : {}),
+          ...(skipped ? { scriptSkipped: "not-trusted" as const } : {}),
+          ...(checkResults.length === 0
+            ? {}
+            : {
+                checks: {
+                  passed: counted("pass"),
+                  failed: counted("fail"),
+                  warned: counted("warn"),
+                },
+              }),
           ...(fetched ? {} : { fetchFailed: true }),
         };
     return entry.readiness;
@@ -237,16 +334,18 @@ export const makeReadiness = (deps: {
     }
     // Whatever ends the run (a result, a defect, the caller going away), every caller that
     // joined it gets an answer: an unfinished run leaves the last result standing.
-    return yield* execute(entry, input.requested === true, before).pipe(
-      Effect.onExit((exit) =>
-        Effect.gen(function* () {
-          if (exit._tag === "Failure") entry.readiness = before;
-          entry.lastRunAt = yield* Clock.currentTimeMillis;
-          entry.inFlight = null;
-          yield* Deferred.succeed(deferred, entry.readiness);
-        }),
-      ),
-    );
+    return yield* slots
+      .withPermits(1)(execute(entry, input.requested === true, before))
+      .pipe(
+        Effect.onExit((exit) =>
+          Effect.gen(function* () {
+            if (exit._tag === "Failure") entry.readiness = before;
+            entry.lastRunAt = yield* Clock.currentTimeMillis;
+            entry.inFlight = null;
+            yield* Deferred.succeed(deferred, entry.readiness);
+          }),
+        ),
+      );
   });
 
   /** Re-check what is due: hourly when passing, every 15 minutes when failing. */
@@ -257,13 +356,16 @@ export const makeReadiness = (deps: {
         entry.readiness.state === "ready"
           ? READINESS_PASSING_INTERVAL_MS
           : READINESS_FAILING_INTERVAL_MS;
-      if (entry.lastRunAt !== null && now - entry.lastRunAt < interval) continue;
+      const due = interval - sweepOffset(entry.key, interval);
+      if (entry.lastRunAt !== null && now - entry.lastRunAt < due) continue;
       const board = entry.boards.values().next().value;
       if (board === undefined) continue;
       yield* check(board, {
         ...whose(entry.readiness.repositoryKey, entry.readiness.projectId),
         path: entry.readiness.path,
         timeoutSeconds: entry.timeoutSeconds,
+        checks: entry.checks,
+        runScript: entry.runScript,
       });
     }
   });
@@ -287,8 +389,16 @@ export const makeReadiness = (deps: {
       const state = key === undefined ? undefined : entries.get(key)?.readiness.state;
       return state === undefined || state === "ready" ? null : state;
     },
-    output: (repositoryKey: string | null, projectId: string | undefined, path: string) =>
-      entries.get(keyOf(repositoryKey, projectId, path))?.output ?? null,
+    /** The output behind a reported result: its repository, path and configuration. */
+    output: (readiness: BoardWorkerReadiness) =>
+      entries.get(
+        keyOf(
+          readiness.repositoryKey,
+          readiness.projectId,
+          readiness.path,
+          readiness.configKey ?? "",
+        ),
+      )?.output ?? null,
     /** The boards that asked about a project here. */
     boards: (): ReadonlyArray<string> => [...asked.keys()],
     forgetBoard: (boardId: string) => {

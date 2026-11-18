@@ -7,7 +7,52 @@
       "diskGB": 5
     },
     "readiness": {
-      "path": "scripts/t3o-ready.sh",
+      "checks": [
+        {
+          "command": "node",
+          "version": { "from": "package.json" },
+          "fix": "install the Node version package.json's engines.node names and put it first on the worker's PATH"
+        },
+        {
+          "command": "pnpm",
+          "fix": "corepack enable pnpm, or npm install -g pnpm@12"
+        },
+        {
+          "git": "identity",
+          "fix": "git config --global user.name \"<name>\" && git config --global user.email \"<email>\""
+        },
+        {
+          "git": "fetch",
+          "fix": "give git a non-interactive credential for the remote (gh auth setup-git, an SSH key, or docs/t3o/gitenv.md)"
+        },
+        { "git": "push", "fix": "gh auth login with an account that can push to the repository" },
+        {
+          "gh": "github.com",
+          "fix": "install gh (https://cli.github.com), then gh auth login"
+        },
+        {
+          "command": "make",
+          "os": ["linux"],
+          "fix": "sudo apt install build-essential python3 (node-pty compiles on install)"
+        },
+        {
+          "command": "c++",
+          "os": ["linux"],
+          "fix": "sudo apt install build-essential python3 (node-pty compiles on install)"
+        },
+        {
+          "command": "python3",
+          "os": ["linux"],
+          "fix": "sudo apt install build-essential python3 (node-pty compiles on install)"
+        },
+        { "name": "writable temp dir", "writable": "$TMPDIR" },
+        {
+          "name": "test browser",
+          "exists": "$PLAYWRIGHT_BROWSERS_PATH/chromium_headless_shell-*",
+          "warn": true,
+          "fix": "apps/web/node_modules/.bin/playwright install --with-deps chromium (CI's install step downloads it too)"
+        }
+      ],
       "timeoutSeconds": 120
     }
   },

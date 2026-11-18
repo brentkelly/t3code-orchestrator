@@ -260,6 +260,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("card sizes", (it
         setupTimeoutMinutes: 20,
         readinessPath: "./.t3//ready.sh",
         readinessTimeoutSeconds: null,
+        readinessChecks: [],
       };
       const set = (path: string | null): BoardCommand => ({
         type: "board.project.set-resources",

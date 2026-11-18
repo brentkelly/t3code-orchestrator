@@ -20,8 +20,6 @@
     "t3o-worker": "node scripts/t3o-worker.mjs",
     "t3o-auto-update": "node scripts/t3o-auto-update.mjs",
     "t3o-release": "node scripts/t3o-release.mjs",
-    "t3o-ready": "sh scripts/t3o-ready.sh",
-    "t3o-ready:full": "sh scripts/t3o-ready.sh --full",
     "dist:desktop:deb": "node scripts/build-desktop-artifact.ts --platform linux --target deb --arch x64",
     "kill": "node scripts/kill-dev.ts",
     "start:desktop": "vp run --filter @t3tools/desktop start",

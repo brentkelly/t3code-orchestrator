@@ -586,6 +586,7 @@ it.effect("a learned increase reaches a placed card only as a background grow cl
             setupTimeoutMinutes: null,
             readinessPath: null,
             readinessTimeoutSeconds: null,
+            readinessChecks: [],
             learned: {
               computedAt: iso(T0),
               cpu: learned(4),

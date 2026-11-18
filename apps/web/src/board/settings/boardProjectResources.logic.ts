@@ -4,6 +4,7 @@
  */
 import {
   boardReadinessIsFor,
+  boardWorkerSpeaksReadiness,
   BOARD_CARD_SIZE_LETTERS,
   BOARD_CARD_SIZE_MULTIPLIERS,
   BOARD_RESOURCE_DIMENSIONS,
@@ -17,6 +18,8 @@ import {
   type BoardWorkerReadinessState,
 } from "@t3tools/contracts";
 
+import { readyDetail } from "../workers/workerCopy";
+
 const UNITS = { cpu: "cores", ram: "GiB", disk: "GB" } as const;
 const NAMES = { cpu: "CPU", ram: "RAM", disk: "Disk" } as const;
 
@@ -27,6 +30,8 @@ export interface BoardProjectWorkerRow {
   readonly state: BoardWorkerReadinessState | null;
   /** "Exit 1 · missing docker", "No readiness script: a checkout counts as ready". */
   readonly detail: string | null;
+  /** T3o (T3O-124): ready, but with warnings or a skipped script worth reading. */
+  readonly hasNotice: boolean;
   readonly declared: BoardResourceProfile;
 }
 
@@ -37,6 +42,10 @@ export function boardProjectWorkerRows(input: {
   readonly repositoryKey: string | null;
   readonly projectId: string;
   readonly readinessPath: string;
+  /** T3o (T3O-124): the checks and trust this board asks for; an older result doesn't show. */
+  readonly readinessConfigKey?: string;
+  /** Whether the project asks for any readiness: an old worker is only flagged when it does. */
+  readonly readinessConfigured: boolean;
 }): ReadonlyArray<BoardProjectWorkerRow> {
   return input.workers.flatMap(({ workerId, label }) => {
     const snapshot = input.snapshots.get(workerId);
@@ -45,18 +54,33 @@ export function boardProjectWorkerRows(input: {
       snapshot.readiness.find(
         (entry) =>
           boardReadinessIsFor(entry, input.repositoryKey, input.projectId) &&
-          entry.path === input.readinessPath,
+          entry.path === input.readinessPath &&
+          (input.readinessConfigKey === undefined || entry.configKey === input.readinessConfigKey),
       ) ?? null;
+    const warned = readiness?.checks?.warned ?? 0;
     return [
       {
         workerId,
         label,
         state: readiness?.state ?? null,
+        hasNotice:
+          readiness?.state === "ready" && (warned > 0 || readiness.scriptSkipped !== undefined),
         detail:
           readiness === null
-            ? null
-            : readiness.noScript === true
-              ? "No readiness script: a checkout counts as ready"
+            ? input.readinessConfigured && !boardWorkerSpeaksReadiness(snapshot)
+              ? "Update this worker to check readiness"
+              : null
+            : readiness.state === "ready"
+              ? readyDetail({
+                  kind: "ready",
+                  checkedAt: readiness.checkedAt,
+                  noScript: readiness.noScript === true,
+                  checks:
+                    readiness.checks === undefined
+                      ? null
+                      : { passed: readiness.checks.passed, warned },
+                  scriptSkipped: readiness.scriptSkipped !== undefined,
+                })
               : readiness.state === "not-ready"
                 ? [
                     readiness.exitCode == null ? null : `Exit ${readiness.exitCode}`,
@@ -235,6 +259,8 @@ export function boardResourcesOf(
       setupTimeoutMinutes: setupTimeout.value,
       readinessPath,
       readinessTimeoutSeconds: readinessTimeout.value,
+      // T3o (T3O-124): checks come from t3o.json; the form keeps them as they are.
+      readinessChecks: previous?.readinessChecks ?? [],
     },
   };
 }

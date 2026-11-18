@@ -4,6 +4,7 @@
  * The settings save whole, against the version they were loaded at.
  */
 import {
+  boardReadinessRequest,
   boardRepositoryGroupingKey,
   DEFAULT_BOARD_READINESS_SCRIPT_PATH,
   boardBaselineWithLearned,
@@ -24,7 +25,9 @@ import { AsyncResult } from "effect/reactivity";
 import { CheckIcon, CopyIcon } from "lucide-react";
 import { useState } from "react";
 
+import { setBoardProjectSetting } from "../../components/settings/BoardSettingsPanel.logic";
 import { Button } from "../../components/ui/button";
+import { Switch } from "../../components/ui/switch";
 import { Input } from "../../components/ui/input";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { cn } from "../../lib/utils";
@@ -32,6 +35,7 @@ import { boardEnvironment } from "../../state/board";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { describeBoardCommandFailure } from "../boardCommandFeedback";
 import { boardToast } from "../boardToast";
+import { useBoardSettings, useUpdateBoardSettings } from "../useBoardEnvironmentId";
 import { boardWorkerLabel } from "../workers/cardWorker";
 import {
   BOARD_BASELINE_FIELDS,
@@ -79,6 +83,9 @@ export function BoardProjectResourcesTab(props: {
       : Object.values(columns)
           .flat()
           .filter((card) => card.archivedAt === null && card.worktreeReady === true).length;
+  const boardSettings = useBoardSettings((settings) => settings.board);
+  const updateBoardSettings = useUpdateBoardSettings();
+  const trusted = boardSettings.projects[props.projectId]?.trustReadinessScript ?? false;
   const [confirming, setConfirming] = useState<string | null>(null);
   const starter = useCopyToClipboard({ target: "starter script" });
   const setResources = useAtomCommand(boardEnvironment.setProjectResources, {
@@ -91,6 +98,7 @@ export function BoardProjectResourcesTab(props: {
   const parsed = boardResourcesOf(shown, resources);
   const settings = resolveBoardProjectResourceSettings(resources);
   const snapshots = AsyncResult.isSuccess(capacityResult) ? capacityResult.value : NO_SNAPSHOTS;
+  const readinessRequest = boardReadinessRequest(resources, trusted);
   const rows = boardProjectWorkerRows({
     workers: [...snapshots.keys()].map((key) => {
       const workerId = key as BoardWorkerId;
@@ -100,6 +108,8 @@ export function BoardProjectResourcesTab(props: {
     repositoryKey: boardRepositoryGroupingKey(project?.repositoryIdentity),
     projectId: props.projectId,
     readinessPath: settings.readinessPath,
+    readinessConfigKey: readinessRequest.configKey,
+    readinessConfigured: readinessRequest.configured,
   });
   // T3o (T3O-87): the form edits the declared baseline; placements use it with learning.
   const declaredBaseline = resolveBoardProjectDeclared(resources);
@@ -226,11 +236,40 @@ export function BoardProjectResourcesTab(props: {
           )}
         </div>
         <p className="text-board-12 text-muted-foreground">
-          The readiness script runs from the default branch on each worker before cards are placed
-          there. Make it check the machine (tools, services, credentials), not files in the
-          repository: the checkout may be at an older commit. With no script, a checkout counts as
-          ready. The script runs with T3O_READY_CHECKOUT set to the checkout's path.
+          Each worker checks a project before cards are placed there, then hourly. The checks in
+          t3o.json (resources.readiness.checks) are run by T3o itself:{" "}
+          {settings.readinessChecks.length === 0
+            ? "this project has none."
+            : `this project has ${settings.readinessChecks.length}.`}{" "}
+          A readiness script runs only if you trust the project. With neither, a checkout counts as
+          ready.
         </p>
+        <label className="flex items-start gap-2 text-board-12">
+          <Switch
+            aria-label="Run this project's readiness script"
+            checked={trusted}
+            className="mt-0.5 shrink-0"
+            disabled={!canWrite}
+            onCheckedChange={(next) =>
+              updateBoardSettings({
+                board: {
+                  projects: setBoardProjectSetting(boardSettings.projects, props.projectId, {
+                    trustReadinessScript: next,
+                  }),
+                },
+              })
+            }
+            size="sm"
+          />
+          <span className="flex min-w-0 flex-col gap-0.5">
+            <span className="font-medium">Run this project's readiness script</span>
+            <span className="text-muted-foreground">
+              Runs <span className="font-mono">{settings.readinessPath}</span> from the project's
+              default branch on every worker, every hour, as you. Only for projects whose code you
+              trust: whatever lands on that branch runs next.
+            </span>
+          </span>
+        </label>
         <details className="text-board-12">
           <summary className="cursor-pointer text-muted-foreground">Starter script</summary>
           <div className="mt-2 flex flex-col items-start gap-2">
@@ -319,7 +358,7 @@ export function BoardProjectResourcesTab(props: {
                     >
                       Re-check
                     </Button>
-                    {row.state === "not-ready" ? (
+                    {row.state === "not-ready" || row.hasNotice ? (
                       <Button
                         onClick={() =>
                           void capacityAction({

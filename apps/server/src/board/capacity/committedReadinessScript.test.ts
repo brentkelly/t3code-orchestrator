@@ -2,7 +2,7 @@
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
-import { committedReadinessScript } from "./BoardWorkerCapacityLive.ts";
+import { committedReadinessBlob, committedReadinessScript } from "./BoardWorkerCapacityLive.ts";
 
 const repo = (types: Record<string, string>) => {
   const calls: Array<ReadonlyArray<string>> = [];
@@ -28,4 +28,31 @@ it.effect("a directory or an escaping path is no script; a file is read normalis
       text: "echo ready\n",
     });
   }),
+);
+
+it.effect(
+  "a check's repository file is sized before it is read, raw and at most 64 KB (T3O-124)",
+  () =>
+    Effect.gen(function* () {
+      const sizes: Record<string, string> = {
+        "origin/main:.nvmrc": "8\n",
+        "origin/main:big": "70000\n",
+      };
+      const calls: Array<ReadonlyArray<string>> = [];
+      const read = (args: ReadonlyArray<string>) =>
+        Effect.sync(() => {
+          calls.push(args);
+          const object = args.at(-1)!;
+          if (args[2] === "-t") return object in sizes ? "blob\n" : null;
+          if (args[2] === "-s") return sizes[object] ?? null;
+          return "v22.1.0\n";
+        });
+      assert.strictEqual(yield* committedReadinessBlob(read, "origin/main", ".nvmrc"), "v22.1.0\n");
+      assert.isNull(yield* committedReadinessBlob(read, "origin/main", "big"));
+      assert.isNull(yield* committedReadinessBlob(read, "origin/main", "../outside"));
+      for (const args of calls)
+        assert.deepStrictEqual(args.slice(0, 2), ["--no-replace-objects", "cat-file"]);
+      // The oversized blob was never read.
+      assert.notDeepInclude(calls, ["--no-replace-objects", "cat-file", "blob", "origin/main:big"]);
+    }),
 );

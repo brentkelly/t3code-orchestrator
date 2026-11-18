@@ -1192,6 +1192,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
       assert.deepEqual(settings.board.projects[ProjectId.make("project-1")], {
         keyPrefix: "T3",
         hidden: true,
+        trustReadinessScript: false,
       });
     }).pipe(Effect.provide(layerServerSettings())),
   );

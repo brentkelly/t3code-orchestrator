@@ -3213,11 +3213,17 @@ export function boardProjectConfigVersion(delta: BoardProjectStageDelta): string
     delta.resources === undefined
       ? undefined
       : boardProjectResourcesWithoutLearned(delta.resources);
+  // T3o (T3O-124): no checks hashes as before checks existed.
+  const hashed =
+    // Older in-memory resources may lack the field: it decodes with a default.
+    resources === undefined || (resources.readinessChecks ?? []).length > 0
+      ? resources
+      : (({ readinessChecks: _checks, ...rest }) => rest)(resources);
   const text = canonicalJson({
     stageSwitches: delta.stageSwitches,
     overrides: delta.overrides,
     ci: delta.ci,
-    ...(isEmptyBoardProjectResources(resources) ? {} : { resources }),
+    ...(isEmptyBoardProjectResources(resources) ? {} : { resources: hashed }),
   });
   let a = 0x811c9dc5;
   let b = 0x01000193 ^ text.length;
@@ -10264,6 +10270,8 @@ export const BoardProjectSettings = Schema.Struct({
       The decoding default keeps older entries decodable, which would otherwise fail the
       whole-settings decode and revert the user's file to defaults. */
   hidden: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** T3o (T3O-124): run the project's readiness script on every worker. Never on by itself. */
+  trustReadinessScript: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
 });
 export type BoardProjectSettings = typeof BoardProjectSettings.Type;
 
@@ -13776,4 +13784,12 @@ export function assignBoardKeyPrefix(input: {
 /** Whether a project (and its cards) is hidden from the board view. */
 export function isBoardProjectHidden(board: BoardSettings, projectId: ProjectId): boolean {
   return board.projects[projectId]?.hidden ?? false;
+}
+
+/** T3o (T3O-124): whether the board owner trusts a project to run its readiness script. */
+export function boardProjectTrustsReadinessScript(
+  board: Pick<BoardSettings, "projects">,
+  projectId: string,
+): boolean {
+  return board.projects[projectId as ProjectId]?.trustReadinessScript ?? false;
 }

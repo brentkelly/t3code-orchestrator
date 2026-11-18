@@ -406,12 +406,21 @@ describe("resolveBoard* helpers", () => {
     const legacy = decodeSettings({
       projects: { [PROJECT]: { keyPrefix: "T3", accentColor: "violet", hidden: true } },
     });
-    expect(legacy.projects[PROJECT]).toEqual({ keyPrefix: "T3", hidden: true });
+    // T3o (T3O-124): an entry from before readiness trust decodes untrusted.
+    expect(legacy.projects[PROJECT]).toEqual({
+      keyPrefix: "T3",
+      hidden: true,
+      trustReadinessScript: false,
+    });
     expect(encodeSettings(legacy)).not.toHaveProperty(["projects", PROJECT, "accentColor"]);
     const legacyNull = decodeSettings({
       projects: { [PROJECT]: { keyPrefix: null, accentColor: null } },
     });
-    expect(legacyNull.projects[PROJECT]).toEqual({ keyPrefix: null, hidden: false });
+    expect(legacyNull.projects[PROJECT]).toEqual({
+      keyPrefix: null,
+      hidden: false,
+      trustReadinessScript: false,
+    });
   });
 
   it("resolves project visibility, and an entry written before `hidden` existed still decodes", () => {
