@@ -21,6 +21,7 @@ import {
   UNKNOWN_THREAD_STATE,
   type ThreadSpawnInput,
 } from "../../../board/ThreadGateway.ts";
+import { BoardScheduleStore } from "../../../board/schedules/BoardScheduleStore.ts";
 import { BoardRelayStore } from "../../../board/workers/BoardRelayStore.ts";
 import { McpRelayHost } from "../../../board/workers/McpRelayHost.ts";
 import type { stageCardFilesOnWorker } from "../../../board/workers/RemoteThreadGateway.ts";
@@ -154,6 +155,16 @@ type AnyBoardHandler = (
   params: unknown,
 ) => Effect.Effect<unknown, BoardToolError | OrchestratorMcpFailure, never>;
 
+/** The worker the board recorded a schedule run on, or null for any other thread. */
+const scheduleRunWorker = Effect.fn("BoardMcpRelay.scheduleRunWorker")(function* (
+  threadId: BoardMcpRelayRequest["threadId"],
+) {
+  const store = yield* Effect.serviceOption(BoardScheduleStore);
+  if (Option.isNone(store)) return null;
+  const run = yield* store.value.runByThread(threadId);
+  return run === null ? null : (run.environmentId as string);
+});
+
 /**
  * Answer one relayed call. Never fails: every refusal and fault is an outcome
  * the worker hands its agent.
@@ -176,18 +187,27 @@ export const runRelayedBoardTool = Effect.fn("BoardMcpRelay.runRelayedBoardTool"
     }
     const name = request.toolName as BoardToolName;
 
-    // Authorised twice: linked to a card, and placed on THIS worker. A
-    // write naming another card is bound the same way in its handler
-    // (`refuseOtherWorkersCard`), so one worker never acts on another's cards.
+    // Authorised twice: linked to a card, and placed on THIS worker. A write naming another
+    // card is bound the same way in its handler (`refuseOtherWorkersCard`).
+    // T3o: a schedule run has no card; the board's record of it on THIS worker stands in for
+    // the link, and `scheduleThreadPolicy` narrows it to the schedule's project (T3O-118).
     const queries = yield* BoardQueries;
     const linkedTo = yield* queries.boardThreadWorker(request.threadId);
-    if (linkedTo === null) {
+    const ranOn =
+      linkedTo === null ? yield* scheduleRunWorker(request.threadId) : (null as string | null);
+    if (linkedTo === null && ranOn === null) {
       return failure(
         "thread-not-linked",
         "This thread is not linked to a board card, so card-scoped tools cannot resolve your card.",
       );
     }
-    if (linkedTo !== workerId) {
+    if (linkedTo === null && ranOn !== workerId) {
+      return failure(
+        "rejected",
+        "This thread's schedule run is not on the worker that sent the call.",
+      );
+    }
+    if (linkedTo !== null && linkedTo !== workerId) {
       return failure(
         "rejected",
         "This thread's card does not run on the worker that sent the call.",

@@ -52,6 +52,8 @@ export * from "./threadTitle.ts";
 // T3o: board schema.
 export * from "./board.ts";
 export * from "./boardGroups.ts";
+// T3o: the automation gate-due model (T3O-115).
+export * from "./boardGates.ts";
 export * from "./boardUsage.ts";
 export * from "./boardEvent.ts";
 export * from "./boardWorkers.ts";
@@ -67,6 +69,7 @@ export * from "./boardEnvelope.ts";
 export * from "./boardStopSignal.ts";
 export * from "./boardRetrySchedule.ts";
 export * from "./t3oProjectFile.ts";
+export * from "./boardSchedules.ts";
 export * from "./boardProjectConfig.ts";
 export * from "./boardNotifications.ts";
 export * from "./commandOrigin.ts";

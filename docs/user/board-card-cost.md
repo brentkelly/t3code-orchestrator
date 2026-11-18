@@ -11,8 +11,9 @@ every review, triage and adjudicate round — and prices it. Work a thread hands
   (open a stage for each round on its own row) and **By model**. Input there is the uncached part;
   hover it for the cached tokens. Like every Summary section, Usage starts closed on each card.
   Opening a card from a group's cost breakdown lands straight on it.
-- **A card in Done** shows its total at the right of its footer. Before Done the face stays as it
-  was; the figure leaves the face if the card is moved back out of Done.
+- **A card in Done** shows its total at the right of its footer, rounded to whole dollars from $10
+  ($28.84 shows as $29); hover it for the exact figure. Before Done the face stays as it was; the
+  figure leaves the face if the card is moved back out of Done.
 - **A group** in Done shows the total of everything under it, nested groups included. Click the
   figure for each child's share. Inside a group's board the header shows the same total at any
   stage.

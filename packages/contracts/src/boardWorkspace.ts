@@ -184,6 +184,7 @@ export const BoardWorkspaceMergeState = Schema.Struct({
   }),
   headSha: Schema.NullOr(Schema.String),
   checksUnread: Schema.Boolean,
+  updateRequired: Schema.optionalKey(Schema.Boolean),
 });
 export type BoardWorkspaceMergeState = typeof BoardWorkspaceMergeState.Type;
 

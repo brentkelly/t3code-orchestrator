@@ -119,6 +119,8 @@ export interface WorkerCapacityPorts {
   ) => Effect.Effect<string | null>;
   /** Readiness of the projects this board asked about (section 5). */
   readonly readiness: (boardId: string) => Effect.Effect<ReadonlyArray<BoardWorkerReadiness>>;
+  /** Whether a worktree here carries this board's marker, read only: never adopts. */
+  readonly worktreeMarkedFor: (boardId: string, worktreePath: string) => Effect.Effect<boolean>;
   /** Whether a listed worktree is this board's here, adopting a legacy marker. */
   readonly worktreePresence: (
     boardId: string,
@@ -251,8 +253,9 @@ export interface BoardWorkerCapacityShape {
     repositoryKey: string | null,
     path: string,
   ) => Effect.Effect<string | null>;
-  /** Whether a worktree here is one of this board's cards: its setup is that board's. */
-  readonly boardHoldsWorktree: (boardId: string, worktreePath: string) => Effect.Effect<boolean>;
+  /** Whether a worktree here is this board's: a card record, or its marker on disk (a group
+      card's worktree takes no claim, so it has no record). */
+  readonly boardOwnsWorktree: (boardId: string, worktreePath: string) => Effect.Effect<boolean>;
 }
 
 /** What the live layer adds around the capacity arithmetic. */
@@ -1084,11 +1087,13 @@ export const makeBoardWorkerCapacity = Effect.fn("makeBoardWorkerCapacity")(func
       boardIds: Effect.sync(() => [
         ...new Set([...state.records.map((record) => record.boardId), ...state.lastSeq.keys()]),
       ]),
-      boardHoldsWorktree: (boardId: string, worktreePath: string) =>
-        Effect.sync(() =>
+      boardOwnsWorktree: (boardId: string, worktreePath: string) =>
+        Effect.suspend(() =>
           state.records.some(
             (record) => record.boardId === boardId && record.worktreePath === worktreePath,
-          ),
+          )
+            ? Effect.succeed(true)
+            : ports.worktreeMarkedFor(boardId, worktreePath),
         ),
       status,
       measure,

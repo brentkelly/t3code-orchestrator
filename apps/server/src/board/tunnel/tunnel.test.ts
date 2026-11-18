@@ -19,6 +19,7 @@ import {
   advertisedBoardCandidate,
   openUpgrade,
   redialAfterClose,
+  releaseUpdateRequired,
   TUNNEL_STABLE_MS,
   TunnelWorker,
   tunnelBackoffMs,
@@ -75,6 +76,7 @@ async function startBoard(options: {
     probe: () => Promise<string>,
   ) => Promise<TunnelSessionDecision>;
   readonly credentials?: Map<string, string>;
+  readonly boardRelease?: string;
 }) {
   const credentials = options.credentials ?? new Map([[CREDENTIAL, WORKER_ID]]);
   const hellos: WorkerTunnelHello[] = [];
@@ -86,6 +88,7 @@ async function startBoard(options: {
     return httpGet(endpoint!.port, "/who");
   };
   board = new TunnelBoard({
+    ...(options.boardRelease === undefined ? {} : { boardRelease: options.boardRelease }),
     verifyCredential: async (credential) => credentials.get(credential) ?? null,
     onHello: async (_workerId, hello) => {
       hellos.push(hello);
@@ -143,6 +146,7 @@ function startWorker(input: {
   readonly onAddressAdopted?: (url: string) => void;
   readonly tunnelProtocol?: number;
   readonly gatewayProtocol?: number;
+  readonly t3oRelease?: string;
   readonly now?: () => number;
 }) {
   const worker = new TunnelWorker({
@@ -150,7 +154,7 @@ function startWorker(input: {
     credential: input.credential ?? CREDENTIAL,
     environmentId: WORKER_ID,
     label: "build-03",
-    t3oRelease: "0.0.70",
+    t3oRelease: input.t3oRelease ?? "0.0.70",
     gatewayProtocol: input.gatewayProtocol ?? 3,
     local: { host: "127.0.0.1", port: input.localPort },
     mintBoardSession: input.mint ?? (async () => "board-session-token"),
@@ -255,6 +259,35 @@ describe("worker tunnel", () => {
       onStatus: log.onStatus,
     });
     expect((await log.when((status) => status.state === "connected")).updateRequired).toBeNull();
+  });
+
+  it("flags a worker on an older tagged release than its board, so auto-update follows it", async () => {
+    const local = await startLocalServer("worker-loopback");
+    const board = await startBoard({ boardRelease: "0.1.9.4" });
+    const log = statusLog();
+    startWorker({
+      boardUrl: board.url,
+      localPort: local.port,
+      gatewayProtocol: BOARD_WORKER_PROTOCOL_FLOOR,
+      t3oRelease: "0.1.9.3",
+      onStatus: log.onStatus,
+    });
+    expect((await log.when((status) => status.state === "connected")).updateRequired).toBe(
+      "The board runs T3o 0.1.9.4; this worker runs 0.1.9.3.",
+    );
+    expect(releaseUpdateRequired("0.1.10.1", "0.1.9.12")).not.toBeNull();
+    // Same or older board, or either side not on a tagged release: no update.
+    for (const [boardRelease, own] of [
+      ["0.1.9.3", "0.1.9.3"],
+      ["0.1.9.2", "0.1.9.3"],
+      [undefined, "0.1.9.3"],
+      ["0.1.9.4+3.gabc1234", "0.1.9.3"],
+      ["dev (abc1234)", "0.1.9.3"],
+      ["0.1.9.4", "dev (abc1234)"],
+      ["0.1.10", "0.1.9.3"],
+    ] as const) {
+      expect(releaseUpdateRequired(boardRelease, own)).toBeNull();
+    }
   });
 
   it("clears a worker's update flag once its board revokes it", async () => {

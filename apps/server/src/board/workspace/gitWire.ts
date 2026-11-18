@@ -10,19 +10,25 @@ import {
   type BoardWorkerGitPayload,
   type BoardWorkerGitSuccess,
 } from "@t3tools/contracts";
-import type * as Effect from "effect/Effect";
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 interface Codec {
   readonly encode: (value: unknown) => Effect.Effect<unknown, Schema.SchemaError>;
   readonly decode: (encoded: unknown) => Effect.Effect<unknown, Schema.SchemaError>;
+  /** A void answer: `undefined`, which the socket's JSON can't carry, so it goes as `null`. */
+  readonly answersNothing: boolean;
 }
 
 /** Every operation schema is context-free; the union of their types is not
     something the checker can index, so each is read as the codec it is. */
 const codecOf = (schema: Schema.Top): Codec => {
   const codec = schema as unknown as Schema.Codec<unknown>;
-  return { encode: Schema.encodeUnknownEffect(codec), decode: Schema.decodeUnknownEffect(codec) };
+  return {
+    encode: Schema.encodeUnknownEffect(codec),
+    decode: Schema.decodeUnknownEffect(codec),
+    answersNothing: Schema.is(codec)(undefined),
+  };
 };
 
 const CODECS = new Map(
@@ -57,14 +63,15 @@ export const decodeGitPayload = <Method extends BoardWorkerGitMethod>(
 
 /** An operation's answer, encoded for the wire. */
 export const encodeGitSuccess = (method: BoardWorkerGitMethod, value: unknown) =>
-  codecsOf(method).success.encode(value);
+  codecsOf(method)
+    .success.encode(value)
+    .pipe(Effect.map((encoded) => encoded ?? null));
 
 /** An operation's answer, decoded off the wire. */
 export const decodeGitSuccess = <Method extends BoardWorkerGitMethod>(
   method: Method,
   encoded: unknown,
 ) =>
-  codecsOf(method).success.decode(encoded) as Effect.Effect<
-    BoardWorkerGitSuccess<Method>,
-    Schema.SchemaError
-  >;
+  codecsOf(method).success.decode(
+    encoded === null && codecsOf(method).success.answersNothing ? undefined : encoded,
+  ) as Effect.Effect<BoardWorkerGitSuccess<Method>, Schema.SchemaError>;

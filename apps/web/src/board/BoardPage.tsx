@@ -1837,6 +1837,7 @@ function EnvironmentBoard({
                   key={stage.stageId}
                   label={stage.label}
                   atMergeStage={stage.stageId === mergeStageId}
+                  atDoneStage={stage.stageId === doneStageId}
                   costSlotFor={stage.stageId === doneStageId ? costSlotFor : undefined}
                   noPullRequestFor={noPullRequestFor}
                   worktreeKeptFor={worktreeKeptFor}

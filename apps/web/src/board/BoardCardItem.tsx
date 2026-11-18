@@ -52,7 +52,7 @@ import { BOARD_CARD_PRIORITY_NAME } from "./boardCardPriority";
 import { boardCardAutoBuildChip } from "./boardCardAutomation";
 import { boardCardScheduleLabel } from "./boardCardScheduleLabel";
 import { boardCardFace } from "./boardCardFace";
-import type { BoardCardNotice } from "./boardCardNotice";
+import { boardGateBlockTooltip, type BoardCardNotice } from "./boardCardNotice";
 import { boardCardMeta, boardCardSummary } from "./boardCardSummary";
 import { BoardLabelChips } from "./BoardLabelChips";
 import {
@@ -301,21 +301,30 @@ function BoardCardNoticeChip({ notice }: { readonly notice: BoardCardNotice }) {
                       tooltip: `${notice.note}. Move the card on; the column goes once it's empty.`,
                       tint: "text-warning-foreground",
                     }
-                  : notice.kind === "worktree-kept"
+                  : notice.kind === "gate-block"
                     ? {
-                        // Amber: the card is finished but its cleanup is
-                        // blocked, and only a human can clear what is in the way.
-                        icon: <HardDriveIcon className="size-3 shrink-0" />,
-                        label: "Worktree kept",
-                        tooltip: `Worktree kept: ${notice.reason}`,
+                        // T3o: amber, held (T3O-115). The gate is due but its last attempt
+                        // could not act; the tick retries it, and the reason is the board's own.
+                        icon: <TriangleAlertIcon className="size-3 shrink-0" />,
+                        label: "Automation held",
+                        tooltip: boardGateBlockTooltip(notice.block),
                         tint: "text-warning-foreground",
                       }
-                    : {
-                        icon: <LockIcon className="size-3 shrink-0" />,
-                        label: "Blocked",
-                        tooltip: `Blocked by ${notice.dependencyCount} ${notice.dependencyCount === 1 ? "dependency" : "dependencies"}`,
-                        tint: "text-warning-foreground",
-                      };
+                    : notice.kind === "worktree-kept"
+                      ? {
+                          // Amber: the card is finished but its cleanup is
+                          // blocked, and only a human can clear what is in the way.
+                          icon: <HardDriveIcon className="size-3 shrink-0" />,
+                          label: "Worktree kept",
+                          tooltip: `Worktree kept: ${notice.reason}`,
+                          tint: "text-warning-foreground",
+                        }
+                      : {
+                          icon: <LockIcon className="size-3 shrink-0" />,
+                          label: "Blocked",
+                          tooltip: `Blocked by ${notice.dependencyCount} ${notice.dependencyCount === 1 ? "dependency" : "dependencies"}`,
+                          tint: "text-warning-foreground",
+                        };
   return (
     <BoardHint label={view.tooltip}>
       <span
@@ -346,6 +355,7 @@ export function BoardCardContent({
   childRunning,
   noPullRequest,
   atMergeStage,
+  atDoneStage = false,
   autoMergeArmed,
   autoBuildArmed,
   worktreeKeptReason,
@@ -406,6 +416,8 @@ export function BoardCardContent({
       the only place an armed card wears the grey `Auto` glyph. Absent on the
       surfaces that do not resolve it (the drag ghost, the archive sheet). */
   readonly atMergeStage?: boolean | undefined;
+  /** Whether this card sits in the done-role stage, where its worker shows as an icon only. */
+  readonly atDoneStage?: boolean | undefined;
   /** The card's resolved Auto-merge (`boardShellAutoMergeArmedByCard`):
       its own setting, its nearest group's, or the board-wide one.
       Absent reads the card's own setting alone. */
@@ -730,6 +742,7 @@ export function BoardCardContent({
       {isGroup ? null : (
         <BoardCardMetaRow
           cost={costSlot}
+          compactWorker={atDoneStage}
           meta={boardCardMeta(card, todoThreads.length)}
           worker={boardCardWorkerChip(card, workers)}
         />
@@ -762,6 +775,7 @@ function DraggableBoardCardView({
   childRunning,
   noPullRequest,
   atMergeStage,
+  atDoneStage = false,
   autoMergeArmed,
   autoBuildArmed,
   worktreeKeptReason,
@@ -791,6 +805,7 @@ function DraggableBoardCardView({
   /** T3o: forwarded to the card face. */
   readonly noPullRequest?: boolean | undefined;
   readonly atMergeStage?: boolean | undefined;
+  readonly atDoneStage?: boolean | undefined;
   readonly autoMergeArmed?: boolean | undefined;
   readonly autoBuildArmed?: boolean | undefined;
   readonly worktreeKeptReason?: string | null | undefined;
@@ -849,6 +864,7 @@ function DraggableBoardCardView({
         childRunning={childRunning}
         noPullRequest={noPullRequest}
         atMergeStage={atMergeStage}
+        atDoneStage={atDoneStage}
         autoMergeArmed={autoMergeArmed}
         autoBuildArmed={autoBuildArmed}
         worktreeKeptReason={worktreeKeptReason}

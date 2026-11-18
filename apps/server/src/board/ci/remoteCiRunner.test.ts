@@ -3,7 +3,12 @@
  * worker's gateway is reported as the local runner reports it, and a worker
  * out of reach is "unavailable" rather than a CI failure.
  */
-import { BoardWorkerCiProgress, BoardWorkerRunCiInput, EnvironmentId } from "@t3tools/contracts";
+import {
+  BoardWorkerCiProgress,
+  BoardWorkerGatewayError,
+  BoardWorkerRunCiInput,
+  EnvironmentId,
+} from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -80,6 +85,31 @@ it.effect("a worker out of reach is unavailable, not a failed step", () =>
       worker,
     ).run(request, () => Effect.void);
     assert.strictEqual(result.result, "unavailable");
+    const refused = yield* remoteCiRunner(
+      {
+        get: () =>
+          Effect.succeed({
+            gateway: {
+              runCi: () =>
+                Stream.fail(
+                  new BoardWorkerGatewayError({
+                    kind: "refused",
+                    operation: "runCi",
+                    threadId: null,
+                    detail: "/remote/wt is not one of this board's worktrees here.",
+                  }),
+                ),
+            },
+          } as unknown as WorkerRpc),
+      },
+      worker,
+    ).run(request, () => Effect.void);
+    assert.deepStrictEqual(refused, {
+      result: "unavailable",
+      failedIndex: null,
+      detail:
+        "CI couldn't run on the card's worker: /remote/wt is not one of this board's worktrees here.",
+    });
   }),
 );
 

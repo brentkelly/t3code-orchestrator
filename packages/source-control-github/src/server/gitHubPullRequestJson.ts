@@ -1102,6 +1102,8 @@ export function toPullRequestCore(result: PullRequestCore.Result): GitHubPullReq
         : {
             behindBy: pr.baseRef.compare.behindBy,
             viewerCanUpdate: pr.viewerCanUpdateBranch,
+            // T3o (T3O-116): the host blocks the merge on the stale base alone.
+            updateRequired: pr.mergeStateStatus === "BEHIND",
           },
     checksTruncated: contexts?.pageInfo.hasNextPage === true,
   };
@@ -1516,6 +1518,8 @@ function toCanTriage(viewerPermission: string | null | undefined): boolean {
 export interface GitHubBaseComparison {
   readonly behindBy: number | null;
   readonly viewerCanUpdate: boolean;
+  /** T3o (T3O-116): see `PullRequestDetail.baseUpdateRequired`. */
+  readonly updateRequired?: boolean;
 }
 
 /** assignableUsers avoids push/read:org requirements. Keep requested outsiders/apps removable. */

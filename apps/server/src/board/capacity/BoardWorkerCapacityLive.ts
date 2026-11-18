@@ -308,6 +308,13 @@ const makeBoardWorkerCapacityLive = Effect.gen(function* () {
             ),
           ),
     readiness: (boardId) => Effect.sync(() => readiness.forBoard(boardId)),
+    // No marker reads as "self", so the worker's own board never authorises by marker.
+    worktreeMarkedFor: (boardId, worktreePath) =>
+      ownerFor(boardId) === "self"
+        ? Effect.succeed(false)
+        : boardWorktreeOwner({ git, fileSystem, path }, worktreePath).pipe(
+            Effect.map((owner) => owner === ownerFor(boardId)),
+          ),
     worktreePresence: (boardId, entry) =>
       entry.worktreePath === null
         ? Effect.succeed("missing" as const)

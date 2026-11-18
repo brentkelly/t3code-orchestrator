@@ -155,6 +155,8 @@ export default defineConfig({
     // The Windows lane runs workspace suites concurrently; filesystem-heavy
     // desktop integration tests can exceed Vitest's 5 second default there.
     testTimeout: 15_000,
+    // T3o: one temp folder per test run, removed at the end.
+    globalSetup: ["../../packages/shared/src/testing/runTempDir.ts"],
     setupFiles: [
       "../../packages/shared/src/testing/longTempDir.ts",
       "../../packages/shared/src/testing/providerEnv.ts",

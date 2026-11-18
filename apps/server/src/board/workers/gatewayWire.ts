@@ -42,6 +42,9 @@ import {
   type BoardWorkerSetupState,
   type BoardCapacityHoldInput,
   type BoardCapacityHoldResult,
+  type BoardGatewayLaunchScheduleRunInput,
+  type BoardGatewayLaunchScheduleRunResult,
+  type BoardGatewayPruneScheduleRunsInput,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -141,6 +144,14 @@ export interface WorkerGatewayRpcOf<E> {
   ) => Effect.Effect<string | null, E>;
   /** T3o: a step's measured actuals on the worker (T3O-87). */
   readonly actuals: (input: BoardWorkerActualsInput) => Effect.Effect<BoardStepReading | null, E>;
+  /** T3o: launch a t3o.json schedule's run on the worker (T3O-118). */
+  readonly launchScheduleRun: (
+    input: BoardGatewayLaunchScheduleRunInput,
+  ) => Effect.Effect<BoardGatewayLaunchScheduleRunResult, E>;
+  /** T3o: prune a schedule's settled runs on the worker without launching (T3O-118). */
+  readonly pruneScheduleRuns: (
+    input: BoardGatewayPruneScheduleRunsInput,
+  ) => Effect.Effect<BoardGatewayLaunchScheduleRunResult, E>;
 }
 
 export type WorkerGatewayRpc = WorkerGatewayRpcOf<WorkerGatewayCallError>;

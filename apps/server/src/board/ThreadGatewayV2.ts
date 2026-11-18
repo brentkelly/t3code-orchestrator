@@ -46,6 +46,8 @@ import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import { isAutoSettlementCandidate } from "../orchestration-v2/ThreadSettlementService.ts";
 import * as ThreadMessageIntake from "../orchestration-v2/ThreadMessageIntake.ts";
+import { ThreadLaunchService } from "../orchestration-v2/ThreadLaunchService.ts";
+import { BoardScheduleLauncher } from "./schedules/BoardScheduleLauncher.ts";
 import { limitRecoveryCommand } from "../orchestration-v2/UsageLimitRecoveryWorker.ts";
 import * as DocumentText from "../provider/DocumentText.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -750,6 +752,7 @@ const makeThreadGatewayV2 = Effect.gen(function* () {
           readonly deleted: number;
           readonly archived: number;
           readonly settlementDecided: number;
+          readonly title: string | null;
         }>`
           SELECT
             t.thread_id AS "threadId",
@@ -758,7 +761,8 @@ const makeThreadGatewayV2 = Effect.gen(function* () {
               AND json_extract(t.payload_json, '$.archivedAt') IS NOT NULL) AS "archived",
             (t.deleted_at IS NULL
               AND json_extract(t.payload_json, '$.settledOverride') IS NOT NULL)
-              AS "settlementDecided"
+              AS "settlementDecided",
+            t.title AS "title"
           FROM orchestration_v2_projection_threads t
           WHERE t.thread_id IN (SELECT value FROM json_each(${JSON.stringify(threadIds)}))${
             openOrDeleted
@@ -1084,6 +1088,7 @@ const makeThreadGatewayV2 = Effect.gen(function* () {
                 deleted: row.deleted === 1,
                 archived: row.archived === 1,
                 settlementDecided: row.settlementDecided === 1,
+                ...(row.deleted !== 1 && row.title ? { title: row.title } : {}),
               },
             ];
           }),
@@ -1357,3 +1362,39 @@ export const ThreadGatewayV2Live = Layer.effect(
   ThreadGateway,
   Effect.map(LocalThreadGateway, (local): ThreadGatewayShape => local),
 ).pipe(Layer.provideMerge(LocalThreadGatewayV2Live));
+
+/** T3o: a t3o.json schedule's run, launched as upstream launches a worktree run (T3O-117). */
+export const BoardScheduleLauncherLive = Layer.effect(
+  BoardScheduleLauncher,
+  Effect.gen(function* () {
+    const launcher = yield* ThreadLaunchService;
+    return {
+      launch: Effect.fn("BoardScheduleLauncher.launch")((input) =>
+        launcher
+          .launch({
+            commandId: input.commandId,
+            threadId: input.threadId,
+            projectId: input.projectId,
+            title: input.title,
+            modelSelection: input.modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            workspaceStrategy: {
+              type: "worktree",
+              baseRef: input.baseRef,
+              branch: input.branch,
+              startFromOrigin: true,
+            },
+            initialMessage: {
+              ...(input.taskId === undefined ? {} : { scheduledTaskId: input.taskId }),
+              text: input.prompt,
+              attachments: [],
+            },
+            createdBy: "system",
+            creationSource: "server",
+          })
+          .pipe(Effect.map((launched) => launched.threadId)),
+      ),
+    };
+  }),
+);

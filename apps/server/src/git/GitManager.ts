@@ -64,6 +64,8 @@ import {
   threadPullRequestKeyOf,
 } from "../sourceControl/threadPullRequests.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
+// T3o (T3O-119): branch PR matching tolerates a renamed or transferred repository.
+import { makeRenamedRepositoryMatcher } from "./t3oRenamedRepository.ts";
 
 import { GitManagerError, GitPullRequestMaterializationError } from "@t3tools/contracts";
 import {
@@ -674,6 +676,8 @@ export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
 
   const sourceControlProvider = (cwd: string) => sourceControlProviders.resolve({ cwd });
+  // T3o (T3O-119): see t3oRenamedRepository.ts.
+  const renamedRepository = yield* makeRenamedRepositoryMatcher(sourceControlProvider);
   const changeRequestTermsFor = Effect.fn("GitManager.changeRequestTermsFor")(function* (
     cwd: string,
   ) {
@@ -1910,9 +1914,17 @@ export const make = Effect.gen(function* () {
       });
       const normalizedPullRequests = pullRequests.map(toPullRequestInfo);
 
-      const firstPullRequest = normalizedPullRequests.find((pullRequest) =>
-        matchesBranchHeadContext(pullRequest, headContext),
-      );
+      // T3o (T3O-119): a for…of so a renamed repository's PR can be confirmed with the forge.
+      let firstPullRequest: PullRequestInfo | undefined;
+      for (const pullRequest of normalizedPullRequests) {
+        if (
+          matchesBranchHeadContext(pullRequest, headContext) ||
+          (yield* renamedRepository.matches(cwd, pullRequest, headContext))
+        ) {
+          firstPullRequest = pullRequest;
+          break;
+        }
+      }
       if (firstPullRequest) {
         return {
           ...firstPullRequest,
@@ -1942,7 +1954,11 @@ export const make = Effect.gen(function* () {
       });
 
       for (const pr of pullRequests.map(toPullRequestInfo)) {
-        if (!matchesBranchHeadContext(pr, headContext)) {
+        // T3o (T3O-119): a renamed repository's PR is confirmed with the forge.
+        if (
+          !matchesBranchHeadContext(pr, headContext) &&
+          !(yield* renamedRepository.matches(cwd, pr, headContext))
+        ) {
           continue;
         }
         parsedByNumber.set(pr.number, pr);

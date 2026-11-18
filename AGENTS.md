@@ -8,7 +8,7 @@ You can think of T3 Code as an open source "bring-your-own-subscription" alterna
 
 ## You are in T3o, a fork
 
-This repository is **T3o** (`brentkelly/t3code-orchestrator`), a fork of
+This repository is **T3o** (`brentkelly/t3o`), a fork of
 [`pingdotgg/t3code`](https://github.com/pingdotgg/t3code). Everything below this section is upstream's
 guidance and still applies. This section overrides it where they disagree.
 
@@ -30,6 +30,10 @@ workers. The user-facing guide is `docs/user/board-workers.md`.
 **Status colours are a fixed vocabulary.** Green means done and only done, blue means running,
 violet (`--attention`) means waiting on a human, amber means blocked. Read
 `docs/t3o/status-colours.md` before giving any status indicator a colour.
+
+**Card automation is a contract.** Auto-plan, Unattended review, Auto sign-off, Auto-build and
+Auto-merge each promise to move a card through a gate with no human step. Read
+`docs/t3o/automation.md` before touching any gate, stage move or toggle.
 
 **The design prototype** lives in `.plans/prototype/` and is published as a claude.ai design
 artifact. The Docs MCP tools and plain fetches can't read it, but a headless browser can. When

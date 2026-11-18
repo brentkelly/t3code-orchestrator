@@ -11,6 +11,8 @@ import {
   BoardWorkerRequestError,
   EnvironmentAuthorizationError,
   type BoardWorkerIdInput,
+  type BoardWorkersThreadTitlesInput,
+  BoardCardId,
   type BoardWorkerMintUserSessionInput,
   type BoardWorkerReleaseInput,
   type BoardWorkerRevokeUserSessionsInput,
@@ -196,6 +198,13 @@ export const boardWorkerRpcHandlers = (currentSession: AuthenticatedSession) =>
               deviceLabel: client?.label ?? client?.browser ?? client?.deviceType ?? "Browser",
             });
           }),
+        ),
+      [BOARD_WORKERS_WS_METHODS.threadTitles]: (input: BoardWorkersThreadTitlesInput) =>
+        authorized(
+          BOARD_WORKERS_WS_METHODS.threadTitles,
+          Effect.flatMap(workers, (service) =>
+            service.threadTitles(BoardCardId.make(input.cardId)),
+          ),
         ),
       [BOARD_WORKERS_WS_METHODS.remove]: (input: BoardWorkerIdInput) =>
         authorized(

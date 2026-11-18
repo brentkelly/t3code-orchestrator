@@ -39,6 +39,18 @@ export const BOARD_ENVELOPE_MOVE_GUARD =
 export const BOARD_ENVELOPE_DECISION_LOG =
   "Before you call board_propose_plans, record every decision this planning session made with board_record_decisions: what was asked, what was decided, a one-line reason and who decided (agent, or human when the user answered). Flag a call you were not sure about as unclear, and a call that shapes the work as important.";
 
+/** T3o: planning runs in the shared project root with no worktree of its own (T3O-115). */
+export const BOARD_ENVELOPE_PLAN_ROOT_GUARD =
+  "Planning runs in the shared project root, not a worktree of its own: read anything you need, but do not edit files, switch branches or run git commands that change the repository there.";
+
+/** T3o: the board's reply to a question an unattended planning run asked anyway (T3O-115). */
+export const BOARD_AUTO_ANSWER_TEXT =
+  "Nobody will answer this: decide it yourself, record the decision with board_record_decisions flagged unclear, and continue.";
+
+/** T3o: an unattended planning run has nobody to answer it (T3O-115). */
+export const BOARD_AUTO_PLAN_NO_QUESTIONS =
+  "Nobody will answer a question here: never raise a user-input request or complete blocked. Decide it yourself, record the decision with board_record_decisions flagged unclear, and continue.";
+
 /** What an auto-planned run is told: no more questions.
     Rides the postamble of a fresh auto-plan run and is the steering turn sent
     into a live planning thread, followed by what happens to the plan — use
@@ -54,14 +66,18 @@ const BOARD_AUTO_PLAN_REOPENED_NOTE =
 const reopenedSuffix = (options: { readonly reopened?: boolean } | undefined) =>
   options?.reopened === true ? ` ${BOARD_AUTO_PLAN_REOPENED_NOTE}` : "";
 
-/** The full auto-plan instruction: with Auto sign-off on a single plan is approved without a
-    human; without it the plan waits for the user's approval. A split always waits. */
+/** T3o: what Auto sign-off does to the planner's proposal, plans and splits alike (T3O-115). */
+export const BOARD_AUTO_SIGN_OFF_NOTE =
+  "Auto sign-off is on: when you complete planning, what you proposed is approved without the user, unclear decisions included, and the card moves to Ready. A split is approved the same way, so split only when the work clearly warrants it.";
+
+/** The full auto-plan instruction: with Auto sign-off on the proposal is approved without a
+    human; without it the plan waits for the user's approval. */
 export function boardAutoPlanInstruction(
   autoSignOff: boolean,
   options?: { readonly reopened?: boolean },
 ): string {
   const base = autoSignOff
-    ? `${BOARD_AUTO_PLAN_INSTRUCTION} Auto sign-off is on: a single plan you propose is approved automatically, unclear decisions included, so make each call the way you would defend it in review. A proposed split always waits for the user's approval.`
+    ? `${BOARD_AUTO_PLAN_INSTRUCTION} ${BOARD_AUTO_SIGN_OFF_NOTE} Make each call the way you would defend it in review.`
     : `${BOARD_AUTO_PLAN_INSTRUCTION} Your plan will be presented to the user for approval, so make each call the way you would defend it in review.`;
   return `${base}${reopenedSuffix(options)}`;
 }
@@ -82,7 +98,7 @@ export const BOARD_ENVELOPE_PLAN_DELIVERABLE = [
   BOARD_ENVELOPE_DECISION_LOG,
   "When the plan is agreed, record it with board_propose_plans, as ONE plan.",
   "To revise a plan you have already proposed, patch it with board_edit_plan rather than resending it.",
-  "Two or more plans is not a longer plan: it splits this card into that many child cards, each with its own branch, build and code review, and holds the card behind a human approval gate until someone approves it.",
+  "Two or more plans is not a longer plan: it splits this card into that many child cards, each with its own branch, build and code review, and holds the card at an approval gate until the split is approved.",
   "Split only when this card is a large feature whose parts are worth building and reviewing one at a time, or whose parts could be built concurrently for a real speed-up; then pass splitRationale saying why.",
   "A bug fix, a contained change, or work that is merely long is one plan with several sections.",
   "In a split, mark each plan planned: true when it is a full implementation plan, or planned: false when it is a brief that still needs planning, and pass recommendedAutoBuild and recommendedMergeTarget: every child fully planned → auto-build on with its own branch; an epic breakdown → auto-build off, inherit; already inside a group with its own branch → prefer inherit.",
@@ -247,7 +263,7 @@ export function boardStepPostamble(input: {
   readonly step: Pick<ComposeStepPromptStep, "stepId" | "stepLabel">;
   /** An auto-planned planning run. */
   readonly autoPlan?: boolean;
-  /** With `autoPlan`: a single plan is approved without a human. */
+  /** Auto sign-off is on: what the planner proposes is approved without a human. */
   readonly autoSignOff?: boolean;
 }): string {
   const { step } = input;
@@ -269,14 +285,24 @@ export function boardStepPostamble(input: {
         // Claude 5-era models, so asking for one made agents report a missing
         // tool. The supervisor still reads a plan tool when a provider emits one.
         `Commit as you go: the supervisor watches for new commits and activity to tell a productive long job from a wedged one, and a run that shows neither will be nudged and eventually escalated.`,
-        boardBlockedInstruction(step.stepId),
+        input.role === "plan" && input.autoPlan === true
+          ? BOARD_AUTO_PLAN_NO_QUESTIONS
+          : boardBlockedInstruction(step.stepId),
         BOARD_ENVELOPE_REGROUP_GUARD,
       ];
   const deliverable =
     input.role === "plan"
       ? input.autoPlan === true
-        ? [BOARD_ENVELOPE_PLAN_DELIVERABLE, boardAutoPlanInstruction(input.autoSignOff === true)]
-        : [BOARD_ENVELOPE_PLAN_DELIVERABLE]
+        ? [
+            BOARD_ENVELOPE_PLAN_DELIVERABLE,
+            boardAutoPlanInstruction(input.autoSignOff === true),
+            BOARD_ENVELOPE_PLAN_ROOT_GUARD,
+          ]
+        : [
+            BOARD_ENVELOPE_PLAN_DELIVERABLE,
+            ...(input.autoSignOff === true ? [BOARD_AUTO_SIGN_OFF_NOTE] : []),
+            BOARD_ENVELOPE_PLAN_ROOT_GUARD,
+          ]
       : input.role === "build"
         ? [BOARD_ENVELOPE_BUILD_DELIVERABLE]
         : [];
@@ -332,7 +358,7 @@ export function planReviewInstructionsClosing(input: {
 }): string {
   const finish = input.humanInLoop
     ? `With a human in the loop: if you need a human decision, ${BOARD_ENVELOPE_QUESTION_MECHANISM}. Then summarise the final plan in the thread, wait for the human's sign-off, and only then call board_complete_step.`
-    : "This run is unattended: ask nothing. Decide every question yourself, flag a call you are unsure of as unclear with board_record_decisions, summarise the final plan in the thread, then call board_complete_step without waiting.";
+    : "This run is unattended: ask nothing. Decide every question yourself, flag a contentious or uncertain call as unclear or important with board_record_decisions, summarise the final plan in the thread, then call board_complete_step without waiting.";
   return [
     "Board rules for the plan review. These come after the text above and take precedence over it:",
     `- ${input.rounds} is a maximum. Stop as soon as a round produces no new substantive finding, and record that call (rounds run, converged or not) with board_record_decisions.`,
@@ -345,7 +371,7 @@ export function planReviewInstructionsClosing(input: {
     `- ${finish}`,
     ...(input.humanInLoop
       ? [
-          "- If an auto-plan instruction arrives during the review, it overrides the human-in-the-loop rules above but not the review itself: run the remaining rounds as normal. Ask the user nothing further and never wait on them for any reason. Make every remaining decision yourself and record it with board_record_decisions, flagging a contentious or uncertain one as unclear. When the review is done, summarise the final plan in the thread and call board_complete_step without waiting for sign-off.",
+          "- If an auto-plan instruction arrives during the review, it overrides the human-in-the-loop rules above but not the review itself: run the remaining rounds as normal. Ask the user nothing further and never wait on them for any reason. Make every remaining decision yourself and record it with board_record_decisions, flagging a contentious or uncertain one as unclear or important. When the review is done, summarise the final plan in the thread and call board_complete_step without waiting for sign-off.",
         ]
       : []),
   ].join("\n");
@@ -926,7 +952,7 @@ export function boardCiFixPromptRules(failureCount: number): ReadonlyArray<strin
       ? ["Later failures may be caused by earlier ones. Work through them in order."]
       : []),
     "Updating a test that this card's change made out of date is fine. Never delete, skip or loosen a check to hide a real failure.",
-    "If a failure also happens on the base branch, still fix it, but keep that fix minimal and in its own commit.",
+    "If a failure also happens on the base branch, still fix it, in its own commit. Neither that, nor the fix being large or needing you to choose a behaviour, is a reason for cannot-fix: choose what the tests and specs point to and say why in the commit message.",
     "",
     `Do not run the CI steps yourself to finish: the board re-runs every step from the top after you report. Complete with outcome "succeeded" and a payload shaped ${BOARD_CI_FIX_PAYLOAD_SHAPE}, giving every issue by its id. Use "fixed" once your fixes are committed and pushed (give \`fixedSha\`), or with nothing to commit when a failure looks transient and a re-run should clear it. Use "cannot-fix", with a \`finding\` saying why, when any issue can't be fixed from this worktree, or only by hiding it: still fix and push the others, and mark each issue "resolved" or "cannot-fix".`,
   ];

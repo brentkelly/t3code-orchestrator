@@ -40,13 +40,13 @@ export const boardSession = (
   scopes,
 });
 
-/** Encode then decode, as the JSON serialisation of the socket would. */
+/** Encode then decode, as the JSON serialisation of the socket would: it refuses `undefined`. */
 const roundTrip = <S extends Schema.Top>(schema: S, value: unknown) =>
   Schema.encodeUnknownEffect(schema as never)(value).pipe(
     Effect.flatMap((encoded) =>
-      Schema.decodeUnknownEffect(schema as never)(
-        encoded === undefined ? undefined : JSON.parse(JSON.stringify(encoded)),
-      ),
+      encoded === undefined
+        ? Effect.die(new Error("Failed to encode response: Expected JSON value"))
+        : Schema.decodeUnknownEffect(schema as never)(JSON.parse(JSON.stringify(encoded))),
     ),
     Effect.orDie,
   );
