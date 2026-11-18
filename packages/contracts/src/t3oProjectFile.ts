@@ -30,6 +30,7 @@ import {
   type BoardState,
 } from "./board.ts";
 import { normalizeBoardReadinessPath, type BoardProjectResources } from "./boardCapacity.ts";
+import { decodeBoardReadinessChecks, type BoardReadinessCheck } from "./boardReadinessChecks.ts";
 
 // T3o: a `t3o.json` is only an import/export format for a
 // project's delta, never read at run time.
@@ -541,11 +542,24 @@ function decodeResources(value: unknown, warnings: string[]): BoardProjectResour
   }
   let readinessPath: string | null = null;
   let readinessTimeoutSeconds: number | null = null;
+  let readinessChecks: ReadonlyArray<BoardReadinessCheck> = [];
   if (value.readiness !== undefined) {
     const raw = value.readiness;
     if (!isRecord(raw)) {
       warnings.push("resources.readiness: expected an object; ignored.");
     } else {
+      for (const key of Object.keys(raw)) {
+        if (!["path", "timeoutSeconds", "checks"].includes(key)) {
+          warnings.push(`resources.readiness.${key}: unknown key; ignored.`);
+        }
+      }
+      if (raw.checks !== undefined) {
+        readinessChecks = decodeBoardReadinessChecks(
+          raw.checks,
+          "resources.readiness.checks",
+          warnings,
+        );
+      }
       if (raw.path !== undefined) {
         readinessPath = typeof raw.path === "string" ? normalizeBoardReadinessPath(raw.path) : null;
         if (readinessPath === null) {
@@ -570,6 +584,7 @@ function decodeResources(value: unknown, warnings: string[]): BoardProjectResour
     ),
     readinessPath,
     readinessTimeoutSeconds,
+    readinessChecks,
   };
 }
 
@@ -697,8 +712,13 @@ export function buildT3oProjectFile(input: {
     if (resources.setupTimeoutMinutes !== null) {
       block.setupTimeoutMinutes = resources.setupTimeoutMinutes;
     }
-    if (resources.readinessPath !== null || resources.readinessTimeoutSeconds !== null) {
+    if (
+      resources.readinessPath !== null ||
+      resources.readinessTimeoutSeconds !== null ||
+      resources.readinessChecks.length > 0
+    ) {
       block.readiness = {
+        ...(resources.readinessChecks.length === 0 ? {} : { checks: resources.readinessChecks }),
         ...(resources.readinessPath === null ? {} : { path: resources.readinessPath }),
         ...(resources.readinessTimeoutSeconds === null
           ? {}

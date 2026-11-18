@@ -17,6 +17,7 @@ import {
   type BoardWorkerCapacitySnapshot,
   type BoardWorkerProviderCapacity,
   type BoardCardSetupProgress,
+  BOARD_READINESS_PROTOCOL,
   type BoardWorkerCheckReadinessInput,
   type BoardWorkerReadiness,
   type BoardWorkerRunSetupInput,
@@ -900,6 +901,8 @@ export const makeBoardWorkerCapacity = Effect.fn("makeBoardWorkerCapacity")(func
           );
           return { ...view, until: view.until === null ? null : nowIso(view.until) };
         })(),
+        // T3o (T3O-124): this worker runs checks and honours `runScript`.
+        readinessProtocol: BOARD_READINESS_PROTOCOL,
       } satisfies BoardWorkerCapacitySnapshot;
     },
   );

@@ -7,6 +7,11 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import { IsoDateTime, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import {
+  BOARD_READINESS_PROTOCOL,
+  BoardReadinessCheck,
+  boardReadinessConfigKey,
+} from "./boardReadinessChecks.ts";
 
 export const BOARD_RESOURCE_DIMENSIONS = ["cpu", "ram", "disk"] as const;
 export const BoardResourceDimension = Schema.Literals(BOARD_RESOURCE_DIMENSIONS);
@@ -170,6 +175,10 @@ export const BoardProjectResources = Schema.Struct({
   readinessTimeoutSeconds: Schema.NullOr(PositiveNumber).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  /** T3o (T3O-124): checks t3o runs itself before the (trusted-only) script. */
+  readinessChecks: Schema.Array(BoardReadinessCheck).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   /** T3o (T3O-87): dimensions whose declared value ignores learning. Absent pins none. */
   pinDeclared: Schema.optionalKey(Schema.Array(BoardResourceDimension)),
   /** T3o (T3O-87): the learned baseline, the board's to write. Not in the config's version. */
@@ -190,6 +199,7 @@ export const EMPTY_BOARD_PROJECT_RESOURCES: BoardProjectResources = {
   setupTimeoutMinutes: null,
   readinessPath: null,
   readinessTimeoutSeconds: null,
+  readinessChecks: [],
 };
 
 export function isEmptyBoardProjectResources(
@@ -201,6 +211,7 @@ export function isEmptyBoardProjectResources(
       resources.setupTimeoutMinutes === null &&
       resources.readinessPath === null &&
       resources.readinessTimeoutSeconds === null &&
+      resources.readinessChecks.length === 0 &&
       (resources.pinDeclared ?? []).length === 0 &&
       resources.learned === undefined)
   );
@@ -324,7 +335,35 @@ export function resolveBoardProjectResourceSettings(
     readinessPath: resources?.readinessPath ?? DEFAULT_BOARD_READINESS_SCRIPT_PATH,
     readinessTimeoutSeconds:
       resources?.readinessTimeoutSeconds ?? DEFAULT_BOARD_READINESS_TIMEOUT_SECONDS,
+    readinessChecks: resources?.readinessChecks ?? [],
   };
+}
+
+/**
+ * T3o (T3O-124): what the board asks a worker to check for a project. The script runs only when
+ * the board owner trusts the project; `configKey` names this request among a worker's entries.
+ */
+export function boardReadinessRequest(
+  resources: BoardProjectResources | null | undefined,
+  trusted: boolean,
+) {
+  const settings = resolveBoardProjectResourceSettings(resources);
+  return {
+    path: settings.readinessPath,
+    timeoutSeconds: settings.readinessTimeoutSeconds,
+    checks: settings.readinessChecks,
+    runScript: trusted,
+    configKey: boardReadinessConfigKey(settings.readinessChecks, trusted),
+    /** Something would run: a worker too old to honour `runScript` can't be asked. */
+    configured: settings.readinessChecks.length > 0 || trusted,
+  };
+}
+
+/** Whether a worker's snapshot says it runs checks and honours `runScript`. */
+export function boardWorkerSpeaksReadiness(snapshot: {
+  readonly readinessProtocol?: number;
+}): boolean {
+  return (snapshot.readinessProtocol ?? 0) >= BOARD_READINESS_PROTOCOL;
 }
 
 /**
@@ -593,6 +632,14 @@ export const BoardWorkerReadiness = Schema.Struct({
   fetchFailed: Schema.optionalKey(Schema.Boolean),
   /** The repository has no readiness script at the path. */
   noScript: Schema.optionalKey(Schema.Boolean),
+  /** T3o (T3O-124): the checks and trust this result is for (`boardReadinessConfigKey`). */
+  configKey: Schema.optionalKey(TrimmedNonEmptyString),
+  /** The script is there but the project isn't trusted to run it. */
+  scriptSkipped: Schema.optionalKey(Schema.Literal("not-trusted")),
+  /** How the declarative checks came out; absent with none. */
+  checks: Schema.optionalKey(
+    Schema.Struct({ passed: Schema.Int, failed: Schema.Int, warned: Schema.Int }),
+  ),
   cloneProgress: Schema.optionalKey(Schema.NullOr(Schema.Finite)),
 });
 export type BoardWorkerReadiness = typeof BoardWorkerReadiness.Type;
@@ -650,6 +697,8 @@ export const BoardWorkerCapacitySnapshot = Schema.Struct({
   heavyCards: Schema.Array(TrimmedNonEmptyString),
   /** T3o: the worker's holds as this board sees them (T3O-87). Absent from an older worker. */
   hold: Schema.optionalKey(BoardWorkerHoldView),
+  /** T3o (T3O-124): 2 when the worker runs checks and honours `runScript`. */
+  readinessProtocol: Schema.optionalKey(Schema.Int),
 });
 export type BoardWorkerCapacitySnapshot = typeof BoardWorkerCapacitySnapshot.Type;
 
@@ -705,6 +754,9 @@ export const BoardWorkerCheckReadinessInput = Schema.Struct({
   timeoutSeconds: Schema.Finite,
   /** A human asked (Re-check): a failure counts at once, and a fresh result is wanted. */
   requested: Schema.optionalKey(Schema.Boolean),
+  /** T3o (T3O-124): checks to run first, then the script only when `runScript`. */
+  checks: Schema.Array(BoardReadinessCheck).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  runScript: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
 });
 export type BoardWorkerCheckReadinessInput = typeof BoardWorkerCheckReadinessInput.Type;
 

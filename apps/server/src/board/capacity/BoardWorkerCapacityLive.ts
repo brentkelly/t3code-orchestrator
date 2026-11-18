@@ -9,6 +9,9 @@ import {
   type ProjectId,
   type ProviderInstanceId,
 } from "@t3tools/contracts";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { projectScriptRuntimeEnv, setupProjectScript } from "@t3tools/shared/projectScripts";
 import * as Clock from "effect/Clock";
@@ -24,6 +27,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ServerConfig from "../../config.ts";
+import * as ProcessRunner from "../../processRunner.ts";
 import { ServerEnvironment } from "../../environment/ServerEnvironment.ts";
 import { ProviderRegistry } from "../../provider/ProviderRegistry.ts";
 import * as GitVcsDriver from "../../vcs/GitVcsDriver.ts";
@@ -49,6 +53,7 @@ import { EMPTY_CAPACITY_STATE, type CapacityRecord } from "./capacityModel.ts";
 import { makeCardSetup } from "./cardSetup.ts";
 import { BoardMachine, bytesToGB } from "./machine.ts";
 import { makeReadiness } from "./readiness.ts";
+import type { ReadinessCheckHost } from "./readinessChecks.ts";
 
 const RecordJson = Schema.fromJsonString(
   Schema.Array(
@@ -229,7 +234,52 @@ const makeBoardWorkerCapacityLive = Effect.gen(function* () {
     ]))?.trim();
     return originHead !== undefined && originHead.startsWith("origin/") ? originHead : "HEAD";
   });
+  const processRunner = yield* ProcessRunner.make();
+  const home = yield* HostProcess.HomeDirectory;
+  const hostEnv = yield* HostProcess.Environment;
+  const readinessHost: ReadinessCheckHost = {
+    run: (input) =>
+      processRunner
+        .run({
+          command: input.command,
+          args: input.args,
+          cwd: input.cwd,
+          timeout: `${input.timeoutMs} millis`,
+          timeoutBehavior: "timedOutResult",
+          maxOutputBytes: 256 * 1024,
+          outputMode: "truncate",
+          // Nothing may prompt: the worker has no terminal.
+          env: { GIT_TERMINAL_PROMPT: "0", GCM_INTERACTIVE: "never" },
+        })
+        .pipe(
+          Effect.map((output) => ({
+            exitCode: output.code === null ? null : Number(output.code),
+            stdout: output.stdout,
+            stderr: output.stderr,
+            timedOut: output.timedOut,
+          })),
+          Effect.catchCause(() =>
+            Effect.succeed({ exitCode: null, stdout: "", stderr: "could not start", timedOut: false }),
+          ),
+        ),
+    env: { PATH: hostEnv.PATH ?? "", HOME: home, TMPDIR: NodeOS.tmpdir() },
+    forbiddenRoots: Effect.gen(function* () {
+      const projects = yield* local.projects().pipe(Effect.orElseSucceed(() => []));
+      return [
+        ...projects
+          .filter((project) => !project.deleted && project.workspaceRoot.length > 0)
+          .map((project) => project.workspaceRoot),
+        config.worktreesDir,
+        config.baseDir,
+        NodeOS.tmpdir(),
+        "/tmp",
+        NodePath.join(home, "tmp"),
+        NodePath.join(home, ".cache"),
+      ];
+    }),
+  };
   const readiness = makeReadiness({
+    host: readinessHost,
     git: {
       checkout: (repositoryKey, projectId) => checkoutOf(repositoryKey, projectId),
       fetch: Effect.fn("BoardWorkerCapacity.readinessFetch")(function* (checkout: string) {
@@ -245,6 +295,15 @@ const makeBoardWorkerCapacityLive = Effect.gen(function* () {
       ) {
         const ref = yield* defaultRef(checkout);
         return yield* committedReadinessScript((args) => gitRead(checkout, args), ref, scriptPath);
+      }),
+      has: Effect.fn("BoardWorkerCapacity.readinessRepoHas")(function* (
+        checkout: string,
+        repoPath: string,
+      ) {
+        const normalized = normalizeBoardReadinessPath(repoPath);
+        if (normalized === null) return false;
+        const ref = yield* defaultRef(checkout);
+        return (yield* gitRead(checkout, ["cat-file", "-e", `${ref}:${normalized}`])) !== null;
       }),
     },
   });
@@ -388,9 +447,7 @@ const makeBoardWorkerCapacityLive = Effect.gen(function* () {
         const entry = readiness
           .forBoard(boardId)
           .find((entry) => entry.repositoryKey === repositoryKey && entry.path === scriptPath);
-        return entry === undefined
-          ? null
-          : readiness.output(repositoryKey, entry.projectId, scriptPath);
+        return entry === undefined ? null : readiness.output(entry);
       }),
     boardIds: made.service.boardIds.pipe(
       Effect.map((recorded) => [...new Set([...recorded, ...readiness.boards()])]),
