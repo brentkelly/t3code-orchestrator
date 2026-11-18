@@ -648,6 +648,8 @@ describe("cancelling a started leaf's work to make it a parent (T3O-28)", () => 
       ),
   );
 
+  // Under the default `remove`, too: cancelled work is never force-removed (T3O-123), since its
+  // branch is deleted once the worktree goes.
   it.effect("a kept worktree keeps its branch, and Remove worktree then takes both", () => {
     const cancelled = asCancelled(card("card-x", building, { worktree: readyWorktree("card-x") }));
     return withGovernor(

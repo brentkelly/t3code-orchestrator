@@ -32,7 +32,11 @@ import { WorktreeRetirer, type WorktreeRetireInput } from "./worktreeRetire.ts";
 import { worktreeRetirerTestLayer } from "./worktreeRetire.testkit.ts";
 
 const settings = () =>
-  settingsWith({ building: [codexStep], globalMaxConcurrent: 4, reclaimWorktreeOnDone: true });
+  settingsWith({
+    building: [codexStep],
+    globalMaxConcurrent: 4,
+    worktreeAtDone: "remove-if-clean",
+  });
 
 const doneCard = (overrides: Partial<Parameters<typeof makeBoardCard>[0]> = {}): BoardCard =>
   makeBoardCard({
@@ -57,6 +61,7 @@ const failingHookRetirer = Layer.effect(
   Effect.gen(function* () {
     const git = yield* GitVcsDriver.GitVcsDriver;
     return WorktreeRetirer.of({
+      stopForStrip: () => Effect.succeed(null),
       retire: (input) =>
         git
           .removeWorktree({ cwd: input.projectCwd, path: input.worktreePath, force: true })
@@ -150,6 +155,7 @@ describe("card delete (T3O-23)", () => {
       Effect.gen(function* () {
         const git = yield* GitVcsDriver.GitVcsDriver;
         return WorktreeRetirer.of({
+          stopForStrip: () => Effect.succeed(null),
           retire: (input) =>
             Effect.gen(function* () {
               calls.push(input);
@@ -217,6 +223,7 @@ describe("card delete (T3O-23)", () => {
       Effect.gen(function* () {
         const git = yield* GitVcsDriver.GitVcsDriver;
         return WorktreeRetirer.of({
+          stopForStrip: () => Effect.succeed(null),
           retire: (input) =>
             Effect.gen(function* () {
               const doomed = input.worktreePath === "/tmp/wt/doomed";

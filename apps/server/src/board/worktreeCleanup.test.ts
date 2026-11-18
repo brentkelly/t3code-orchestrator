@@ -16,8 +16,10 @@ import * as TestClock from "effect/testing/TestClock";
 
 import {
   BOARD_SEED_STAGE_IDS,
+  BoardWorkerGitError,
   type BoardCard,
   type BoardCardPullRequest,
+  type BoardWorktreeAtDone,
   type VcsStatusChangeRequest,
 } from "@t3tools/contracts";
 
@@ -33,9 +35,12 @@ import {
   type HarnessEvent,
 } from "./supervisorHarness.testkit.ts";
 import type { BoardReadModel } from "./projector.ts";
+import type { BoardCardWorkspace, BoardWorkspacesShape } from "./workspace/BoardWorkspace.ts";
+import { makeBoardWorkspaces } from "./workspace/workspaceLayer.ts";
 
-const settings = (reclaimWorktreeOnDone = true) =>
-  settingsWith({ building: [codexStep], globalMaxConcurrent: 4, reclaimWorktreeOnDone });
+/** `remove-if-clean` unless a test says otherwise: most of this suite is the safety rule. */
+const settings = (worktreeAtDone: BoardWorktreeAtDone = "remove-if-clean") =>
+  settingsWith({ building: [codexStep], globalMaxConcurrent: 4, worktreeAtDone });
 
 const cachedPr = (state: BoardCardPullRequest["state"]): BoardCardPullRequest => ({
   number: 284 as BoardCardPullRequest["number"],
@@ -265,11 +270,11 @@ describe("reclaim at Done (D2)", () => {
     ),
   );
 
-  it.effect("leaves Done cards alone, unflagged, with reclaimWorktreeOnDone off", () =>
+  it.effect("leaves Done cards alone, unflagged, with worktreeAtDone keep", () =>
     withGovernor(
       {
         board: { nextCardNumberByProject: {}, cards: [doneCard()] },
-        settings: settings(false),
+        settings: settings("keep"),
         pullRequest: null,
       },
       (h) =>
@@ -362,7 +367,7 @@ describe("the cleanup sweep (D3/D4)", () => {
     ),
   );
 
-  it.effect("reclaims an archived card's worktree even with reclaimWorktreeOnDone off", () =>
+  it.effect("keeps an archived card's worktree under keep, unflagged (T3O-123)", () =>
     withGovernor(
       {
         board: {
@@ -374,46 +379,47 @@ describe("the cleanup sweep (D3/D4)", () => {
             },
           ],
         },
-        settings: settings(false),
+        settings: settings("keep"),
         pullRequest: null,
       },
       (h) =>
         Effect.gen(function* () {
           yield* h.reactor.drainWorktreeSweep;
-          assert.deepEqual(yield* h.removedWorktrees, ["/tmp/wt/card-1"]);
+          // Archive follows the setting now; it used to always reclaim.
+          assert.deepEqual(yield* h.removedWorktrees, []);
+          assert.equal(reclaims(yield* h.commands).length, 0);
+          assert.equal((yield* h.board).cards[0]!.worktree?.status, "ready");
         }),
     ),
   );
 
-  it.effect(
-    "Check again reclaims a kept archived card outside Done with reclaimWorktreeOnDone off",
-    () =>
-      withGovernor(
-        {
-          board: {
-            nextCardNumberByProject: {},
-            cards: [
-              {
-                ...doneCard({ stage: String(BOARD_SEED_STAGE_IDS.building) }),
-                archivedAt: "2026-01-01T00:00:00.000Z" as BoardCard["archivedAt"],
-              },
-            ],
-          },
-          settings: settings(false),
-          pullRequest: null,
-          worktreeUndurable: true,
+  it.effect("Check again reclaims a kept archived card outside Done", () =>
+    withGovernor(
+      {
+        board: {
+          nextCardNumberByProject: {},
+          cards: [
+            {
+              ...doneCard({ stage: String(BOARD_SEED_STAGE_IDS.building) }),
+              archivedAt: "2026-01-01T00:00:00.000Z" as BoardCard["archivedAt"],
+            },
+          ],
         },
-        (h) =>
-          Effect.gen(function* () {
-            yield* h.reactor.drainWorktreeSweep;
-            assert.deepEqual(yield* h.removedWorktrees, []);
-            // The work has since reached the remote; the human asks again.
-            h.setWorktreeUndurable(false);
-            const result = yield* h.reactor.checkWorktree((yield* h.board).cards[0]!.id);
-            assert.deepEqual(result, { outcome: "removed" });
-            assert.deepEqual(yield* h.removedWorktrees, ["/tmp/wt/card-1"]);
-          }),
-      ),
+        settings: settings(),
+        pullRequest: null,
+        worktreeUndurable: true,
+      },
+      (h) =>
+        Effect.gen(function* () {
+          yield* h.reactor.drainWorktreeSweep;
+          assert.deepEqual(yield* h.removedWorktrees, []);
+          // The work has since reached the remote; the human asks again.
+          h.setWorktreeUndurable(false);
+          const result = yield* h.reactor.checkWorktree((yield* h.board).cards[0]!.id);
+          assert.deepEqual(result, { outcome: "removed" });
+          assert.deepEqual(yield* h.removedWorktrees, ["/tmp/wt/card-1"]);
+        }),
+    ),
   );
 
   it.effect("Check again answers a repeat refusal, though it writes nothing new", () =>
@@ -462,18 +468,18 @@ describe("the cleanup sweep (D3/D4)", () => {
     );
   });
 
-  it.effect("Check again on a Done card with Done cleanup off says it is not reclaimed", () =>
+  it.effect("Check again on a Done card under keep says the setting keeps it", () =>
     withGovernor(
       {
         board: { nextCardNumberByProject: {}, cards: [doneCard()] },
-        settings: settings(false),
+        settings: settings("keep"),
         pullRequest: null,
       },
       (h) =>
         Effect.gen(function* () {
           yield* h.reactor.drainWorktreeSweep;
           const result = yield* h.reactor.checkWorktree((yield* h.board).cards[0]!.id);
-          assert.deepEqual(result, { outcome: "not-finished" });
+          assert.deepEqual(result, { outcome: "kept-by-setting" });
           assert.deepEqual(yield* h.removedWorktrees, []);
         }),
     ),
@@ -914,4 +920,415 @@ describe("the move into Done", () => {
         }),
     ),
   );
+});
+
+// ── worktreeAtDone (T3O-123) ────────────────────────────────────────────
+
+type WorktreeOps = Partial<
+  Pick<BoardCardWorkspace, "snapshotWorktree" | "stripWorktree" | "retireWorktree">
+>;
+
+/** The harness's real local workspace, with some worktree operations replaced. */
+const withWorktreeOps =
+  (ops: WorktreeOps) =>
+  (local: Parameters<typeof makeBoardWorkspaces>[0]): BoardWorkspacesShape => {
+    const workspaces = makeBoardWorkspaces(local);
+    const wrap = (workspace: BoardCardWorkspace): BoardCardWorkspace => ({ ...workspace, ...ops });
+    return {
+      ...workspaces,
+      forCard: (card) => Effect.map(workspaces.forCard(card), wrap),
+      localProject: (projectId) => Effect.map(workspaces.localProject(projectId), wrap),
+      forWorker: (workerId, projectId) =>
+        Effect.map(workspaces.forWorker(workerId, projectId), wrap),
+      groupByWorkspace: (cards) =>
+        Effect.map(workspaces.groupByWorkspace(cards), (groups) =>
+          groups.map((group) => ({ ...group, workspace: wrap(group.workspace) })),
+        ),
+    };
+  };
+
+const cleanupNotes = (commands: ReadonlyArray<HarnessCommand>) =>
+  commands.flatMap((command) =>
+    command.type === "board.card.record-note" && command.kind === "card-worktree-cleanup"
+      ? [command.detail]
+      : [],
+  );
+
+const SNAPSHOT_REF = "refs/t3o/discarded/T3O-1-20260101T000000";
+
+const arriveInDone = (h: Parameters<Parameters<typeof withGovernor>[1]>[0]) =>
+  Effect.gen(function* () {
+    const card = (yield* h.board).cards[0]!;
+    yield* h.pumpDomain(
+      cardMoved(
+        { ...card, stage: BOARD_SEED_STAGE_IDS.done },
+        String(BOARD_SEED_STAGE_IDS.merge),
+        String(BOARD_SEED_STAGE_IDS.done),
+        1,
+      ),
+    );
+    yield* h.reactor.drain;
+  });
+
+describe("worktreeAtDone: remove (T3O-123)", () => {
+  it.effect("snapshots a dirty worktree, then force-removes it and names the ref", () => {
+    const snapshots: Array<string> = [];
+    const retires: Array<string> = [];
+    return withGovernor(
+      {
+        board: {
+          nextCardNumberByProject: {},
+          cards: [doneCard({ stage: String(BOARD_SEED_STAGE_IDS.merge) })],
+        },
+        settings: settings("remove"),
+        pullRequest: null,
+        worktreeDirty: true,
+        worktreeUndurable: true,
+        workspaces: withWorktreeOps({
+          snapshotWorktree: (input) =>
+            Effect.sync(() => {
+              snapshots.push(`${input.worktreePath} ${input.cardKey}`);
+              return { outcome: "snapshotted", ref: SNAPSHOT_REF, sha: "a".repeat(40) } as const;
+            }),
+          retireWorktree: (input) =>
+            Effect.sync(() => {
+              retires.push(`${input.worktreePath} ${input.kind}`);
+              return { outcome: "removed", hookWarning: null } as const;
+            }),
+        }),
+      },
+      (h) =>
+        Effect.gen(function* () {
+          yield* arriveInDone(h);
+          assert.deepEqual(snapshots, [`/tmp/wt/card-1 ${(yield* h.board).cards[0]!.key}`]);
+          // No clean/pushed check: dirty and unpushed, it goes anyway.
+          assert.deepEqual(retires, ["/tmp/wt/card-1 forced"]);
+          assert.equal((yield* h.board).cards[0]!.worktree?.status, "reclaimed");
+          const [note] = cleanupNotes(yield* h.commands);
+          assert.include(note, SNAPSHOT_REF);
+          assert.include(note, `git checkout -b <name> ${SNAPSHOT_REF}`);
+        }),
+    );
+  });
+
+  it.effect("a retry whose work an earlier snapshot already saved records no second note", () =>
+    withGovernor(
+      {
+        board: { nextCardNumberByProject: {}, cards: [doneCard()] },
+        settings: settings("remove"),
+        pullRequest: null,
+        worktreeDirty: true,
+        workspaces: withWorktreeOps({
+          snapshotWorktree: () =>
+            Effect.succeed({
+              outcome: "snapshotted",
+              ref: SNAPSHOT_REF,
+              sha: "a".repeat(40),
+              reused: true,
+            } as const),
+          retireWorktree: () => Effect.succeed({ outcome: "removed", hookWarning: null } as const),
+        }),
+      },
+      (h) =>
+        Effect.gen(function* () {
+          yield* h.reactor.drainWorktreeSweep;
+          assert.equal((yield* h.board).cards[0]!.worktree?.status, "reclaimed");
+          assert.deepEqual(cleanupNotes(yield* h.commands), []);
+        }),
+    ),
+  );
+
+  it.effect("a merged card whose branch Done deletes is removed only when clean", () =>
+    withGovernor(
+      {
+        board: {
+          nextCardNumberByProject: {},
+          cards: [doneCard({ pullRequest: cachedPr("merged") })],
+        },
+        settings: settings("remove"),
+        pullRequest: forgePr("merged"),
+        // Commits made after the merge live only on the branch Done is about to delete.
+        worktreeUndurable: true,
+        workspaces: withWorktreeOps({
+          snapshotWorktree: () => Effect.die("a branch Done deletes must not be force-removed"),
+          retireWorktree: () => Effect.die("a branch Done deletes must not be force-removed"),
+        }),
+      },
+      (h) =>
+        Effect.gen(function* () {
+          yield* h.reactor.drainWorktreeSweep;
+          assert.deepEqual(yield* h.removedWorktrees, []);
+          const kept = (yield* h.board).cards[0]!.worktree;
+          assert.equal(kept?.status, "ready");
+          assert.include(kept?.reclaimBlockedReason ?? "", "its branch is deleted at Done");
+        }),
+    ),
+  );
+
+  it.effect("an open pull request that merges after the reclaim found its worktree kept", () => {
+    let forge = forgePr("open");
+    const forced: Array<string> = [];
+    return withGovernor(
+      {
+        board: {
+          nextCardNumberByProject: {},
+          cards: [doneCard({ pullRequest: cachedPr("open") })],
+        },
+        settings: settings("remove"),
+        pullRequestOf: () => forge,
+        worktreeUndurable: true,
+        workspaces: withWorktreeOps({
+          snapshotWorktree: () =>
+            Effect.sync(() => {
+              forced.push("snapshot");
+              return { outcome: "snapshotted", ref: SNAPSHOT_REF, sha: "a".repeat(40) } as const;
+            }),
+          retireWorktree: () =>
+            Effect.sync(() => {
+              forced.push("retire");
+              return { outcome: "removed", hookWarning: null } as const;
+            }),
+        }),
+      },
+      (h) =>
+        Effect.gen(function* () {
+          yield* h.reactor.drainWorktreeSweep;
+          assert.deepEqual(forced, []);
+          assert.equal((yield* h.board).cards[0]!.worktree?.status, "ready");
+          // The merge lands later; Done's branch cleanup runs with the worktree still holding it.
+          forge = forgePr("merged");
+          yield* h.reactor.refreshPullRequest((yield* h.board).cards[0]!.id);
+          assert.equal((yield* h.board).cards[0]!.pullRequest?.state, "merged");
+          assert.deepEqual(forced, []);
+          assert.equal((yield* h.board).cards[0]!.worktree?.status, "ready");
+        }),
+    );
+  });
+
+  it.effect("falls back to the safety rule, saying why, when the changes are over the cap", () =>
+    withGovernor(
+      {
+        board: { nextCardNumberByProject: {}, cards: [doneCard()] },
+        settings: settings("remove"),
+        pullRequest: null,
+        worktreeDirty: true,
+        workspaces: withWorktreeOps({
+          snapshotWorktree: () =>
+            Effect.succeed({ outcome: "over-cap", bytes: 300 * 1024 * 1024 } as const),
+          retireWorktree: () => Effect.die("a worktree over the cap must not be force-removed"),
+        }),
+      },
+      (h) =>
+        Effect.gen(function* () {
+          yield* h.reactor.drainWorktreeSweep;
+          assert.deepEqual(yield* h.removedWorktrees, []);
+          const kept = (yield* h.board).cards[0]!.worktree;
+          assert.equal(kept?.status, "ready");
+          assert.equal(
+            kept?.reclaimBlockedReason,
+            "1 uncommitted change (README.md). It was not force-removed: its uncommitted changes (300 MB) are over the 200 MB snapshot cap",
+          );
+        }),
+    ),
+  );
+
+  it.effect("an old worker that lacks the snapshot falls back to the safety rule", () =>
+    withGovernor(
+      {
+        board: { nextCardNumberByProject: {}, cards: [doneCard()] },
+        settings: settings("remove"),
+        pullRequest: null,
+        worktreeDirty: true,
+        workspaces: withWorktreeOps({
+          snapshotWorktree: () =>
+            Effect.fail(
+              new BoardWorkerGitError({
+                operation: "snapshotWorktree",
+                detail: "This worker's T3o is too old for the board's git operations; update it.",
+              }),
+            ),
+          retireWorktree: () => Effect.die("an unsnapshotted worktree must not be force-removed"),
+        }),
+      },
+      (h) =>
+        Effect.gen(function* () {
+          yield* h.reactor.drainWorktreeSweep;
+          assert.deepEqual(yield* h.removedWorktrees, []);
+          assert.include(
+            (yield* h.board).cards[0]!.worktree?.reclaimBlockedReason ?? "",
+            "couldn't be saved first (This worker's T3o is too old",
+          );
+        }),
+    ),
+  );
+
+  it.effect("a clean worktree a failed snapshot held back is still removed by the rule", () =>
+    withGovernor(
+      {
+        board: { nextCardNumberByProject: {}, cards: [doneCard()] },
+        settings: settings("remove"),
+        pullRequest: null,
+        workspaces: withWorktreeOps({
+          snapshotWorktree: () =>
+            Effect.fail(new BoardWorkerGitError({ operation: "snapshotWorktree", detail: "old" })),
+        }),
+      },
+      (h) =>
+        Effect.gen(function* () {
+          yield* h.reactor.drainWorktreeSweep;
+          assert.deepEqual(yield* h.removedWorktrees, ["/tmp/wt/card-1"]);
+        }),
+    ),
+  );
+});
+
+describe("worktreeAtDone: kept worktrees are stripped (T3O-123)", () => {
+  const recordingStrip = (calls: Array<boolean>, outcome: "stripped" | "pending" = "stripped") =>
+    withWorktreeOps({
+      stripWorktree: (input) =>
+        Effect.sync(() => {
+          calls.push(input.onlyIfPending);
+          return outcome === "stripped"
+            ? ({ outcome: "stripped", freedBytes: 3 * 1024 ** 3 } as const)
+            : ({ outcome: "pending", reason: "cargo is still running in the worktree" } as const);
+        }),
+    });
+
+  it.effect("under keep, strips as the card arrives in Done, with no badge or reclaim", () => {
+    const calls: Array<boolean> = [];
+    return withGovernor(
+      {
+        board: {
+          nextCardNumberByProject: {},
+          cards: [doneCard({ stage: String(BOARD_SEED_STAGE_IDS.merge) })],
+        },
+        settings: settings("keep"),
+        pullRequest: null,
+        workspaces: recordingStrip(calls),
+      },
+      (h) =>
+        Effect.gen(function* () {
+          yield* arriveInDone(h);
+          assert.deepEqual(calls, [false]);
+          assert.deepEqual(yield* h.removedWorktrees, []);
+          assert.equal(reclaims(yield* h.commands).length, 0);
+          assert.deepEqual(cleanupNotes(yield* h.commands), [
+            "Removed 3.0 GB of ignored files from the kept worktree",
+          ]);
+        }),
+    );
+  });
+
+  it.effect("strips nothing of a card put back to work after the cleanup judged it", () => {
+    const calls: Array<boolean> = [];
+    const backToWork: { model: Ref.Ref<BoardReadModel> | null } = { model: null };
+    return withGovernor(
+      {
+        board: { nextCardNumberByProject: {}, cards: [doneCard()] },
+        settings: settings("keep"),
+        pullRequest: null,
+        workspaces: (local) => {
+          const workspaces = recordingStrip(calls)(local);
+          return {
+            ...workspaces,
+            // The card is dragged back out of Done just as its cleanup reaches the worker.
+            forCard: (card) =>
+              Effect.gen(function* () {
+                const model = backToWork.model;
+                if (model !== null) {
+                  backToWork.model = null;
+                  yield* editCard(model, "card-1", (current) => ({
+                    ...current,
+                    stage: BOARD_SEED_STAGE_IDS.building,
+                    pullRequestHistory: [...current.pullRequestHistory, cachedPr("open")],
+                  }));
+                }
+                return yield* workspaces.forCard(card);
+              }),
+          };
+        },
+      },
+      (h) =>
+        Effect.gen(function* () {
+          backToWork.model = h.model;
+          yield* h.reactor.drainWorktreeSweep;
+          assert.deepEqual(calls, []);
+        }),
+    );
+  });
+
+  it.effect("a routine sweep only retries a pending strip, never starts one", () => {
+    const calls: Array<boolean> = [];
+    return withGovernor(
+      {
+        board: { nextCardNumberByProject: {}, cards: [doneCard()] },
+        settings: settings("keep"),
+        pullRequest: null,
+        workspaces: recordingStrip(calls),
+      },
+      (h) =>
+        Effect.gen(function* () {
+          yield* h.reactor.drainWorktreeSweep;
+          assert.deepEqual(calls, [true]);
+        }),
+    );
+  });
+
+  it.effect(
+    "under remove-if-clean, strips a worktree the rule kept; a foreign process is noted",
+    () => {
+      const calls: Array<boolean> = [];
+      return withGovernor(
+        {
+          board: {
+            nextCardNumberByProject: {},
+            cards: [doneCard({ stage: String(BOARD_SEED_STAGE_IDS.merge) })],
+          },
+          settings: settings("remove-if-clean"),
+          pullRequest: null,
+          worktreeUndurable: true,
+          workspaces: recordingStrip(calls, "pending"),
+        },
+        (h) =>
+          Effect.gen(function* () {
+            yield* arriveInDone(h);
+            assert.deepEqual(calls, [false]);
+            assert.deepEqual(yield* h.removedWorktrees, []);
+            assert.deepEqual(cleanupNotes(yield* h.commands), [
+              "Left the kept worktree's ignored files for now: cargo is still running in the worktree. The board retries once it has stopped",
+            ]);
+          }),
+      );
+    },
+  );
+
+  it.effect("archive follows keep: the archived card's worktree is kept and stripped", () => {
+    const calls: Array<boolean> = [];
+    const card = doneCard();
+    return withGovernor(
+      {
+        board: { nextCardNumberByProject: {}, cards: [card] },
+        settings: settings("keep"),
+        pullRequest: null,
+        workspaces: recordingStrip(calls),
+      },
+      (h) =>
+        Effect.gen(function* () {
+          yield* h.reactor.drainWorktreeSweep;
+          calls.length = 0;
+          const archived = {
+            ...card,
+            archivedAt: "2026-01-02T00:00:00.000Z" as BoardCard["archivedAt"],
+          };
+          yield* h.pumpDomain({
+            type: "board.card-archived",
+            sequence: 1,
+            payload: { cardId: card.id, archivedAt: archived.archivedAt, card: archived },
+          } as unknown as HarnessEvent);
+          yield* h.reactor.drain;
+          assert.deepEqual(calls, [false]);
+          assert.deepEqual(yield* h.removedWorktrees, []);
+        }),
+    );
+  });
 });

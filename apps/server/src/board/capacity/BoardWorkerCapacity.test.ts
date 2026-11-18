@@ -451,6 +451,52 @@ it.effect(
   },
 );
 
+it.effect(
+  "re-measures a finished card's settled worktree soon after Done, then rarely (T3O-123)",
+  () => {
+    const fakes = makeFakes();
+    const measured: Array<string> = [];
+    return Effect.gen(function* () {
+      const { service } = yield* makeBoardWorkerCapacity(portsOver(fakes));
+      yield* service.syncCards("board-a", {
+        seq: 1,
+        authoritative: true,
+        cards: [card("a-1", { settled: true }), card("a-2", { settled: true, finished: true })],
+      });
+      // Both restored records are measured once; after that only the finished one is, at the
+      // normal pace while its strip may still land, then every six hours.
+      yield* service.measure;
+      measured.length = 0;
+      yield* TestClock.adjust("5 minutes");
+      yield* service.measure;
+      assert.deepStrictEqual(measured, ["/w/a-2"]);
+      yield* TestClock.adjust("3 hours");
+      yield* service.measure;
+      measured.length = 0;
+      yield* TestClock.adjust("5 minutes");
+      yield* service.measure;
+      assert.deepStrictEqual(measured, []);
+      yield* TestClock.adjust("6 hours");
+      yield* service.measure;
+      assert.deepStrictEqual(measured, ["/w/a-2"]);
+    }).pipe(
+      Effect.provide(TestClock.layer()),
+      Effect.provideService(BoardMachine, {
+        cpuCount: Effect.succeed(32),
+        totalMemoryBytes: Effect.succeed(128 * GiB),
+        availableMemoryBytes: Effect.succeed(500 * GiB),
+        agentSliceMemoryHighBytes: Effect.succeed(null),
+        freeDiskBytes: () => Effect.succeed(1000 * 1000 ** 3),
+        diskUsageBytes: (path: string) =>
+          Effect.sync(() => {
+            measured.push(path);
+            return 1000 ** 3;
+          }),
+      }),
+    );
+  },
+);
+
 it.effect("a disk measurement finishing after its board left doesn't bring it back", () => {
   const fakes = makeFakes();
   let duringDu: Effect.Effect<void> = Effect.void;

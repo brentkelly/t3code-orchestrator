@@ -31,6 +31,7 @@ import { BoardActualsMeter } from "../actuals/BoardActualsMeter.ts";
 import { LocalThreadGateway } from "../ThreadGateway.ts";
 import { readWorkerFile, resolveWorkerCapacitySettings } from "../tunnel/workerFile.ts";
 import { BoardRelayStore } from "../workers/BoardRelayStore.ts";
+import { sweepThisServerLeftovers } from "../serverLeftovers.ts";
 import { parseRegisteredWorktrees } from "../worktree.ts";
 import {
   adoptBoardWorktree,
@@ -70,6 +71,8 @@ const RecordJson = Schema.fromJsonString(
       measuredDiskGB: Schema.NullOr(Schema.Number),
       measuredAt: Schema.NullOr(Schema.Number),
       heavySince: Schema.NullOr(Schema.Number),
+      finished: Schema.optionalKey(Schema.Literal(true)),
+      finishedAt: Schema.optionalKey(Schema.Number),
     }),
   ),
 );
@@ -378,6 +381,17 @@ const makeBoardWorkerCapacityLive = Effect.gen(function* () {
   yield* readiness
     .sweep()
     .pipe(Effect.ignoreCause, Effect.repeat(Schedule.spaced("1 minute")), Effect.forkScoped);
+  // T3o (T3O-123): the server's own leftovers, hourly. Never in dev, whose temp folder and
+  // home a developer's real server may share.
+  if (config.devUrl === undefined) {
+    yield* Effect.gen(function* () {
+      const nowMs = yield* Clock.currentTimeMillis;
+      const removed = yield* Effect.promise(() => sweepThisServerLeftovers(config.baseDir, nowMs));
+      if (removed.length > 0) {
+        yield* Effect.logInfo("server cleanup: removed leftovers", { removed });
+      }
+    }).pipe(Effect.ignoreCause, Effect.repeat(Schedule.spaced("1 hour")), Effect.forkScoped);
+  }
   const hostEnvironment = yield* HostProcess.Environment;
   return {
     ...made.service,

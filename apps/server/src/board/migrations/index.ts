@@ -95,6 +95,7 @@ import Migration081 from "./081_BoardScheduleRunWorkspace.ts";
 import Migration082 from "./082_BoardScheduleRunWorkspaceRemoved.ts";
 import Migration083 from "./083_BoardGateState.ts";
 import Migration084 from "./084_BoardMergeStay.ts";
+import Migration085 from "./085_BoardEventsTypeIndex.ts";
 
 /** Ledger table for the board migration lineage, independent of upstream. */
 export const BOARD_MIGRATION_TABLE = "t3o_sql_migrations";
@@ -201,6 +202,7 @@ export const BOARD_MIGRATIONS = [
   // T3o: automation gate state (T3O-115).
   [83, "BoardGateState", Migration083],
   [84, "BoardMergeStay", Migration084],
+  [85, "BoardEventsTypeIndex", Migration085],
 ] as const;
 
 const boardLoader = Migrator.fromRecord(

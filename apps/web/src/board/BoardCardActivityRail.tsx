@@ -194,6 +194,8 @@ function ActivityIcon({
       return <TriangleAlertIcon className={cn(className, "text-warning-foreground")} />;
     case "card-ci-stopped":
       return <PauseIcon className={cn(className, "text-attention-foreground")} />;
+    case "card-worktree-cleanup":
+      return <HardDriveIcon className={className} />;
     // Plan review rows claim nothing about the work — neutral.
     case "plan-review-started":
     case "plan-review-stopped":
@@ -456,6 +458,8 @@ function activitySentence(
       return payload.detail === undefined ? <>held the card in CI</> : <>{payload.detail}</>;
     case "card-ci-stopped":
       return <>stopped CI for a human: the card has failed CI too many times</>;
+    case "card-worktree-cleanup":
+      return payload.detail === undefined ? <>cleaned up the worktree</> : <>{payload.detail}</>;
     case "card-review-round-requested":
       return payload.detail === undefined ? (
         <>asked for another review round</>

@@ -12,7 +12,13 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 
-import { makeCardSetup, SETUP_DONE_MARKER, type CardSetupScript } from "./cardSetup.ts";
+import {
+  makeCardSetup,
+  SETUP_DONE_MARKER,
+  STRIP_PENDING_MARKER,
+  STRIPPED_MARKER,
+  type CardSetupScript,
+} from "./cardSetup.ts";
 
 type StepExit = {
   readonly status: "passed" | "failed" | "timed-out";
@@ -65,6 +71,8 @@ it.effect("runs the setup script once per worktree, and only the script on Retry
       ],
     );
     assert.isTrue(NodeFS.existsSync(NodePath.join(gitDir, SETUP_DONE_MARKER)));
+    // Owed a strip at Done, on disk so a sweep still does it after a restart or a missed Done.
+    assert.isTrue(NodeFS.existsSync(NodePath.join(gitDir, STRIP_PENDING_MARKER)));
     assert.strictEqual(commands[0], "pnpm install");
     // A second provision of the same worktree runs nothing.
     yield* collect(setup.run(input));
@@ -146,6 +154,21 @@ it.effect("no script, or a card that already built, is set up with nothing run",
     yield* collect(built.setup.run({ ...input, markOnly: true }));
     assert.lengthOf(built.commands, 0);
     assert.isTrue(NodeFS.existsSync(NodePath.join(built.gitDir, SETUP_DONE_MARKER)));
+  }),
+);
+
+it.effect("a stripped worktree is owed no strip until it sets up again", () =>
+  Effect.gen(function* () {
+    const { setup, gitDir } = harness([]);
+    NodeFS.writeFileSync(NodePath.join(gitDir, STRIPPED_MARKER), "stripped\n");
+    NodeFS.writeFileSync(NodePath.join(gitDir, SETUP_DONE_MARKER), "done\n");
+    yield* collect(setup.run(input));
+    assert.isFalse(NodeFS.existsSync(NodePath.join(gitDir, STRIP_PENDING_MARKER)));
+    // The strip clears the setup marker, so reuse sets up again and is owed a strip again.
+    NodeFS.rmSync(NodePath.join(gitDir, SETUP_DONE_MARKER));
+    yield* collect(setup.run(input));
+    assert.isFalse(NodeFS.existsSync(NodePath.join(gitDir, STRIPPED_MARKER)));
+    assert.isTrue(NodeFS.existsSync(NodePath.join(gitDir, STRIP_PENDING_MARKER)));
   }),
 );
 

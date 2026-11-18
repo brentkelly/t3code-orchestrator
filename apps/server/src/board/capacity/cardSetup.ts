@@ -28,7 +28,15 @@ import { readLogTail } from "./logTail.ts";
 
 export const SETUP_DONE_MARKER = "t3o-setup-done";
 const SETUP_LOG = "t3o-setup.log";
-const SETUP_RESULT = "t3o-setup-failed";
+export const SETUP_FAILED_MARKER = "t3o-setup-failed";
+/** Written by a strip of a kept worktree (`worktreeAtDone.ts`); a setup run clears it. */
+export const STRIPPED_MARKER = "t3o-stripped";
+/**
+ * A strip the worktree is owed once its card finishes: written by a setup run, so it survives a
+ * restart or an unreachable worker at Done, and by a strip a foreign process held back. The
+ * sweep strips only marked worktrees, never one kept before strips existed.
+ */
+export const STRIP_PENDING_MARKER = "t3o-strip-pending";
 
 /** The project's setup script on this worker, or null when it has none. */
 export interface CardSetupScript {
@@ -106,7 +114,7 @@ export const makeCardSetup = (deps: CardSetupDeps) => {
     if (paths === null) return "none" as BoardWorkerSetupState;
     if (NodeFS.existsSync(paths.marker)) return "done" as BoardWorkerSetupState;
     return (
-      NodeFS.existsSync(NodePath.join(paths.dir, SETUP_RESULT)) ? "failed" : "none"
+      NodeFS.existsSync(NodePath.join(paths.dir, SETUP_FAILED_MARKER)) ? "failed" : "none"
     ) as BoardWorkerSetupState;
   });
 
@@ -151,6 +159,28 @@ export const makeCardSetup = (deps: CardSetupDeps) => {
           } satisfies BoardCardSetupProgress);
         }
         const alreadyDone = NodeFS.existsSync(paths.marker);
+        // A stripped worktree setting up again is in use again: the next Done may strip it.
+        if (!alreadyDone) {
+          yield* Effect.sync(() => {
+            try {
+              NodeFS.rmSync(NodePath.join(paths.dir, STRIPPED_MARKER), { force: true });
+            } catch {
+              // A stale marker only skips one later strip.
+            }
+          });
+        }
+        if (!NodeFS.existsSync(NodePath.join(paths.dir, STRIPPED_MARKER))) {
+          yield* Effect.sync(() => {
+            try {
+              NodeFS.writeFileSync(
+                NodePath.join(paths.dir, STRIP_PENDING_MARKER),
+                "owed at Done\n",
+              );
+            } catch {
+              // Unmarked, the strip still runs as the card finishes; only its retry is lost.
+            }
+          });
+        }
         if (input.markOnly === true || (alreadyDone && input.retry !== true)) {
           if (!alreadyDone) yield* writeMarker(paths.marker);
           return Stream.make(finished("succeeded"));
@@ -190,7 +220,7 @@ export const makeCardSetup = (deps: CardSetupDeps) => {
           timeoutMs: input.timeoutMinutes * 60_000,
           tail,
           logPath: NodePath.join(paths.dir, SETUP_LOG),
-          resultPath: NodePath.join(paths.dir, SETUP_RESULT),
+          resultPath: NodePath.join(paths.dir, SETUP_FAILED_MARKER),
           ciEnvironment: false,
         }).pipe(
           (step) =>
@@ -213,7 +243,7 @@ export const makeCardSetup = (deps: CardSetupDeps) => {
                 yield* Effect.sync(() => {
                   try {
                     NodeFS.writeFileSync(
-                      NodePath.join(paths.dir, SETUP_RESULT),
+                      NodePath.join(paths.dir, SETUP_FAILED_MARKER),
                       `${exit.exitCode ?? ""}\n`,
                     );
                   } catch {

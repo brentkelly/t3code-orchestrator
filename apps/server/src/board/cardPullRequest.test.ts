@@ -73,11 +73,15 @@ const refusal = (input: {
   };
 };
 
-const settings = (merge?: Parameters<typeof settingsWith>[0]["merge"]) =>
+const settings = (
+  merge?: Parameters<typeof settingsWith>[0]["merge"],
+  worktreeAtDone?: Parameters<typeof settingsWith>[0]["worktreeAtDone"],
+) =>
   settingsWith({
     building: [codexStep],
     globalMaxConcurrent: 4,
     ...(merge === undefined ? {} : { merge }),
+    ...(worktreeAtDone === undefined ? {} : { worktreeAtDone }),
   });
 
 const cardInMerge = (): BoardCard =>
@@ -2032,7 +2036,7 @@ describe("branch cleanup at Done", () => {
       yield* withGovernor(
         {
           board: { nextCardNumberByProject: {}, cards: [card] },
-          settings: settings(),
+          settings: settings(undefined, "remove-if-clean"),
           pullRequest: { ...openPr, state: "merged" },
           worktreeDirty: true,
         },
@@ -2053,7 +2057,7 @@ describe("branch cleanup at Done", () => {
     }),
   );
 
-  it.effect("respects reclaimWorktreeOnDone being off", () =>
+  it.effect("respects worktreeAtDone keep", () =>
     Effect.gen(function* () {
       const card = cardInMerge();
       yield* withGovernor(
@@ -2062,7 +2066,7 @@ describe("branch cleanup at Done", () => {
           settings: settingsWith({
             building: [codexStep],
             globalMaxConcurrent: 4,
-            reclaimWorktreeOnDone: false,
+            worktreeAtDone: "keep",
           }),
           pullRequest: { ...openPr, state: "merged" },
         },
@@ -2150,7 +2154,7 @@ describe("branch cleanup at Done", () => {
         yield* withGovernor(
           {
             board: { nextCardNumberByProject: {}, cards: [card] },
-            settings: settings(),
+            settings: settings(undefined, "remove-if-clean"),
             pullRequest: { ...openPr, state: "merged" },
             worktreeDirty: true,
           },

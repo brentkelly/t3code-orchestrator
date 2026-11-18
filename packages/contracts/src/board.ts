@@ -2955,6 +2955,9 @@ const BOARD_CARD_ACTIVITY_KINDS = [
   "card-ci-held",
   /** CI stopped for a human at the round-trip limit. */
   "card-ci-stopped",
+  /** T3o (T3O-123): what the board did to a finished card's worktree beyond removing it: a
+      snapshot of uncommitted work, ignored files stripped, or why neither happened. */
+  "card-worktree-cleanup",
 ] as const;
 export const BoardCardActivityKind = Schema.Literals(BOARD_CARD_ACTIVITY_KINDS);
 export type BoardCardActivityKind = typeof BoardCardActivityKind.Type;
@@ -6221,6 +6224,7 @@ export const BoardCardNoteKind = Schema.Literals([
   "card-auto-planned",
   /** CI is holding the card, with the reason. */
   "card-ci-held",
+  "card-worktree-cleanup",
 ]);
 export type BoardCardNoteKind = typeof BoardCardNoteKind.Type;
 
@@ -7975,22 +7979,33 @@ function boundShellTitle(title: string): string {
 }
 
 /**
- * Whether a card shows the "Worktree kept" flag: it still holds a worktree and is
- * finished with it (archived, or in the done-role stage with `reclaimWorktreeOnDone` on).
- * Derived rather than stored, so it cannot go stale.
+ * Whether a card is finished with its worktree: archived, in the done-role stage, or holding
+ * cancelled work. The board removes or strips such a worktree, and counts it at its measured size.
+ */
+export function boardCardFinishedWithWorktree(input: {
+  readonly archived: boolean;
+  readonly inDoneStage: boolean;
+  /** Its worktree is cancelled work (`boardCardWorktreeIsCancelledWork`). */
+  readonly cancelledWork: boolean;
+}): boolean {
+  return input.archived || input.cancelledWork || input.inDoneStage;
+}
+
+/**
+ * Whether a card shows the "Worktree kept" flag: it still holds a worktree it is finished with,
+ * and the setting asked for it to go. Under `keep` a kept worktree is the user's choice, not a
+ * refusal. Derived rather than stored, so it cannot go stale.
  */
 export function boardCardWorktreeKept(input: {
   readonly worktreeReady: boolean;
   readonly archived: boolean;
   readonly inDoneStage: boolean;
-  readonly reclaimWorktreeOnDone: boolean;
+  readonly worktreeAtDone: BoardWorktreeAtDone;
   /** Its worktree is cancelled work (`boardCardWorktreeIsCancelledWork`). */
   readonly cancelledWork: boolean;
 }): boolean {
-  if (!input.worktreeReady) return false;
-  return (
-    input.archived || input.cancelledWork || (input.inDoneStage && input.reclaimWorktreeOnDone)
-  );
+  if (!input.worktreeReady || input.worktreeAtDone === "keep") return false;
+  return boardCardFinishedWithWorktree(input);
 }
 
 /**
@@ -9805,9 +9820,10 @@ export const BoardCheckCardWorktreeResult = Schema.Union([
   Schema.Struct({ outcome: Schema.Literal("kept"), reason: Schema.NullOr(Schema.String) }),
   /** Another cleanup of this card was already running, so this one stood down. */
   Schema.Struct({ outcome: Schema.Literal("busy") }),
+  /** Kept by the setting (`worktreeAtDone: keep`); the check strips its ignored files. */
+  Schema.Struct({ outcome: Schema.Literal("kept-by-setting") }),
   Schema.Struct({ outcome: Schema.Literal("no-worktree") }),
-  /** The card is not one the cleanup reclaims: it left Done, or reclaiming
-      at Done is switched off. */
+  /** The card is not one the cleanup reclaims: it is neither archived nor in Done. */
   Schema.Struct({ outcome: Schema.Literal("not-finished") }),
   Schema.Struct({ outcome: Schema.Literal("unknown-card") }),
   Schema.Struct({ outcome: Schema.Literal("failed") }),
@@ -10320,33 +10336,73 @@ export function clampBoardInstanceCap(
 }
 
 /**
- * Archive always reclaims a card's worktree; this only decides whether Done with a merged PR
- * reclaims it earlier. The field's decoding default is load-bearing: an old on-disk `lifecycle`
- * decodes to `{}`, and a missing required key would discard the whole settings file.
+ * What happens to a card's worktree once the card is finished (Done, archived, or its work
+ * cancelled): `remove` removes it (snapshotting uncommitted work first), `remove-if-clean` only
+ * when nothing in it would be lost, `keep` never. A worktree that stays is stripped of the files
+ * git ignores.
  */
-export const DEFAULT_BOARD_RECLAIM_WORKTREE_ON_DONE = true;
+export const BoardWorktreeAtDone = Schema.Literals(["remove", "remove-if-clean", "keep"]);
+export type BoardWorktreeAtDone = typeof BoardWorktreeAtDone.Type;
+export const DEFAULT_BOARD_WORKTREE_AT_DONE: BoardWorktreeAtDone = "remove";
+
+/** The mode a stored or patched lifecycle block asks for: the new key wins, else the legacy
+    `reclaimWorktreeOnDone` boolean (`false` kept worktrees, `true` reclaimed them). */
+function boardWorktreeAtDoneFrom(input: {
+  readonly worktreeAtDone?: BoardWorktreeAtDone | undefined;
+  readonly reclaimWorktreeOnDone?: boolean | undefined;
+}): BoardWorktreeAtDone | undefined {
+  if (input.worktreeAtDone !== undefined) return input.worktreeAtDone;
+  if (input.reclaimWorktreeOnDone === undefined) return undefined;
+  return input.reclaimWorktreeOnDone ? "remove" : "keep";
+}
+
 /** Auto-archive of idle Done cards is opt-in. Its fields are NEW
     names on purpose: older settings files still carry `archiveAfterDays`, and
     reviving that name would switch the feature on silently at upgrade. */
 export const DEFAULT_BOARD_AUTO_ARCHIVE_DONE = false;
 export const DEFAULT_BOARD_AUTO_ARCHIVE_AFTER_DAYS = 7;
 
-export const BoardLifecycleSettings = Schema.Struct({
-  /** Reclaim a card's worktree on arrival at Done when its pull request is
-      merged, instead of waiting for archive. Default on: a busy board otherwise
-      stacks a full checkout — dependency install and all — per finished card,
-      for as long as those cards sit in Done. */
-  reclaimWorktreeOnDone: Schema.Boolean.pipe(
-    Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_RECLAIM_WORKTREE_ON_DONE)),
-  ),
+const BoardLifecycleSettingsType = Schema.Struct({
+  worktreeAtDone: BoardWorktreeAtDone,
   /** Archive cards left untouched in Done for `autoArchiveAfterDays`. */
+  autoArchiveDone: Schema.Boolean,
+  autoArchiveAfterDays: PositiveInt,
+});
+
+/** Every field decodes a default: `lifecycle` is indivisible, and a missing required key would
+    discard the whole settings file. `deepMerge` never deletes a key, so a stored block may hold
+    both the legacy boolean and `worktreeAtDone`; the latter wins. */
+export const BoardLifecycleSettings = Schema.Struct({
+  worktreeAtDone: Schema.optionalKey(BoardWorktreeAtDone),
+  reclaimWorktreeOnDone: Schema.optionalKey(Schema.Boolean),
   autoArchiveDone: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_AUTO_ARCHIVE_DONE)),
   ),
   autoArchiveAfterDays: PositiveInt.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_AUTO_ARCHIVE_AFTER_DAYS)),
   ),
-});
+}).pipe(
+  Schema.decodeTo(
+    BoardLifecycleSettingsType,
+    SchemaTransformation.transform<
+      typeof BoardLifecycleSettingsType.Type,
+      {
+        readonly worktreeAtDone?: BoardWorktreeAtDone;
+        readonly reclaimWorktreeOnDone?: boolean;
+        readonly autoArchiveDone: boolean;
+        readonly autoArchiveAfterDays: number;
+      }
+    >({
+      decode: ({ worktreeAtDone, reclaimWorktreeOnDone, ...rest }) => ({
+        worktreeAtDone:
+          boardWorktreeAtDoneFrom({ worktreeAtDone, reclaimWorktreeOnDone }) ??
+          DEFAULT_BOARD_WORKTREE_AT_DONE,
+        ...rest,
+      }),
+      encode: (settings) => settings,
+    }),
+  ),
+);
 export type BoardLifecycleSettings = typeof BoardLifecycleSettings.Type;
 
 /** Board display preferences. Shared by every client of this board. */
@@ -12993,7 +13049,7 @@ export const BoardSettings = Schema.Struct({
   lifecycle: BoardLifecycleSettings.pipe(
     Schema.withDecodingDefault(
       Effect.succeed({
-        reclaimWorktreeOnDone: DEFAULT_BOARD_RECLAIM_WORKTREE_ON_DONE,
+        worktreeAtDone: DEFAULT_BOARD_WORKTREE_AT_DONE,
         autoArchiveDone: DEFAULT_BOARD_AUTO_ARCHIVE_DONE,
         autoArchiveAfterDays: DEFAULT_BOARD_AUTO_ARCHIVE_AFTER_DAYS,
       }),
@@ -13020,11 +13076,34 @@ export const DEFAULT_BOARD_SETTINGS: BoardSettings = Schema.decodeSync(BoardSett
 // deleted. So clearing an override is a retained entry of nulls (`{ keyPrefix: null }`, a
 // `null` cap), which the resolvers read as "use the default", never an omitted key.
 
-export const BoardLifecycleSettingsPatch = Schema.Struct({
-  reclaimWorktreeOnDone: Schema.optionalKey(Schema.Boolean),
+const BoardLifecycleSettingsPatchType = Schema.Struct({
+  worktreeAtDone: Schema.optionalKey(BoardWorktreeAtDone),
   autoArchiveDone: Schema.optionalKey(Schema.Boolean),
   autoArchiveAfterDays: Schema.optionalKey(PositiveInt),
 });
+
+/** Still accepts the legacy `reclaimWorktreeOnDone` boolean from out-of-date web clients,
+    mapped to `worktreeAtDone` so it lands on the key the server reads. */
+export const BoardLifecycleSettingsPatch = Schema.Struct({
+  worktreeAtDone: Schema.optionalKey(BoardWorktreeAtDone),
+  reclaimWorktreeOnDone: Schema.optionalKey(Schema.Boolean),
+  autoArchiveDone: Schema.optionalKey(Schema.Boolean),
+  autoArchiveAfterDays: Schema.optionalKey(PositiveInt),
+}).pipe(
+  Schema.decodeTo(
+    BoardLifecycleSettingsPatchType,
+    SchemaTransformation.transform<
+      typeof BoardLifecycleSettingsPatchType.Type,
+      typeof BoardLifecycleSettingsPatchType.Type & { readonly reclaimWorktreeOnDone?: boolean }
+    >({
+      decode: ({ worktreeAtDone, reclaimWorktreeOnDone, ...rest }) => {
+        const mode = boardWorktreeAtDoneFrom({ worktreeAtDone, reclaimWorktreeOnDone });
+        return mode === undefined ? rest : { ...rest, worktreeAtDone: mode };
+      },
+      encode: (patch) => patch,
+    }),
+  ),
+);
 export type BoardLifecycleSettingsPatch = typeof BoardLifecycleSettingsPatch.Type;
 
 export const BoardDisplaySettingsPatch = Schema.Struct({

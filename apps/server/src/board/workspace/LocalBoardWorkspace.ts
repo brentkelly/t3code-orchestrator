@@ -4,13 +4,16 @@
  * card behaves the same wherever it is placed.
  */
 import {
+  BOARD_DISCARDED_REF_MAX_AGE_DAYS,
   BOARD_UNPUSHED_COMMITS_MAX,
   BOARD_LOCAL_WORKER_ID,
+  BOARD_WORKTREE_SNAPSHOT_CAP_BYTES,
   BoardWorkerGitError,
   type BoardWorkspaceDurability,
   type ProjectId,
   type WorktreeSubmodules,
 } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -31,6 +34,15 @@ import {
   provisionBoardCardWorktree,
   reclaimBoardCardWorktree,
 } from "../worktree.ts";
+import {
+  deleteLeftoverBranch,
+  hasMarker,
+  pruneDiscardedRefs,
+  snapshotBoardWorktree,
+  stripBoardWorktree,
+  writeStripPendingMarker,
+} from "../worktreeAtDone.ts";
+import { STRIP_PENDING_MARKER, STRIPPED_MARKER } from "../capacity/cardSetup.ts";
 import { WorktreeRetirer } from "../worktreeRetire.ts";
 import type { BoardWorkspace } from "./BoardWorkspace.ts";
 
@@ -951,6 +963,74 @@ export function makeLocalBoardWorkspace(
       ),
     );
 
+  const asGitError =
+    (operation: string) => (error: { readonly _tag: string; readonly message: string }) =>
+      error._tag === "BoardWorkerGitError"
+        ? (error as BoardWorkerGitError)
+        : new BoardWorkerGitError({ operation, detail: error.message });
+
+  // T3o (T3O-123): a finished card's worktree.
+  const snapshotWorktree: BoardWorkspace["snapshotWorktree"] = Effect.fn(
+    "LocalBoardWorkspace.snapshotWorktree",
+  )(function* ({ projectId, worktreePath, cardKey }) {
+    yield* rootOf("snapshotWorktree", projectId);
+    const nowMs = yield* Clock.currentTimeMillis;
+    return yield* withGit(
+      snapshotBoardWorktree({
+        worktreePath,
+        cardKey,
+        capBytes: BOARD_WORKTREE_SNAPSHOT_CAP_BYTES,
+        nowMs,
+      }),
+    ).pipe(Effect.mapError(asGitError("snapshotWorktree")));
+  });
+
+  const stripWorktree: BoardWorkspace["stripWorktree"] = Effect.fn(
+    "LocalBoardWorkspace.stripWorktree",
+  )(function* ({ projectId, worktreePath, onlyIfPending }) {
+    yield* rootOf("stripWorktree", projectId);
+    const gitDir = yield* worktreePrivateGitDir(deps, worktreePath);
+    if (gitDir === null) {
+      return yield* new BoardWorkerGitError({
+        operation: "stripWorktree",
+        detail: `${worktreePath} has no readable git directory.`,
+      });
+    }
+    const pending = yield* hasMarker(gitDir, STRIP_PENDING_MARKER);
+    if (onlyIfPending && !pending) return { outcome: "skipped" } as const;
+    if (!pending && (yield* hasMarker(gitDir, STRIPPED_MARKER))) {
+      return { outcome: "skipped" } as const;
+    }
+    const survivors = yield* retirer.stopForStrip(worktreePath);
+    if (survivors !== null) {
+      yield* writeStripPendingMarker(gitDir, survivors);
+      return { outcome: "pending", reason: survivors } as const;
+    }
+    const { freedBytes } = yield* withGit(stripBoardWorktree({ worktreePath, gitDir })).pipe(
+      Effect.mapError(asGitError("stripWorktree")),
+    );
+    return { outcome: "stripped", freedBytes } as const;
+  });
+
+  const pruneDiscarded: BoardWorkspace["pruneDiscardedRefs"] = Effect.fn(
+    "LocalBoardWorkspace.pruneDiscardedRefs",
+  )(function* ({ projectId }) {
+    const cwd = yield* rootOf("pruneDiscardedRefs", projectId);
+    const nowMs = yield* Clock.currentTimeMillis;
+    return yield* withGit(
+      pruneDiscardedRefs({ cwd, nowMs, maxAgeDays: BOARD_DISCARDED_REF_MAX_AGE_DAYS }),
+    ).pipe(Effect.mapError(gitFailed("pruneDiscardedRefs")));
+  });
+
+  const deleteLeftover: BoardWorkspace["deleteLeftoverBranch"] = ({ projectId, branch }) =>
+    rootOf("deleteLeftoverBranch", projectId).pipe(
+      Effect.flatMap((cwd) =>
+        withGit(deleteLeftoverBranch({ cwd, branch })).pipe(
+          Effect.mapError(gitFailed("deleteLeftoverBranch")),
+        ),
+      ),
+    );
+
   const reclaimWorktree: BoardWorkspace["reclaimWorktree"] = (input, stillWanted) =>
     rootOf("reclaimWorktree", input.projectId).pipe(
       Effect.flatMap((projectCwd) =>
@@ -993,6 +1073,10 @@ export function makeLocalBoardWorkspace(
     gitUserName,
     remoteBranchTip,
     pushCardBranch,
+    snapshotWorktree,
+    stripWorktree,
+    pruneDiscardedRefs: pruneDiscarded,
+    deleteLeftoverBranch: deleteLeftover,
     pullRequestByBranch,
     getPullRequest: ({ projectId, number, force }) =>
       pullRequests

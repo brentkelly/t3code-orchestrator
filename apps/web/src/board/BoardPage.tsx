@@ -588,15 +588,15 @@ function useBoardPageModel({
     });
   // A finished card still holding its worktree — the amber `Worktree
   // kept` notice. Here because the "finished" half needs the done-role stage
-  // and `reclaimWorktreeOnDone`, which the shell cannot carry (its SQL producer
+  // and `worktreeAtDone`, which the shell cannot carry (its SQL producer
   // cannot see settings).
-  const reclaimWorktreeOnDone = boardSettings.lifecycle.reclaimWorktreeOnDone;
+  const worktreeAtDone = boardSettings.lifecycle.worktreeAtDone;
   const worktreeKeptFor = (card: BoardCardShell) =>
     boardCardWorktreeKept({
       worktreeReady: card.worktreeReady === true,
       archived: card.archivedAt !== null,
       inDoneStage: doneStageId !== null && card.stage === doneStageId,
-      reclaimWorktreeOnDone,
+      worktreeAtDone,
       cancelledWork: boardCardWorktreeIsCancelledWork(card),
     })
       ? boardCardWorktreeKeptReason(card.worktreeKeptReason)

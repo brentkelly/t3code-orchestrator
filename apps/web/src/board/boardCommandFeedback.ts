@@ -192,8 +192,10 @@ export function describeBoardCheckWorktreeOutcome(
       return `Still kept: ${boardCardWorktreeKeptReason(result.reason)}.`;
     case "busy":
       return "A cleanup of this worktree is already running. Check again in a moment.";
+    case "kept-by-setting":
+      return "Kept: Board settings keep a card's worktree at Done (Lifecycle). Only its ignored files are cleared.";
     case "not-finished":
-      return "This card's worktree isn't cleaned up automatically: it is not archived, and either not in Done or Done cleanup is off.";
+      return "This card's worktree isn't cleaned up automatically: it is neither archived nor in Done.";
     case "unknown-card":
       return "This card no longer exists.";
     case "failed":

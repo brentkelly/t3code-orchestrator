@@ -4,6 +4,7 @@
  */
 import {
   BOARD_LOCAL_WORKER_ID,
+  BOARD_SEED_STAGE_IDS,
   BoardCardId,
   BoardStageId,
   EnvironmentId,
@@ -736,6 +737,27 @@ it("syncCards lists cards provisioning or ready with a grant on that worker, nev
   assert.deepStrictEqual(
     syncEntriesFor({ board, workerId: W1, repositoryKey: () => null }).map((entry) => entry.cardId),
     ["r"],
+  );
+});
+
+it("syncCards marks a card finished with its worktree: Done or archived (T3O-123)", () => {
+  const done = { ...granted("d"), stage: BOARD_SEED_STAGE_IDS.done } as BoardCard;
+  const archived = {
+    ...granted("x"),
+    archivedAt: "2026-11-13T00:00:00.000Z",
+  } as unknown as BoardCard;
+  const entries = syncEntriesFor({
+    board: boardWith([granted("a"), done, archived]),
+    workerId: BOARD_LOCAL_WORKER_ID,
+    repositoryKey: () => null,
+  });
+  assert.deepStrictEqual(
+    entries.map((entry) => [entry.cardId, entry.finished ?? false]),
+    [
+      ["a", false],
+      ["d", true],
+      ["x", true],
+    ],
   );
 });
 

@@ -879,14 +879,14 @@ export function BoardCardDetail({
       statuses and a card has one live step. */
   const stepPaused = stepPausedByHuman ? { stageLabel: boardStageLabel(stages, card.stage) } : null;
   /** The kept-worktree banner: the card is finished — archived, or
-      in Done with `reclaimWorktreeOnDone` on — and still holds its worktree. */
+      in Done, or cancelled work — still holds its worktree, and the setting wanted it gone. */
   const worktreeKept =
     card.worktree !== null &&
     boardCardWorktreeKept({
       worktreeReady: card.worktree.status === "ready",
       archived: card.archivedAt !== null,
       inDoneStage: doneStageId !== null && card.stage === doneStageId,
-      reclaimWorktreeOnDone: boardSettings.lifecycle.reclaimWorktreeOnDone,
+      worktreeAtDone: boardSettings.lifecycle.worktreeAtDone,
       cancelledWork: boardCardWorktreeIsCancelledWork(card),
     })
       ? {

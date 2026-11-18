@@ -5,10 +5,12 @@
  */
 import {
   DEFAULT_BOARD_AUTO_ARCHIVE_AFTER_DAYS,
-  DEFAULT_BOARD_RECLAIM_WORKTREE_ON_DONE,
+  DEFAULT_BOARD_WORKTREE_AT_DONE,
   type BoardSettings,
+  type BoardWorktreeAtDone,
 } from "@t3tools/contracts";
 
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { NumberStepper } from "./BoardPipelineSection";
 import { BoardSettingsCard, BoardSettingsCardRow } from "../../board/settings/boardSettingsCards";
@@ -98,32 +100,48 @@ function DisplaySection({ board, update }: { board: BoardSettings; update: Updat
 
 // ── Lifecycle ──────────────────────────────────────────────────────────
 
+const WORKTREE_AT_DONE_LABELS: Record<BoardWorktreeAtDone, string> = {
+  remove: "Removed",
+  "remove-if-clean": "Removed if everything is committed and pushed",
+  keep: "Kept",
+};
+const WORKTREE_AT_DONE_MODES = Object.keys(WORKTREE_AT_DONE_LABELS) as BoardWorktreeAtDone[];
+
 function LifecycleSection({ board, update }: { board: BoardSettings; update: UpdateFn }) {
-  const anchor = searchableSetting("board-reclaim-worktree-on-done");
+  const anchor = searchableSetting("board-worktree-at-done");
   const autoArchive = searchableSetting("board-auto-archive-done");
   return (
     <SettingsSection id="board-lifecycle" title="Lifecycle" variant="plain">
-      <BoardSettingsCard id="board-reclaim-worktree-on-done">
+      <BoardSettingsCard id="board-worktree-at-done">
         <BoardSettingsCardRow
-          label={anchor.title}
-          description="Remove a card's git worktree as soon as it reaches Done, instead of waiting for it to be archived. A worktree holding uncommitted changes or unpushed commits is kept and flagged on the card. Archiving always reclaims either way."
+          label="At Done, a card's worktree is…"
+          description="Also applies when a card is archived or its work is cancelled. Removed saves uncommitted changes to a snapshot ref first; its branch stays. A worktree that stays has the files git ignores (build output, node_modules) deleted, keeping .env files and editor folders."
           control={
-            <Switch
-              checked={board.lifecycle.reclaimWorktreeOnDone}
-              onCheckedChange={(checked) =>
-                update({
-                  board: { lifecycle: { reclaimWorktreeOnDone: Boolean(checked) } },
-                })
-              }
-              aria-label={anchor.title}
-            />
+            <Select
+              value={board.lifecycle.worktreeAtDone}
+              onValueChange={(value) => {
+                if (value === null || value === board.lifecycle.worktreeAtDone) return;
+                update({ board: { lifecycle: { worktreeAtDone: value } } });
+              }}
+            >
+              <SelectTrigger aria-label={anchor.title} size="sm">
+                <SelectValue>{WORKTREE_AT_DONE_LABELS[board.lifecycle.worktreeAtDone]}</SelectValue>
+              </SelectTrigger>
+              <SelectPopup>
+                {WORKTREE_AT_DONE_MODES.map((mode) => (
+                  <SelectItem key={mode} value={mode}>
+                    {WORKTREE_AT_DONE_LABELS[mode]}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
           }
         />
       </BoardSettingsCard>
       <BoardSettingsCard id="board-auto-archive-done">
         <BoardSettingsCardRow
           label={autoArchive.title}
-          description="Archive cards left untouched in Done for this many days. With worktrees reclaimed at Done, a card whose worktree was kept for unsaved work stays in Done. Archiving never removes unsaved work, and archived cards can be restored from the archive."
+          description="Archive cards left untouched in Done for this many days. Archived cards can be restored from the archive."
           control={
             <Switch
               checked={board.lifecycle.autoArchiveDone}
@@ -154,8 +172,9 @@ function LifecycleSection({ board, update }: { board: BoardSettings; update: Upd
         ) : null}
       </BoardSettingsCard>
       <p className="px-3 text-xs text-muted-foreground/70 sm:px-4">
-        Defaults: reclaim worktrees at Done {DEFAULT_BOARD_RECLAIM_WORKTREE_ON_DONE ? "on" : "off"},
-        auto-archive off ({DEFAULT_BOARD_AUTO_ARCHIVE_AFTER_DAYS} days when on).
+        Defaults: worktrees at Done{" "}
+        {WORKTREE_AT_DONE_LABELS[DEFAULT_BOARD_WORKTREE_AT_DONE].toLowerCase()}, auto-archive off (
+        {DEFAULT_BOARD_AUTO_ARCHIVE_AFTER_DAYS} days when on).
       </p>
     </SettingsSection>
   );
