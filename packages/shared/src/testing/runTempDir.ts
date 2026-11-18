@@ -42,8 +42,8 @@ function removeRunTempDir(run: RunTempDir) {
 export function ensureRunTempDir(): RunTempDir {
   const existing = state[STATE_KEY];
   if (existing) return existing;
-  const dir = NodePath.join(NodeOS.tmpdir(), `t3o-tr-${process.pid}`);
-  NodeFS.mkdirSync(dir, { recursive: true });
+  // mkdtemp, never adopt an existing folder: a recycled pid's stale one, or one another user planted.
+  const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), `t3o-tr-${process.pid}-`));
   const run: RunTempDir = { dir };
   state[STATE_KEY] = run;
   process.env.TMPDIR = dir;

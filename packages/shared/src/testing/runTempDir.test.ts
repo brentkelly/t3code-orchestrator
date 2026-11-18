@@ -13,17 +13,20 @@ const SETUP_URL = NodeURL.pathToFileURL(NodePath.join(import.meta.dirname, "runT
 const RUNNER = `
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
+const stale = NodePath.join(process.env.TMPDIR, \`t3o-tr-\${process.pid}\`);
+NodeFS.mkdirSync(stale);
+NodeFS.writeFileSync(NodePath.join(stale, "stale"), "x");
 const { default: setup } = await import(${JSON.stringify(SETUP_URL)});
 let dir;
 const teardown = setup({ provide: (_key, value) => { dir = value; } });
 if (typeof teardown === "function") teardown();
 const alive = NodeFS.existsSync(dir);
 if (alive) NodeFS.writeFileSync(NodePath.join(dir, "late-write"), "x");
-console.log(JSON.stringify({ dir, aliveAfterTeardown: alive }));
+console.log(JSON.stringify({ dir, stale, aliveAfterTeardown: alive }));
 `;
 
 describe("runTempDir globalSetup", () => {
-  it("keeps the run folder through teardown and removes it when the runner exits", () => {
+  it("makes a fresh run folder, keeps it through teardown and removes it when the runner exits", () => {
     const parent = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "run-temp-dir-"));
     try {
       const { status, stdout, stderr } = NodeChildProcess.spawnSync(
@@ -32,8 +35,11 @@ describe("runTempDir globalSetup", () => {
         { env: { ...process.env, TMPDIR: parent, TMP: parent, TEMP: parent }, encoding: "utf8" },
       );
       expect(status, stderr).toBe(0);
-      const { dir, aliveAfterTeardown } = JSON.parse(stdout);
+      const { dir, stale, aliveAfterTeardown } = JSON.parse(stdout);
       expect(NodePath.dirname(dir)).toBe(parent);
+      // A leftover folder under the pid's name is neither adopted nor deleted.
+      expect(dir).not.toBe(stale);
+      expect(NodeFS.existsSync(NodePath.join(stale, "stale"))).toBe(true);
       expect(aliveAfterTeardown).toBe(true);
       expect(NodeFS.existsSync(dir)).toBe(false);
     } finally {

@@ -1,10 +1,10 @@
 // @effect-diagnostics nodeBuiltinImport:off - runs once at test setup, outside any Effect runtime.
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
+// T3o: the run's own temp folder (runTempDir.ts, T3O-125); absent when a config has no globalSetup.
 import { inject } from "vite-plus/test";
 import * as HostProcess from "../HostProcess.ts";
 
-// The run's own temp folder from runTempDir.ts; absent when a config has no globalSetup.
 const runTempDir = inject("t3oRunTempDir");
 if (runTempDir) {
   process.env.TMPDIR = runTempDir;

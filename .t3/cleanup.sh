@@ -6,7 +6,7 @@
 #
 # It looks in ${TMPDIR:-/tmp}, /tmp and $HOME/tmp (cron may not set the TMPDIR the tests
 # used) and deletes entries there that this user owns, last modified over 24 hours ago,
-# and named like a t3o test leftover. A test run's own folder (t3o-tr-<pid>) goes only
+# and named like a t3o test leftover. A test run's own folder (t3o-tr-<pid>-*) goes only
 # once that pid has exited. Chromium/Playwright profiles are left alone: a live browser
 # may still use one. T3O_CLEANUP_DIRS (space-separated) replaces the folder list.
 set -u
@@ -37,10 +37,11 @@ is_legacy() {
 
 is_dead_run() {
   pid=${1#t3o-tr-}
+  pid=${pid%%-*}
   case "$pid" in
     '' | *[!0-9]*) return 1 ;;
   esac
-  ! ps -p "$pid" > /dev/null 2>&1
+  ! kill -0 "$pid" 2> /dev/null
 }
 
 for dir in "$@"; do

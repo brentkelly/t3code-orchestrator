@@ -36,20 +36,29 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")(".t3/cleanup.sh
         makeEntry(tmpA, "gitenv-abc123", "old"),
         makeEntry(tmpA, "1700000000-t3code-git-manager-abc", "old"),
         makeEntry(tmpB, "later-feature-abc123", "old"),
-        makeEntry(tmpB, `t3o-tr-${exitedPid()}`, "old"),
+        makeEntry(tmpB, `t3o-tr-${exitedPid()}-abc123`, "old"),
       ];
       const kept = [
         makeEntry(tmpA, "t3o-sweep-recent", "new"),
-        makeEntry(tmpA, `t3o-tr-${process.pid}`, "old"),
+        makeEntry(tmpA, `t3o-tr-${process.pid}-abc123`, "old"),
         makeEntry(tmpA, "t3o-tr-notapid", "old"),
         makeEntry(tmpA, "playwright_chromiumdev_profile-abc123", "old"),
         makeEntry(tmpB, ".org.chromium.Chromium.abc123", "old"),
         makeEntry(tmpB, "someone-elses-folder", "old"),
       ];
 
+      // A ps that fails (missing, or BusyBox without -p) must not make a live run look dead.
+      const fakeBin = NodePath.join(base, "bin");
+      NodeFS.mkdirSync(fakeBin);
+      NodeFS.writeFileSync(NodePath.join(fakeBin, "ps"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+
       const { status, stdout, stderr } = NodeChildProcess.spawnSync("sh", [SCRIPT], {
-        // The same folder listed twice is cleaned once.
-        env: { ...process.env, T3O_CLEANUP_DIRS: `${tmpA} ${tmpB} ${tmpA}/../a` },
+        env: {
+          ...process.env,
+          PATH: `${fakeBin}:${process.env.PATH}`,
+          // The same folder listed twice is cleaned once.
+          T3O_CLEANUP_DIRS: `${tmpA} ${tmpB} ${tmpA}/../a`,
+        },
         encoding: "utf8",
       });
 
