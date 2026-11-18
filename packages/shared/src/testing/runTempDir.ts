@@ -11,28 +11,26 @@ declare module "vite-plus/test" {
 }
 
 /**
- * One temp folder per test run, deleted at teardown, so leaked temp files and
- * browser profiles can't pile up in $TMPDIR. A repo-root run calls the setup once
- * per project in one process; they share the folder and the last teardown removes
- * it. The name stays short: unix socket paths are capped at 104-108 bytes.
+ * One temp folder per test run, deleted when the runner process exits, so leaked
+ * temp files and browser profiles can't pile up in $TMPDIR. A repo-root run calls
+ * the setup once per project in one process; they share the folder. The name stays
+ * short: unix socket paths are capped at 104-108 bytes.
  */
 interface RunTempDir {
   readonly dir: string;
-  readonly previous: Readonly<Record<"TMPDIR" | "TMP" | "TEMP", string | undefined>>;
-  refs: number;
 }
 
 const STATE_KEY = Symbol.for("t3o.runTempDir");
 const state = globalThis as { [STATE_KEY]?: RunTempDir };
 
+// Not in global teardown: Vitest runs that before it stops the workers and the
+// browser, which still write here, and a concurrent write makes rmSync throw.
 function removeRunTempDir(run: RunTempDir) {
-  if (state[STATE_KEY] !== run) return;
-  delete state[STATE_KEY];
-  for (const [key, value] of Object.entries(run.previous)) {
-    if (value === undefined) delete process.env[key];
-    else process.env[key] = value;
+  try {
+    NodeFS.rmSync(run.dir, { recursive: true, force: true, maxRetries: 5 });
+  } catch {
+    // Leftovers go to .t3/cleanup.sh; a cleanup failure must not fail a green run.
   }
-  NodeFS.rmSync(run.dir, { recursive: true, force: true });
 }
 
 /**
@@ -46,26 +44,15 @@ export function ensureRunTempDir(): RunTempDir {
   if (existing) return existing;
   const dir = NodePath.join(NodeOS.tmpdir(), `t3o-tr-${process.pid}`);
   NodeFS.mkdirSync(dir, { recursive: true });
-  const run: RunTempDir = {
-    dir,
-    previous: { TMPDIR: process.env.TMPDIR, TMP: process.env.TMP, TEMP: process.env.TEMP },
-    refs: 0,
-  };
+  const run: RunTempDir = { dir };
   state[STATE_KEY] = run;
   process.env.TMPDIR = dir;
   process.env.TMP = dir;
   process.env.TEMP = dir;
-  // A run that never reaches teardown (Ctrl-C, a runner crash) still cleans up.
   process.once("exit", () => removeRunTempDir(run));
   return run;
 }
 
 export default function setup(project: TestProject) {
-  const run = ensureRunTempDir();
-  run.refs += 1;
-  project.provide("t3oRunTempDir", run.dir);
-  return () => {
-    run.refs -= 1;
-    if (run.refs === 0) removeRunTempDir(run);
-  };
+  project.provide("t3oRunTempDir", ensureRunTempDir().dir);
 }

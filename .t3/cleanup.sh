@@ -12,7 +12,12 @@
 set -u
 
 uid=$(id -u)
-dirs=${T3O_CLEANUP_DIRS:-"${TMPDIR:-/tmp} /tmp $HOME/tmp"}
+if [ -n "${T3O_CLEANUP_DIRS:-}" ]; then
+  # shellcheck disable=SC2086 # the override is a space-separated list
+  set -- $T3O_CLEANUP_DIRS
+else
+  set -- "${TMPDIR:-/tmp}" /tmp "$HOME/tmp"
+fi
 count=0
 total_kib=0
 seen=" "
@@ -38,7 +43,7 @@ is_dead_run() {
   ! ps -p "$pid" > /dev/null 2>&1
 }
 
-for dir in $dirs; do
+for dir in "$@"; do
   [ -d "$dir" ] || continue
   real=$(cd "$dir" && pwd -P) || continue
   case "$seen" in *" $real "*) continue ;; esac
