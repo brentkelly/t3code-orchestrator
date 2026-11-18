@@ -468,7 +468,7 @@ describe("the cleanup sweep (D3/D4)", () => {
     );
   });
 
-  it.effect("Check again on a Done card with Done cleanup off says it is not reclaimed", () =>
+  it.effect("Check again on a Done card under keep says the setting keeps it", () =>
     withGovernor(
       {
         board: { nextCardNumberByProject: {}, cards: [doneCard()] },
@@ -479,7 +479,7 @@ describe("the cleanup sweep (D3/D4)", () => {
         Effect.gen(function* () {
           yield* h.reactor.drainWorktreeSweep;
           const result = yield* h.reactor.checkWorktree((yield* h.board).cards[0]!.id);
-          assert.deepEqual(result, { outcome: "not-finished" });
+          assert.deepEqual(result, { outcome: "kept-by-setting" });
           assert.deepEqual(yield* h.removedWorktrees, []);
         }),
     ),
@@ -1010,6 +1010,33 @@ describe("worktreeAtDone: remove (T3O-123)", () => {
         }),
     );
   });
+
+  it.effect("a retry whose work an earlier snapshot already saved records no second note", () =>
+    withGovernor(
+      {
+        board: { nextCardNumberByProject: {}, cards: [doneCard()] },
+        settings: settings("remove"),
+        pullRequest: null,
+        worktreeDirty: true,
+        workspaces: withWorktreeOps({
+          snapshotWorktree: () =>
+            Effect.succeed({
+              outcome: "snapshotted",
+              ref: SNAPSHOT_REF,
+              sha: "a".repeat(40),
+              reused: true,
+            } as const),
+          retireWorktree: () => Effect.succeed({ outcome: "removed", hookWarning: null } as const),
+        }),
+      },
+      (h) =>
+        Effect.gen(function* () {
+          yield* h.reactor.drainWorktreeSweep;
+          assert.equal((yield* h.board).cards[0]!.worktree?.status, "reclaimed");
+          assert.deepEqual(cleanupNotes(yield* h.commands), []);
+        }),
+    ),
+  );
 
   it.effect("falls back to the safety rule, saying why, when the changes are over the cap", () =>
     withGovernor(

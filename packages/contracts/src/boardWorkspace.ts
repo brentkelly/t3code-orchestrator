@@ -116,6 +116,8 @@ export const BoardWorkspaceSnapshotResult = Schema.Union([
     outcome: Schema.Literal("snapshotted"),
     ref: TrimmedNonEmptyString,
     sha: TrimmedNonEmptyString,
+    /** The same work was already saved under `ref` by an earlier, failed removal. */
+    reused: Schema.optionalKey(Schema.Boolean),
   }),
   /** Nothing uncommitted: the worktree can go as it is. */
   Schema.Struct({ outcome: Schema.Literal("nothing") }),

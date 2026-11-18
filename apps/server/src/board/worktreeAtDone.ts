@@ -17,10 +17,12 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
-import { SETUP_DONE_MARKER, SETUP_FAILED_MARKER, STRIPPED_MARKER } from "./capacity/cardSetup.ts";
-
-/** In a kept worktree's git dir: a strip that found foreign processes, retried by the sweep. */
-export const STRIP_PENDING_MARKER = "t3o-strip-pending";
+import {
+  SETUP_DONE_MARKER,
+  SETUP_FAILED_MARKER,
+  STRIP_PENDING_MARKER,
+  STRIPPED_MARKER,
+} from "./capacity/cardSetup.ts";
 
 /** Ignored entries a strip leaves: small, and often hand-made (secrets, editor settings). */
 const KEPT_FOLDERS = new Set([".claude", ".vscode", ".idea"]);
@@ -96,11 +98,38 @@ const statusPaths = (stdout: string): ReadonlyArray<{ code: string; path: string
   return paths;
 };
 
+const SNAPSHOT_STAMP = /^\d{8}T\d{6}$/;
+
+/** The card's newest snapshot ref, with its tree and (single) parent; null when it has none. */
+const newestSnapshotRef = Effect.fn("newestSnapshotRef")(function* (
+  git: GitVcsDriver.GitVcsDriver["Service"],
+  cwd: string,
+  cardKey: string,
+) {
+  const listed = yield* run(git, "listSnapshots", cwd, [
+    "for-each-ref",
+    "--format=%(refname)%00%(objectname)%00%(tree)%00%(parent)",
+    BOARD_DISCARDED_REF_PREFIX,
+  ]);
+  if (listed.exitCode !== 0) return null;
+  const prefix = `${BOARD_DISCARDED_REF_PREFIX}${cardKey}-`;
+  let newest: { ref: string; sha: string; tree: string; parent: string } | null = null;
+  for (const line of listed.stdout.split("\n")) {
+    const [ref, sha, tree, parent] = line.split("\0");
+    if (ref === undefined || sha === undefined || tree === undefined || parent === undefined) {
+      continue;
+    }
+    if (!ref.startsWith(prefix) || !SNAPSHOT_STAMP.test(ref.slice(prefix.length))) continue;
+    if (newest === null || ref > newest.ref) newest = { ref, sha, tree, parent };
+  }
+  return newest;
+});
+
 /**
  * Save the worktree's uncommitted and untracked (not ignored) work as a commit on top of HEAD,
  * under `refs/t3o/discarded/<key>-<stamp>`, without touching the worktree or its index. Over
- * `capBytes` of changed files it saves nothing. Fails on any git error: the caller must then
- * not force the removal.
+ * `capBytes` of changed files it saves nothing. Fails on any git error, and on changes in a
+ * nested repository or submodule: the caller must then not force the removal.
  */
 export const snapshotBoardWorktree = Effect.fn("snapshotBoardWorktree")(function* (input: {
   readonly worktreePath: string;
@@ -133,6 +162,24 @@ export const snapshotBoardWorktree = Effect.fn("snapshotBoardWorktree")(function
   if (bytes > input.capBytes) {
     return { outcome: "over-cap", bytes } satisfies BoardWorkspaceSnapshotResult;
   }
+  // `add -A` records a nested repository or submodule as a bare commit pointer, so its own
+  // uncommitted or unpushed work would not be in the snapshot.
+  for (const entry of changed) {
+    const nested = NodePath.join(input.worktreePath, entry.path, ".git");
+    if (
+      yield* Effect.promise(() =>
+        NodeFSP.lstat(nested).then(
+          () => true,
+          () => false,
+        ),
+      )
+    ) {
+      return yield* new BoardWorkerGitError({
+        operation: "snapshotWorktree",
+        detail: `${entry.path.replace(/\/$/, "")} is a nested repository or submodule with changes, which a snapshot can't hold`,
+      });
+    }
+  }
 
   const gitDir = yield* run(git, "gitDir", input.worktreePath, ["rev-parse", "--absolute-git-dir"]);
   if (gitDir.exitCode !== 0) return yield* fail("rev-parse", gitDir);
@@ -142,8 +189,18 @@ export const snapshotBoardWorktree = Effect.fn("snapshotBoardWorktree")(function
   );
   const env = { GIT_INDEX_FILE: index };
   return yield* Effect.gen(function* () {
-    const read = yield* run(git, "readTree", input.worktreePath, ["read-tree", "HEAD"], env);
-    if (read.exitCode !== 0) return yield* fail("read-tree", read);
+    // Seeded from the worktree's own index: its stat data spares rehashing every tracked file,
+    // and its skip-worktree bits keep a sparse checkout's absent files from reading as deleted.
+    const copied = yield* Effect.promise(() =>
+      NodeFSP.copyFile(NodePath.join(gitDir.stdout.trim(), "index"), index).then(
+        () => true,
+        () => false,
+      ),
+    );
+    if (!copied) {
+      const read = yield* run(git, "readTree", input.worktreePath, ["read-tree", "HEAD"], env);
+      if (read.exitCode !== 0) return yield* fail("read-tree", read);
+    }
     const add = yield* run(git, "add", input.worktreePath, ["add", "-A"], env);
     if (add.exitCode !== 0) return yield* fail("add", add);
     const tree = yield* run(git, "writeTree", input.worktreePath, ["write-tree"], env);
@@ -152,6 +209,22 @@ export const snapshotBoardWorktree = Effect.fn("snapshotBoardWorktree")(function
     if (headTree.exitCode !== 0) return yield* fail("rev-parse", headTree);
     if (tree.stdout.trim() === headTree.stdout.trim()) {
       return { outcome: "nothing" } satisfies BoardWorkspaceSnapshotResult;
+    }
+    const head = yield* run(git, "head", input.worktreePath, ["rev-parse", "HEAD"]);
+    if (head.exitCode !== 0) return yield* fail("rev-parse", head);
+    // A removal that failed after an earlier snapshot retries: the same work keeps its one ref.
+    const earlier = yield* newestSnapshotRef(git, input.worktreePath, input.cardKey);
+    if (
+      earlier !== null &&
+      earlier.tree === tree.stdout.trim() &&
+      earlier.parent === head.stdout.trim()
+    ) {
+      return {
+        outcome: "snapshotted",
+        ref: earlier.ref,
+        sha: earlier.sha,
+        reused: true,
+      } satisfies BoardWorkspaceSnapshotResult;
     }
     const ident = yield* run(git, "ident", input.worktreePath, ["var", "GIT_COMMITTER_IDENT"]);
     const identityEnv =

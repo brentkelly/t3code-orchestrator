@@ -9737,9 +9737,10 @@ export const BoardCheckCardWorktreeResult = Schema.Union([
   Schema.Struct({ outcome: Schema.Literal("kept"), reason: Schema.NullOr(Schema.String) }),
   /** Another cleanup of this card was already running, so this one stood down. */
   Schema.Struct({ outcome: Schema.Literal("busy") }),
+  /** Kept by the setting (`worktreeAtDone: keep`); the check strips its ignored files. */
+  Schema.Struct({ outcome: Schema.Literal("kept-by-setting") }),
   Schema.Struct({ outcome: Schema.Literal("no-worktree") }),
-  /** The card is not one the cleanup reclaims: it left Done, or reclaiming
-      at Done is switched off. */
+  /** The card is not one the cleanup reclaims: it is neither archived nor in Done. */
   Schema.Struct({ outcome: Schema.Literal("not-finished") }),
   Schema.Struct({ outcome: Schema.Literal("unknown-card") }),
   Schema.Struct({ outcome: Schema.Literal("failed") }),

@@ -398,6 +398,8 @@ export type BoardForceRemoveWorktreeResult =
 type BoardCardReclaimAttempt =
   | { readonly outcome: "removed" }
   | { readonly outcome: "kept"; readonly reason: string | null }
+  /** `worktreeAtDone` is `keep`: kept by the setting, and stripped. */
+  | { readonly outcome: "kept-by-setting" }
   | { readonly outcome: "busy" }
   | { readonly outcome: "failed" };
 
@@ -7694,8 +7696,9 @@ const make = Effect.gen(function* () {
 
   /**
    * T3o (T3O-123): strip the files git ignores from a finished card's kept worktree. `finish`
-   * (Done, archive, cancel, Check again) strips once; `sweep` only retries one a foreign process
-   * held back, so worktrees kept before this existed are never stripped on upgrade.
+   * (Done, archive, cancel, Check again) strips once; `sweep` strips only a worktree marked as
+   * owed one (by its setup, or a strip a foreign process held back), so worktrees kept before
+   * this existed are never stripped on upgrade.
    */
   const stripKeptWorktree = Effect.fn("board-supervisor-stripKeptWorktree")(function* (
     card: BoardCard,
@@ -7768,7 +7771,7 @@ const make = Effect.gen(function* () {
         fallback: `It was not force-removed: its uncommitted changes (${formatBoardBytes(snapshot.success.bytes)}) are over the ${formatBoardBytes(BOARD_WORKTREE_SNAPSHOT_CAP_BYTES)} snapshot cap`,
       } as const;
     }
-    if (snapshot.success.outcome === "snapshotted") {
+    if (snapshot.success.outcome === "snapshotted" && snapshot.success.reused !== true) {
       const machine = yield* machineOf(workspace);
       const { ref } = snapshot.success;
       yield* recordWorktreeCleanup(
@@ -7828,7 +7831,7 @@ const make = Effect.gen(function* () {
       yield* stripKeptWorktree(card, workspace, worktree.path, trigger).pipe(
         Effect.ensuring(Effect.sync(() => reclaimingCards.delete(key))),
       );
-      return null;
+      return { outcome: "kept-by-setting" } satisfies BoardCardReclaimAttempt;
     }
     reclaimingCards.add(key);
     const stillWanted = cardStillFinished(card, worktree.path);
@@ -8501,8 +8504,7 @@ const make = Effect.gen(function* () {
       ? yield* reclaimCancelledCardWorktree(refreshed.id, "finish")
       : yield* settleCardAtDone(refreshed, { trigger: "finish" });
     if (attempt === null) {
-      // Ready a moment ago: either it went meanwhile, or the card is not one
-      // the cleanup reclaims (left Done, or the setting is off).
+      // Ready a moment ago: either it went meanwhile, or the card left Done.
       const after = yield* readCard(cardId);
       return after?.worktree?.status === "ready"
         ? ({ outcome: "not-finished" } as const)

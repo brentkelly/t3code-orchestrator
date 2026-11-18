@@ -18,7 +18,7 @@ import * as Path from "effect/Path";
 import { ProjectId } from "@t3tools/contracts";
 import { ServerConfig } from "../config.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
-import { SETUP_DONE_MARKER, STRIPPED_MARKER } from "./capacity/cardSetup.ts";
+import { SETUP_DONE_MARKER, STRIP_PENDING_MARKER, STRIPPED_MARKER } from "./capacity/cardSetup.ts";
 import { makeLocalBoardWorkspace } from "./workspace/LocalBoardWorkspace.ts";
 import {
   deleteLeftoverBranch,
@@ -26,7 +26,6 @@ import {
   pruneDiscardedRefs,
   snapshotBoardWorktree,
   snapshotStamp,
-  STRIP_PENDING_MARKER,
   stripBoardWorktree,
 } from "./worktreeAtDone.ts";
 
@@ -154,6 +153,90 @@ describe("snapshotBoardWorktree", () => {
         nowMs: NOW,
       }).pipe(Effect.flip);
       assert.strictEqual(result._tag, "BoardWorkerGitError");
+    }).pipe(Effect.scoped, Effect.provide(GitLayer)),
+  );
+
+  it.effect(
+    "fails, rather than saving a bare pointer, on a nested repository or dirty submodule",
+    () =>
+      Effect.gen(function* () {
+        const { root, repo, worktree } = yield* repoWithWorktree;
+        const snapshot = () =>
+          snapshotBoardWorktree({
+            worktreePath: worktree,
+            cardKey: "T3O-1",
+            capBytes: 1024 * 1024,
+            nowMs: NOW,
+          }).pipe(Effect.flip);
+
+        const nested = NodePath.join(worktree, "vendor", "lib");
+        NodeFS.mkdirSync(nested, { recursive: true });
+        yield* sh(nested, ["init", "--initial-branch=main"]);
+        write(NodePath.join(nested, "work.ts"), "unsaved\n");
+        yield* sh(nested, ["-c", "user.email=t@t", "-c", "user.name=T", "add", "."]);
+        yield* sh(nested, ["-c", "user.email=t@t", "-c", "user.name=T", "commit", "-m", "x"]);
+        const untracked = yield* snapshot();
+        assert.include(untracked.detail, "vendor/lib is a nested repository or submodule");
+        NodeFS.rmSync(NodePath.join(worktree, "vendor"), { recursive: true, force: true });
+
+        // A registered submodule whose only change is uncommitted work inside it.
+        const upstream = NodePath.join(root, "sub-upstream");
+        NodeFS.mkdirSync(upstream);
+        yield* sh(upstream, ["init", "--initial-branch=main"]);
+        write(NodePath.join(upstream, "a.txt"), "a\n");
+        yield* sh(upstream, ["add", "."]);
+        yield* sh(upstream, ["-c", "user.email=t@t", "-c", "user.name=T", "commit", "-m", "a"]);
+        yield* sh(worktree, [
+          "-c",
+          "protocol.file.allow=always",
+          "submodule",
+          "add",
+          upstream,
+          "sub",
+        ]);
+        yield* sh(worktree, ["commit", "-m", "add sub"]);
+        write(NodePath.join(worktree, "sub", "a.txt"), "changed\n");
+        const dirty = yield* snapshot();
+        assert.include(dirty.detail, "sub is a nested repository or submodule");
+        assert.strictEqual(yield* sh(repo, ["for-each-ref", "refs/t3o/"]), "");
+      }).pipe(Effect.scoped, Effect.provide(GitLayer)),
+  );
+
+  it.effect("reuses the card's last snapshot for the same work, and saves changed work anew", () =>
+    Effect.gen(function* () {
+      const { repo, worktree } = yield* repoWithWorktree;
+      write(NodePath.join(worktree, "README.md"), "# changed\n");
+      const snapshot = (nowMs: number) =>
+        snapshotBoardWorktree({
+          worktreePath: worktree,
+          cardKey: "T3O-1",
+          capBytes: 1024 * 1024,
+          nowMs,
+        });
+      const first = yield* snapshot(NOW);
+      assert.strictEqual(first.outcome, "snapshotted");
+      if (first.outcome !== "snapshotted") return;
+      assert.isUndefined(first.reused);
+
+      // A removal that failed after the snapshot retries a minute later.
+      const again = yield* snapshot(NOW + 60_000);
+      assert.deepStrictEqual(again, {
+        outcome: "snapshotted",
+        ref: first.ref,
+        sha: first.sha,
+        reused: true,
+      });
+      assert.strictEqual(
+        yield* sh(repo, ["for-each-ref", "--format=%(refname)", "refs/t3o/"]),
+        first.ref,
+      );
+
+      write(NodePath.join(worktree, "README.md"), "# changed again\n");
+      const changed = yield* snapshot(NOW + 120_000);
+      assert.strictEqual(changed.outcome, "snapshotted");
+      if (changed.outcome !== "snapshotted") return;
+      assert.notStrictEqual(changed.ref, first.ref);
+      assert.isUndefined(changed.reused);
     }).pipe(Effect.scoped, Effect.provide(GitLayer)),
   );
 

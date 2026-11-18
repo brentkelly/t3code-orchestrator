@@ -31,6 +31,12 @@ const SETUP_LOG = "t3o-setup.log";
 export const SETUP_FAILED_MARKER = "t3o-setup-failed";
 /** Written by a strip of a kept worktree (`worktreeAtDone.ts`); a setup run clears it. */
 export const STRIPPED_MARKER = "t3o-stripped";
+/**
+ * A strip the worktree is owed once its card finishes: written by a setup run, so it survives a
+ * restart or an unreachable worker at Done, and by a strip a foreign process held back. The
+ * sweep strips only marked worktrees, never one kept before strips existed.
+ */
+export const STRIP_PENDING_MARKER = "t3o-strip-pending";
 
 /** The project's setup script on this worker, or null when it has none. */
 export interface CardSetupScript {
@@ -160,6 +166,18 @@ export const makeCardSetup = (deps: CardSetupDeps) => {
               NodeFS.rmSync(NodePath.join(paths.dir, STRIPPED_MARKER), { force: true });
             } catch {
               // A stale marker only skips one later strip.
+            }
+          });
+        }
+        if (!NodeFS.existsSync(NodePath.join(paths.dir, STRIPPED_MARKER))) {
+          yield* Effect.sync(() => {
+            try {
+              NodeFS.writeFileSync(
+                NodePath.join(paths.dir, STRIP_PENDING_MARKER),
+                "owed at Done\n",
+              );
+            } catch {
+              // Unmarked, the strip still runs as the card finishes; only its retry is lost.
             }
           });
         }

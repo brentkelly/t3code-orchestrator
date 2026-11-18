@@ -39,11 +39,10 @@ import {
   hasMarker,
   pruneDiscardedRefs,
   snapshotBoardWorktree,
-  STRIP_PENDING_MARKER,
   stripBoardWorktree,
   writeStripPendingMarker,
 } from "../worktreeAtDone.ts";
-import { STRIPPED_MARKER } from "../capacity/cardSetup.ts";
+import { STRIP_PENDING_MARKER, STRIPPED_MARKER } from "../capacity/cardSetup.ts";
 import { WorktreeRetirer } from "../worktreeRetire.ts";
 import type { BoardWorkspace } from "./BoardWorkspace.ts";
 

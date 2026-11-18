@@ -47,7 +47,8 @@ git checkout -b recovered-work refs/t3o/discarded/T3O-42-20261118T101500
 Moving the card back out of Done does not restore it for you.
 
 The worktree is not force-removed, and is kept as under the second option instead, when its
-changes can't be saved: more than 200 MB of changed and untracked files, git failing, or a worker
+changes can't be saved: more than 200 MB of changed and untracked files, changes inside a nested
+repository or submodule (a snapshot would hold only its commit pointer), git failing, or a worker
 running an older T3o. The card's **Worktree kept** reason says which.
 
 ## Kept worktrees are slimmed down
@@ -60,8 +61,9 @@ the worktree at its new size when it decides where cards can run.
 This happens once, when the card reaches Done, is archived or has its work cancelled, and when you
 use **Check again**. The board first stops the card's own terminals and agent sessions. If anything
 else is still running in the worktree, such as a dev server you started, it leaves the files alone,
-says so, and tries again on later checks until it can. Worktrees kept before this existed are not
-touched until one of those events happens to them. Setup runs again if the card later reuses the
+says so, and tries again on later checks until it can. Later checks also catch a slim-down that
+couldn't run at the time, for example because the worker was offline. Worktrees kept before this
+existed are not touched until one of those events happens to them. Setup runs again if the card later reuses the
 worktree.
 
 ## What it will not remove
