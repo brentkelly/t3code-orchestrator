@@ -306,12 +306,12 @@ export function boardWorkerReadyForProject(input: {
   readonly repositoryKey: string | null;
   readonly projectId: string;
   /** T3o (T3O-124): the project's readiness runs something, so an old worker can't be asked. */
-  readonly readinessConfigured?: boolean;
+  readonly readinessConfigured: boolean;
 }): boolean {
   if (input.workerId === BOARD_LOCAL_WORKER_ID && !localIsBuildCandidate(input.snapshot.declared))
     return false;
   if (input.gate !== "ready") return false;
-  if (input.readinessConfigured === true && !boardWorkerSpeaksReadiness(input.snapshot)) {
+  if (input.readinessConfigured && !boardWorkerSpeaksReadiness(input.snapshot)) {
     return false;
   }
   const readiness = input.snapshot.readiness.find((entry) =>
@@ -333,7 +333,7 @@ export function placementFacts(input: {
   readonly repositoryKey: string | null;
   readonly projectId: string;
   /** T3o (T3O-124): see `boardWorkerReadyForProject`. */
-  readonly readinessConfigured?: boolean;
+  readonly readinessConfigured: boolean;
   readonly providerInstanceId: string | null;
   readonly granted: BoardResourceProfile | null;
   readonly closed: boolean;
@@ -344,9 +344,7 @@ export function placementFacts(input: {
       boardReadinessIsFor(entry, input.repositoryKey, input.projectId),
     ) ?? null;
   const tooOld =
-    input.readinessConfigured === true &&
-    snapshot !== null &&
-    !boardWorkerSpeaksReadiness(snapshot);
+    input.readinessConfigured && snapshot !== null && !boardWorkerSpeaksReadiness(snapshot);
   const readiness: PlacementWorkerFacts["readiness"] = tooOld
     ? "failed"
     : readinessEntry === null || readinessEntry.state === "ready"

@@ -522,6 +522,18 @@ function firstVersion(text: string): ReadonlyArray<number> | null {
   return match === null ? null : match[0].split(".").map(Number);
 }
 
+/** The newest SDK `dotnet --list-sdks` names: it lists one per line, oldest first. */
+function newestListedVersion(text: string): ReadonlyArray<number> | null {
+  let newest: ReadonlyArray<number> | null = null;
+  for (const line of text.slice(0, 4096).split("\n")) {
+    const version = firstVersion(line);
+    if (version !== null && (newest === null || compareVersions(version, newest) > 0)) {
+      newest = version;
+    }
+  }
+  return newest;
+}
+
 const compareVersions = (a: ReadonlyArray<number>, b: ReadonlyArray<number>) => {
   for (let index = 0; index < Math.max(a.length, b.length); index++) {
     const diff = (a[index] ?? 0) - (b[index] ?? 0);
@@ -602,7 +614,7 @@ export function rustChannel(text: string): string | null {
   return BOARD_READINESS_NAME.test(channel) ? channel : null;
 }
 
-/** On every git call a check makes: no hook runs, and only https and ssh transports are used. */
+/** On every git call a check makes: no hook runs, and only https, ssh and local-path transports are used. */
 export const READINESS_GIT_GUARD = [
   "-c",
   "core.hooksPath=/dev/null",
@@ -612,6 +624,8 @@ export const READINESS_GIT_GUARD = [
   "protocol.https.allow=always",
   "-c",
   "protocol.ssh.allow=always",
+  "-c",
+  "protocol.file.allow=always",
 ] as const;
 
 /** The git argv each probe runs. */
@@ -769,7 +783,13 @@ export const runReadinessChecks = Effect.fn("Readiness.runChecks")(function* (in
     let last = "";
     for (const tool of native) {
       const ran = yield* run(tool, name, args, VERSION_TIMEOUT_MS);
-      const have = ran.exitCode === 0 ? firstVersion(`${ran.stdout}\n${ran.stderr}`) : null;
+      const output = `${ran.stdout}\n${ran.stderr}`;
+      const have =
+        ran.exitCode !== 0
+          ? null
+          : args.includes("--list-sdks")
+            ? newestListedVersion(ran.stdout)
+            : firstVersion(output);
       if (have === null) {
         last = `${name} ${args.join(" ")}: ${ran.exitCode === 0 ? "no version printed" : lastLine(ran)}`;
         continue;
@@ -828,7 +848,8 @@ export const runReadinessChecks = Effect.fn("Readiness.runChecks")(function* (in
         const wanted = check.cargoConfig!.contains;
         const found = read.text
           .split("\n")
-          .filter((line) => !/token|password|secret|credential|auth/i.test(line.split("=")[0]!))
+          // The whole line: an inline table puts a credential key after the first `=`.
+          .filter((line) => !/token|password|secret|credential|auth/i.test(line))
           .some((line) => line.includes(wanted));
         return found ? pass(`${path} contains it`) : fail(`${path} doesn't contain it`);
       }

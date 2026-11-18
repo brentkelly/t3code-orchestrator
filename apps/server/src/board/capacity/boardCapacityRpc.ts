@@ -108,6 +108,11 @@ export const boardCapacityStream: Stream.Stream<
 
 const notFound = (message: string) => new BoardWorkerActionError({ code: "not-found", message });
 
+/** A worker that would drop `runScript`, or hasn't said which protocol it speaks, is never asked. */
+export const boardReadinessRecheckAllowed = (
+  snapshot: { readonly readinessProtocol?: number } | null,
+) => snapshot !== null && boardWorkerSpeaksReadiness(snapshot);
+
 /** Readiness for one project on one worker, asked again now. */
 const recheck = Effect.fn("BoardCapacityRpc.recheck")(function* (
   workerId: BoardWorkerId,
@@ -128,9 +133,7 @@ const recheck = Effect.fn("BoardCapacityRpc.recheck")(function* (
     boardProjectStageConfig(board, projectId)?.resources ?? null,
     boardProjectTrustsReadinessScript(boardSettings, projectId),
   );
-  // T3o (T3O-124): a worker that would drop `runScript` is never asked.
-  const snapshot = yield* client.latest(workerId);
-  if (snapshot !== null && !boardWorkerSpeaksReadiness(snapshot)) return null;
+  if (!boardReadinessRecheckAllowed(yield* client.latest(workerId))) return null;
   const workspace = yield* workspaces.forWorker(workerId, projectId);
   if (workspace.checkoutPath === null) return null;
   const result = yield* client.checkReadiness(workerId, {

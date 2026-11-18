@@ -289,6 +289,7 @@ describe("placement ranking (T3O-87)", () => {
         snapshot: snap,
         repositoryKey: "repo",
         projectId: "p",
+        readinessConfigured: false,
       });
     expect(ready(W1, "ready", snapshot(big))).toBe(true);
     expect(ready(W1, "ready", snapshot(big, "ready"))).toBe(true);

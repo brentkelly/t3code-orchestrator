@@ -177,19 +177,26 @@ it.effect(
       Effect.gen(function* () {
         const old = bin("old", "node");
         const current = bin("bin", "node");
+        bin("bin", "dotnet");
         const results = yield* run(
           host({
             env: { PATH: `${root}/old:${root}/bin`, NODE_OPTIONS: "--require /evil.js" },
-            answer: (call) => ok(call.path === old ? "v18.20.1\n" : "v24.3.0\n"),
+            answer: (call) =>
+              call.argv0 === "dotnet"
+                ? // Side-by-side SDKs, oldest first.
+                  ok("6.0.428 [/usr/share/dotnet/sdk]\n8.0.404 [/usr/share/dotnet/sdk]\n")
+                : ok(call.path === old ? "v18.20.1\n" : "v24.3.0\n"),
           }),
           [
             { command: "node", version: { atLeast: "22" } },
             { command: "node", version: { from: "package.json" } },
             { command: "node", version: { from: ".nvmrc" } },
             { command: "node", version: { from: ".node-version" } },
+            { command: "dotnet", version: { from: "global.json" } },
           ],
           {
             files: {
+              "global.json": '{"sdk":{"version":"8.0.100"}}',
               "package.json": '{"engines":{"node":">=26"}}',
               ".nvmrc": "lts/*\n",
               // The minor counts: 24.3 is older than 24.10.
@@ -197,8 +204,9 @@ it.effect(
             },
           },
         );
-        assert.deepStrictEqual(statuses(results), ["pass", "fail", "warn", "fail"]);
+        assert.deepStrictEqual(statuses(results), ["pass", "fail", "warn", "fail", "pass"]);
         assert.include(results[3]!.detail, "needs 24.10");
+        assert.include(results[4]!.detail, "8.0.404");
         assert.include(results[0]!.detail, current);
         assert.include(results[1]!.detail, "needs 26");
         assert.include(results[2]!.detail, "alias");
@@ -294,7 +302,8 @@ it.effect("exists, writable, env and cargoConfig", () =>
       NodeFS.mkdirSync(NodePath.join(home, ".cargo"));
       NodeFS.writeFileSync(
         NodePath.join(home, ".cargo/config.toml"),
-        "[build]\nrustc-wrapper = 'rustc-slot'\n[registry]\ntoken = 'rustc-slot-secret'\n",
+        "[build]\nrustc-wrapper = 'rustc-slot'\n[registry]\ntoken = 'rustc-slot-secret'\n" +
+          "[registries]\nmine = { index = 'sparse+https://x', token = 'inline-hush' }\n",
       );
       NodeFS.mkdirSync(NodePath.join(home, ".cache/ms-playwright/chromium-1200"), {
         recursive: true,
@@ -308,6 +317,7 @@ it.effect("exists, writable, env and cargoConfig", () =>
       const results = yield* run(host({ env: { PATH: "", ANDROID_HOME: "/opt/android" } }), [
         { cargoConfig: { contains: "rustc-slot" } },
         { cargoConfig: { contains: "secret" } },
+        { cargoConfig: { contains: "inline-hush" } },
         { exists: "$PLAYWRIGHT_BROWSERS_PATH/chromium-*" },
         { exists: "$HOME/.cache/ms-playwright/firefox-*", warn: true },
         { exists: "~/refresh.log", maxAgeHours: 3 },
@@ -321,6 +331,7 @@ it.effect("exists, writable, env and cargoConfig", () =>
       assert.deepStrictEqual(statuses(results), [
         "pass",
         "fail",
+        "fail",
         "pass",
         "warn",
         "fail",
@@ -331,10 +342,10 @@ it.effect("exists, writable, env and cargoConfig", () =>
         "pass",
         "fail",
       ]);
-      // A key naming a token is never matched, and an env value is never shown.
-      assert.include(results[4]!.detail, "hours old");
-      assert.include(results[5]!.detail, "$JAVA_HOME is not set");
-      assert.notInclude(results[9]!.detail, "/opt/android");
+      // A line naming a token, even inside an inline table, is never matched; an env value is never shown.
+      assert.include(results[5]!.detail, "hours old");
+      assert.include(results[6]!.detail, "$JAVA_HOME is not set");
+      assert.notInclude(results[10]!.detail, "/opt/android");
       // writable creates nothing.
       assert.strictEqual(
         NodeFS.readdirSync(NodePath.join(home, ".."), { recursive: true }).length,
@@ -630,5 +641,26 @@ it.live("a probe runs from /, with only the given environment, stdin ignored and
       opts: null,
       stdin: "",
     });
+  }),
+);
+
+it.live("the git guard still fetches a local-path remote", () =>
+  Effect.sync(() => {
+    const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3o-guard-"));
+    try {
+      const git = (cwd: string, args: ReadonlyArray<string>) =>
+        NodeChildProcess.spawnSync("git", ["-C", cwd, ...args], { encoding: "utf8" });
+      git(root, ["init", "--quiet", "--bare", "origin.git"]);
+      git(root, ["clone", "--quiet", NodePath.join(root, "origin.git"), "clone"]);
+      const fetched = git(NodePath.join(root, "clone"), [
+        ...READINESS_GIT_GUARD,
+        "fetch",
+        "--quiet",
+        "origin",
+      ]);
+      assert.strictEqual(fetched.status, 0, fetched.stderr);
+    } finally {
+      NodeFS.rmSync(root, { recursive: true, force: true });
+    }
   }),
 );

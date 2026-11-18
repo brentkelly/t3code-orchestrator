@@ -1,8 +1,19 @@
 import { assert, it } from "@effect/vitest";
 
-import type { BoardWorkerId } from "@t3tools/contracts";
+import { BOARD_READINESS_PROTOCOL, type BoardWorkerId } from "@t3tools/contracts";
 
-import { boardCardsHeldOnWorker, boardPinReadinessRefusal } from "./boardCapacityRpc.ts";
+import {
+  boardCardsHeldOnWorker,
+  boardPinReadinessRefusal,
+  boardReadinessRecheckAllowed,
+} from "./boardCapacityRpc.ts";
+
+it("Re-check asks only a worker known to speak the readiness protocol", () => {
+  assert.isTrue(boardReadinessRecheckAllowed({ readinessProtocol: BOARD_READINESS_PROTOCOL }));
+  assert.isFalse(boardReadinessRecheckAllowed({}));
+  // No snapshot yet: its protocol is unknown, so an old worker could run an untrusted script.
+  assert.isFalse(boardReadinessRecheckAllowed(null));
+});
 
 it("a worker that isn't ready for a project can't be chosen as that project's pin", () => {
   const snapshot = (state: string) => ({
