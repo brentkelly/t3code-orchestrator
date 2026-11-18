@@ -27,6 +27,7 @@ import { BoardCiTail, runBoardCiStep } from "../ci/BoardCiRunner.ts";
 import { readLogTail } from "./logTail.ts";
 import {
   formatReadinessChecks,
+  readinessGithubToken,
   runReadinessChecks,
   type ReadinessCheckHost,
   type ReadinessCheckResult,
@@ -223,6 +224,7 @@ export const makeReadiness = (deps: {
                 checkout,
                 remote: deps.git.remote(checkout),
                 file: (file) => deps.git.blob(checkout, file),
+                githubToken: (repository) => readinessGithubToken(checkout, repository),
               },
             });
       if (scriptBlob === null) return { checkResults, script: null };

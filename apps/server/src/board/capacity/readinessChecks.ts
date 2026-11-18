@@ -17,6 +17,7 @@ import {
   stripBoardReadinessText,
   type BoardReadinessCheck,
 } from "@t3tools/contracts";
+import { gitenvToken, gitenvTokenForRepo } from "@t3tools/shared/gitenv";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 
@@ -74,6 +75,11 @@ export interface ReadinessRepo {
   readonly remote: Effect.Effect<string | null>;
   /** A blob on the default branch, at most 64 KB, read without filters; null when absent. */
   readonly file: (path: string) => Effect.Effect<string | null>;
+  /**
+   * The project's GitHub token from gitenv for `owner/repo`, or for the checkout's own repo when
+   * null; null when gitenv has none. The T3o `gh` shim is a script, so checks pass it themselves.
+   */
+  readonly githubToken: (repository: string | null) => string | null;
 }
 
 export type ReadinessCheckStatus = "pass" | "fail" | "warn" | "skipped";
@@ -118,7 +124,7 @@ const GH_ENV = ["GH_TOKEN", "GITHUB_TOKEN", "GH_HOST"];
  */
 export function readinessEnv(
   env: Readonly<Record<string, string | undefined>>,
-  options: { readonly gh: boolean } = { gh: false },
+  options: { readonly gh: boolean; readonly token?: string | null } = { gh: false },
 ): Record<string, string> {
   const out: Record<string, string> = {};
   const names = Object.keys(env).filter(
@@ -131,6 +137,10 @@ export function readinessEnv(
   for (const name of names) {
     const value = env[name];
     if (value !== undefined) out[name] = value;
+  }
+  if (options.gh && options.token != null) {
+    out.GH_TOKEN = options.token;
+    out.GITHUB_TOKEN = options.token;
   }
   out.PATH = searchPath(env).join(NodePath.delimiter);
   out.COREPACK_ENABLE_NETWORK = "0";
@@ -291,9 +301,12 @@ export async function expandReadinessGlob(
         continue;
       }
       const regex = globRegex(segment);
+      // A matched folder may be a symlink out of bounds: confine it before listing it.
+      const inside = await confineMachinePath(dir, host);
+      if ("error" in inside) continue;
       let handle: NodeFS.Dir | null = null;
       try {
-        handle = await NodeFSP.opendir(dir);
+        handle = await NodeFSP.opendir(inside.real);
         for await (const entry of handle) {
           entries += 1;
           if (entries > GLOB_MAX_ENTRIES || performance.now() - started > GLOB_MAX_MS) {
@@ -540,14 +553,14 @@ function ownText(value: unknown, keys: ReadonlyArray<string>): string | null {
 }
 
 /**
- * The major version a repository file asks for, parsed by t3o: the first `\d{1,4}` of the field
- * the format names. A malformed file or an alias (`lts/*`) is a warning, never a guess.
+ * The version a repository file asks for, parsed by t3o: the first `\d{1,4}(.\d{1,4})?` of the
+ * field the format names, so `go 1.22` and `>=3.11` keep their minor. A malformed file or an alias (`lts/*`) is a warning, never a guess.
  */
-export function requiredMajor(
+export function requiredVersion(
   fileName: string,
   text: string,
   command: string,
-): { readonly major: number } | { readonly warning: string } {
+): { readonly version: ReadonlyArray<number> } | { readonly warning: string } {
   const base = NodePath.posix.basename(fileName);
   let field: string | null;
   const json = (keys: ReadonlyArray<string>) => ownText(parseJson(text), keys);
@@ -575,11 +588,11 @@ export function requiredMajor(
       field = text.split("\n", 1)[0]?.trim().slice(0, FIELD_CHARS) ?? null;
   }
   if (field === null || field === "") return { warning: `${fileName} names no ${command} version` };
-  const match = /\d{1,4}/.exec(field);
+  const match = /\d{1,4}(?:\.\d{1,4})?/.exec(field);
   if (match === null) {
     return { warning: `${fileName} names ${clip(field)}, an alias t3o doesn't compare` };
   }
-  return { major: Number(match[0]) };
+  return { version: match[0].split(".").map(Number) };
 }
 
 /** `channel` from a `rust-toolchain.toml`, or the whole of a legacy `rust-toolchain` file. */
@@ -618,6 +631,14 @@ function gitProbeArgs(
     case "remote-url":
       return [...base, "remote", "get-url", remote];
   }
+}
+
+/** `ReadinessRepo.githubToken` for a checkout on this worker, from the gitenv file. */
+export function readinessGithubToken(checkout: string, repository: string | null): string | null {
+  if (repository === null) return gitenvToken(checkout)?.token ?? null;
+  const [owner, repo] = repository.split("/");
+  if (owner === undefined || repo === undefined) return null;
+  return gitenvTokenForRepo({ owner, repo, cwd: checkout })?.token ?? null;
 }
 
 const REMOTE_NAME = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/;
@@ -686,7 +707,7 @@ export const runReadinessChecks = Effect.fn("Readiness.runChecks")(function* (in
     argv0: string,
     args: ReadonlyArray<string>,
     timeoutMs: number,
-    options: { readonly gh: boolean } = { gh: false },
+    options: { readonly gh: boolean; readonly token?: string | null } = { gh: false },
   ) {
     const remaining = deadline - (yield* Clock.currentTimeMillis);
     if (remaining <= 0) {
@@ -733,10 +754,10 @@ export const runReadinessChecks = Effect.fn("Readiness.runChecks")(function* (in
       const from = check.version.from!;
       const text = yield* repo.file(from);
       if (text === null) return fail(`${from} is not on the default branch`);
-      const required = requiredMajor(from, text, name);
+      const required = requiredVersion(from, text, name);
       if ("warning" in required) return warning(required.warning);
-      want = [required.major];
-      wantText = `${required.major} (from ${from})`;
+      want = required.version;
+      wantText = `${required.version.join(".")} (from ${from})`;
     }
     const native: Vetted[] = [];
     for (const tool of vetted) {
@@ -754,11 +775,7 @@ export const runReadinessChecks = Effect.fn("Readiness.runChecks")(function* (in
         continue;
       }
       const haveText = have.join(".");
-      const ok =
-        check.version.atLeast !== undefined
-          ? compareVersions(have, want) >= 0
-          : (have[0] ?? 0) >= want[0]!;
-      if (ok) return pass(`${haveText} at ${tool.path}`);
+      if (compareVersions(have, want) >= 0) return pass(`${haveText} at ${tool.path}`);
       last = `${haveText} at ${tool.path}; needs ${wantText} or later`;
     }
     return fail(last);
@@ -863,9 +880,7 @@ export const runReadinessChecks = Effect.fn("Readiness.runChecks")(function* (in
           "gh",
           ["auth", "status", "--hostname", host_],
           LOCAL_TIMEOUT_MS,
-          {
-            gh: true,
-          },
+          { gh: true, token: host_ === "github.com" ? repo.githubToken(null) : null },
         );
         return ran.exitCode === 0
           ? pass(`signed in to ${host_}`)
@@ -1013,7 +1028,7 @@ export const runReadinessChecks = Effect.fn("Readiness.runChecks")(function* (in
       "gh",
       ["api", `repos/${repository}`, "--jq", ".permissions.push"],
       NETWORK_TIMEOUT_MS,
-      { gh: true },
+      { gh: true, token: repo.githubToken(repository) },
     );
     if (ran.exitCode !== 0) return fail(`gh api repos/${repository}: ${lastLine(ran)}`);
     return ran.stdout.trim() === "true"

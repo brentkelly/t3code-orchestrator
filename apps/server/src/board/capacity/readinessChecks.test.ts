@@ -20,7 +20,7 @@ import {
   githubRepository,
   readMachineFile,
   readinessEnv,
-  requiredMajor,
+  requiredVersion,
   runReadinessChecks,
   rustChannel,
   type ReadinessCheckHost,
@@ -97,6 +97,7 @@ const run = (
     readonly files?: Record<string, string>;
     readonly remote?: string | null;
     readonly budgetMs?: number;
+    readonly githubToken?: (repository: string | null) => string | null;
   } = {},
 ) =>
   runReadinessChecks({
@@ -107,6 +108,7 @@ const run = (
       checkout: "/checkout",
       remote: Effect.succeed(options.remote === undefined ? "upstream" : options.remote),
       file: (path) => Effect.succeed(options.files?.[path] ?? null),
+      githubToken: options.githubToken ?? (() => null),
     },
   });
 
@@ -184,10 +186,19 @@ it.effect(
             { command: "node", version: { atLeast: "22" } },
             { command: "node", version: { from: "package.json" } },
             { command: "node", version: { from: ".nvmrc" } },
+            { command: "node", version: { from: ".node-version" } },
           ],
-          { files: { "package.json": '{"engines":{"node":">=26"}}', ".nvmrc": "lts/*\n" } },
+          {
+            files: {
+              "package.json": '{"engines":{"node":">=26"}}',
+              ".nvmrc": "lts/*\n",
+              // The minor counts: 24.3 is older than 24.10.
+              ".node-version": "24.10.0\n",
+            },
+          },
         );
-        assert.deepStrictEqual(statuses(results), ["pass", "fail", "warn"]);
+        assert.deepStrictEqual(statuses(results), ["pass", "fail", "warn", "fail"]);
+        assert.include(results[3]!.detail, "needs 24.10");
         assert.include(results[0]!.detail, current);
         assert.include(results[1]!.detail, "needs 26");
         assert.include(results[2]!.detail, "alias");
@@ -255,7 +266,7 @@ it.effect("machine reads refuse devices, FIFOs, oversized files and never-roots"
 );
 
 it.effect("globs: at most two wildcard folders, none directly under home", () =>
-  withFixture(({ home, host }) =>
+  withFixture(({ root, home, host }) =>
     Effect.gen(function* () {
       const h = host();
       NodeFS.mkdirSync(NodePath.join(home, ".cache/ms-playwright/chromium-1200"), {
@@ -268,6 +279,11 @@ it.effect("globs: at most two wildcard folders, none directly under home", () =>
       assert.property(yield* glob(`${home}/*/x`), "error");
       assert.property(yield* glob(`${home}/a/*/*/*`), "error");
       assert.property(yield* glob("/*/bin"), "error");
+      // A first-wildcard match that links out of bounds is never listed.
+      NodeFS.mkdirSync(NodePath.join(root, "outside/secret"), { recursive: true });
+      NodeFS.mkdirSync(NodePath.join(home, "a/b"), { recursive: true });
+      NodeFS.symlinkSync(NodePath.join(root, "outside"), NodePath.join(home, "a/b/link"));
+      assert.deepStrictEqual(yield* glob(`${home}/a/b/*/*`), { matches: [] });
     }),
   ),
 );
@@ -422,6 +438,50 @@ it.effect("git probes carry the hook and protocol guards and use the primary rem
   ),
 );
 
+it.effect("gh probes skip the T3o gh shim and carry the project's gitenv token", () =>
+  withFixture(({ root, bin, calls, host }) =>
+    Effect.gen(function* () {
+      // ~/.local/bin/gh is the T3o shim, a script; the real gh is further down PATH.
+      bin("shim", "gh", { script: true });
+      const realGh = bin("bin", "gh");
+      bin("bin", "git");
+      const asked: Array<string | null> = [];
+      const h = host({
+        env: { PATH: `${root}/shim:${root}/bin`, GH_TOKEN: "ambient" },
+        answer: (call) =>
+          call.args.includes("get-url")
+            ? ok("https://github.com/acme/app.git\n")
+            : call.env.GH_TOKEN === "project"
+              ? ok("true\n")
+              : { exitCode: 1, stdout: "", stderr: "not logged in", timedOut: false },
+      });
+      const results = yield* run(
+        h,
+        [{ gh: "github.com" }, { git: "push" }, { gh: "ghe.acme.io" }],
+        {
+          githubToken: (repository) => {
+            asked.push(repository);
+            return "project";
+          },
+        },
+      );
+      assert.deepStrictEqual(statuses(results), ["pass", "pass", "fail"]);
+      assert.deepStrictEqual(asked, [null, "acme/app"]);
+      const ghCalls = calls.filter((call) => call.argv0 === "gh");
+      assert.isTrue(ghCalls.every((call) => call.path === realGh));
+      assert.deepStrictEqual(
+        ghCalls.map((call) => [call.env.GH_TOKEN, call.env.GITHUB_TOKEN]),
+        [
+          ["project", "project"],
+          ["project", "project"],
+          // A gitenv token is for github.com only; another host keeps the ambient one.
+          ["ambient", undefined],
+        ],
+      );
+    }),
+  ),
+);
+
 it.effect("limits: 50 checks run, a spent budget runs nothing, os and Windows skip", () =>
   withFixture(({ bin, calls, host }) =>
     Effect.gen(function* () {
@@ -484,30 +544,36 @@ it("the environment passes only allowlisted names", () => {
 
 it("parses version files with caps, own keys and no guesses", () => {
   assert.deepStrictEqual(
-    requiredMajor("package.json", '{"engines":{"node":"^22.1 || ^24"}}', "node"),
-    {
-      major: 22,
-    },
+    requiredVersion("package.json", '{"engines":{"node":"^22.1 || ^24"}}', "node"),
+    { version: [22, 1] },
   );
-  assert.property(requiredMajor("package.json", '{"engines":{}}', "constructor"), "warning");
-  assert.property(requiredMajor("package.json", "{not json", "node"), "warning");
-  assert.property(requiredMajor("package.json", "[".repeat(100_000), "node"), "warning");
-  assert.deepStrictEqual(requiredMajor("sub/.nvmrc", "v20.11.0\n", "node"), { major: 20 });
-  assert.deepStrictEqual(
-    requiredMajor("pyproject.toml", 'requires-python = ">=3.11"\n', "python3"),
-    {
-      major: 3,
-    },
-  );
-  assert.deepStrictEqual(requiredMajor("go.mod", "module x\n\ngo 1.22.1\n", "go"), { major: 1 });
-  assert.deepStrictEqual(requiredMajor("global.json", '{"sdk":{"version":"8.0.100"}}', "dotnet"), {
-    major: 8,
+  assert.property(requiredVersion("package.json", '{"engines":{}}', "constructor"), "warning");
+  assert.property(requiredVersion("package.json", "{not json", "node"), "warning");
+  assert.property(requiredVersion("package.json", "[".repeat(100_000), "node"), "warning");
+  assert.deepStrictEqual(requiredVersion("sub/.nvmrc", "v20.11.0\n", "node"), {
+    version: [20, 11],
   });
-  assert.deepStrictEqual(requiredMajor("composer.json", '{"require":{"php":"^8.2"}}', "php"), {
-    major: 8,
+  assert.deepStrictEqual(requiredVersion(".nvmrc", "22\n", "node"), { version: [22] });
+  assert.deepStrictEqual(
+    requiredVersion("pyproject.toml", 'requires-python = ">=3.11"\n', "python3"),
+    {
+      version: [3, 11],
+    },
+  );
+  assert.deepStrictEqual(requiredVersion("go.mod", "module x\n\ngo 1.22.1\n", "go"), {
+    version: [1, 22],
+  });
+  assert.deepStrictEqual(
+    requiredVersion("global.json", '{"sdk":{"version":"8.0.100"}}', "dotnet"),
+    {
+      version: [8, 0],
+    },
+  );
+  assert.deepStrictEqual(requiredVersion("composer.json", '{"require":{"php":"^8.2"}}', "php"), {
+    version: [8, 2],
   });
   // Past the 256-character field cap, a number is not found.
-  assert.property(requiredMajor(".node-version", `${"v".repeat(300)}20`, "node"), "warning");
+  assert.property(requiredVersion(".node-version", `${"v".repeat(300)}20`, "node"), "warning");
   assert.strictEqual(rustChannel('[toolchain]\nchannel = "1.82.0"\n'), "1.82.0");
   assert.strictEqual(rustChannel("stable\n"), "stable");
   assert.isNull(rustChannel('[toolchain]\nchannel = "--help"\n'));
@@ -515,6 +581,32 @@ it("parses version files with caps, own keys and no guesses", () => {
   assert.isNull(githubRepository("https://github.com/-acme/app"));
   assert.isNull(githubRepository("https://gitlab.com/acme/app"));
 });
+
+it.live("a probe ends when its program does, even if a daemon it left holds the pipes", () =>
+  Effect.gen(function* () {
+    // The child starts a process in its own session holding stdout, prints its pid and exits.
+    const daemon =
+      "const c=require('child_process').spawn(process.execPath,['-e','setTimeout(()=>{},300000)'],{detached:true,stdio:['ignore','inherit','inherit']});process.stdout.write(String(c.pid));c.unref()";
+    const probe = (script: string, timeoutMs: number) =>
+      spawnReadinessProbe(
+        {
+          path: process.execPath,
+          argv0: "node",
+          args: ["-e", script],
+          env: readinessEnv({ PATH: "/usr/bin:/bin" }),
+          timeoutMs,
+        },
+        "linux",
+      );
+    const exited = yield* probe(daemon, 600_000);
+    process.kill(Number(exited.stdout));
+    assert.deepInclude(exited, { exitCode: 0, timedOut: false });
+    // Past the timeout the probe ends even though the leader is gone from its group.
+    const stuck = yield* probe(`${daemon};setTimeout(()=>{},300000)`, 500);
+    process.kill(Number(stuck.stdout));
+    assert.deepInclude(stuck, { exitCode: null, timedOut: true });
+  }),
+);
 
 it.live("a probe runs from /, with only the given environment, stdin ignored and argv0 set", () =>
   Effect.gen(function* () {

@@ -304,7 +304,7 @@ only on matching workers; elsewhere it shows as skipped.
 - `version` works only for `node npm pnpm yarn bun deno cmake make gcc clang git docker gh python3
   go java ruby php dotnet rustc cargo xcodebuild`, and only when the binary is a native program:
   T3o runs it with that tool's own version flag and compares the first version number to
-  `atLeast`, or to the major version a repository file on the default branch names (`.node-version`,
+  `atLeast`, or to the major and minor version a repository file on the default branch names (`.node-version`,
   `.nvmrc`, `package.json`'s `engines.<command>`, `.python-version`, `pyproject.toml`, `go.mod`,
   `.ruby-version`, `.java-version`, `composer.json`, `global.json`). A tool that is a script (npm, a
   corepack pnpm) gets a warning that its version wasn't checked. Aliases like `lts/*` warn too.
@@ -324,7 +324,8 @@ only on matching workers; elsewhere it shows as skipped.
 - `git`: `identity` (your global user.name and user.email), `fetch` (the remote answers without a
   prompt), or `push` (GitHub says you can push, asked through `gh`; other hosts give a warning).
   **These contact the remote every hour, with your credentials.** No repository hook runs.
-- `gh`: the GitHub CLI is signed in to that host.
+- `gh`: the GitHub CLI is signed in to that host. For github.com, a token your `gitenv` file gives
+  the project counts, as it does for card work.
 
 At most 50 checks run per project; they share `timeoutSeconds` (at most 600) with the script, and
 every one runs even after one fails. Each check runs from `/`, with no input and only a short list

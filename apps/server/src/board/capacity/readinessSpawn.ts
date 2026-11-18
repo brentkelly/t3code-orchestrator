@@ -12,6 +12,8 @@ import * as Effect from "effect/Effect";
 import type { ReadinessRun } from "./readinessChecks.ts";
 
 const MAX_OUTPUT_BYTES = 64 * 1024;
+/** How long to wait for output after the program exits; a daemon it left may hold the pipes. */
+const EXIT_GRACE_MS = 1000;
 
 export interface ReadinessSpawnInput {
   /** An absolute path t3o resolved and vetted; never looked up on PATH again. */
@@ -50,11 +52,13 @@ export const spawnReadinessProbe = (
     let kept = 0;
     let timedOut = false;
     let done = false;
+    let grace: ReturnType<typeof setTimeout> | undefined;
+    // The group outlives its leader, so it is killed even after the program itself exited.
     const killGroup = () => {
-      if (child.pid === undefined || child.exitCode !== null || child.signalCode !== null) return;
+      if (child.pid === undefined) return;
       try {
-        if (platform === "win32") child.kill("SIGKILL");
-        else process.kill(-child.pid, "SIGKILL");
+        if (platform !== "win32") process.kill(-child.pid, "SIGKILL");
+        else if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
       } catch {
         // Already gone.
       }
@@ -73,6 +77,8 @@ export const spawnReadinessProbe = (
       () => {
         timedOut = true;
         killGroup();
+        // A process outside the group can still hold the pipes; stop waiting for it.
+        finish(null);
       },
       Math.max(1, Math.min(input.timeoutMs, 600_000)),
     );
@@ -80,6 +86,9 @@ export const spawnReadinessProbe = (
       if (done) return;
       done = true;
       clearTimeout(timer);
+      clearTimeout(grace);
+      child.stdout?.destroy();
+      child.stderr?.destroy();
       resume(
         Effect.succeed({
           exitCode: timedOut ? null : exitCode,
@@ -91,9 +100,14 @@ export const spawnReadinessProbe = (
     };
     child.on("error", () => finish(null));
     child.on("close", (code) => finish(code));
+    child.on("exit", (code) => {
+      // @effect-diagnostics-next-line globalTimers:off - a node callback, not an Effect.
+      grace = setTimeout(() => finish(code), EXIT_GRACE_MS);
+    });
     return Effect.sync(() => {
       done = true;
       clearTimeout(timer);
+      clearTimeout(grace);
       killGroup();
     });
   });
