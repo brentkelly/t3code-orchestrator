@@ -270,7 +270,7 @@ describe("reclaim at Done (D2)", () => {
     ),
   );
 
-  it.effect("leaves Done cards alone, unflagged, with reclaimWorktreeOnDone off", () =>
+  it.effect("leaves Done cards alone, unflagged, with worktreeAtDone keep", () =>
     withGovernor(
       {
         board: { nextCardNumberByProject: {}, cards: [doneCard()] },

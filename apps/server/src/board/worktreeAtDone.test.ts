@@ -287,6 +287,9 @@ describe("stripBoardWorktree", () => {
       write(NodePath.join(worktree, "build", "out", ".env"), "SECRET=1\n");
       write(NodePath.join(worktree, "build", "out", "app.js"), "z".repeat(500));
       write(NodePath.join(worktree, "build", "tmp", "x.o"), "z".repeat(500));
+      // A dependency tree goes whole, whatever its packages ship.
+      write(NodePath.join(worktree, "build", "node_modules", "pkg", ".env.example"), "A=1\n");
+      write(NodePath.join(worktree, "build", "node_modules", "pkg", ".vscode", "x.json"), "{}\n");
 
       const result = yield* stripBoardWorktree({ worktreePath: worktree, gitDir });
 
@@ -297,6 +300,7 @@ describe("stripBoardWorktree", () => {
       assert.isTrue(NodeFS.existsSync(NodePath.join(worktree, "build", "out", ".env")));
       assert.isFalse(NodeFS.existsSync(NodePath.join(worktree, "build", "out", "app.js")));
       assert.isFalse(NodeFS.existsSync(NodePath.join(worktree, "build", "tmp")));
+      assert.isFalse(NodeFS.existsSync(NodePath.join(worktree, "build", "node_modules")));
       assert.isTrue(NodeFS.existsSync(NodePath.join(gitDir, STRIPPED_MARKER)));
     }).pipe(Effect.scoped, Effect.provide(GitLayer)),
   );

@@ -7649,7 +7649,7 @@ const make = Effect.gen(function* () {
     );
     if (result === null) return;
     // Report it on the card: deleting a branch is irreversible, and a partial cleanup is a
-    // real outcome when `reclaimWorktreeOnDone` is off.
+    // real outcome when `worktreeAtDone` is `keep`.
     const deleted = [
       ...(result.remoteDeleted ? ["remote"] : []),
       ...(result.localDeleted ? ["local"] : []),
@@ -11116,9 +11116,8 @@ const make = Effect.gen(function* () {
     }
     // Before the reclaim below pulls the worktree out from under its steps.
     yield* stopCiOnArchive(card);
-    // Archive is the guaranteed cleanup point, so the reclaim reads no setting:
-    // `reclaimWorktreeOnDone` only chooses whether it happens earlier. A worktree may not outlive
-    // its card.
+    // Archive reclaims as `worktreeAtDone` says, like Done: `remove` takes the worktree, `keep`
+    // leaves it and strips its ignored files. A discard removes it regardless.
     if (event.payload.discard === true) {
       // A confirmed group archive: nothing here is coming back.
       yield* stopCardThreads(card);

@@ -36,8 +36,15 @@ export const isKeptIgnoredEntry = (entry: string): boolean => {
   return base.startsWith(".env") || segments.some((segment) => KEPT_FOLDERS.has(segment));
 };
 
+/**
+ * Reinstallable dependency trees, deleted whole: packages ship `.env.example` and `.vscode/`,
+ * and walking every package for them would turn one delete into thousands.
+ */
+const DEPENDENCY_FOLDERS = new Set(["node_modules", ".venv", "__pycache__"]);
+
 /** Whether anything under `path` must survive a strip: a kept name or a nested repository. */
 const holdsKept = async (path: string): Promise<boolean> => {
+  if (DEPENDENCY_FOLDERS.has(NodePath.basename(path))) return false;
   const entries = await NodeFSP.readdir(path, { withFileTypes: true }).catch(() => null);
   if (entries === null) return false;
   for (const entry of entries) {
