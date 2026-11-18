@@ -44,6 +44,8 @@ export function boardProjectWorkerRows(input: {
   readonly readinessPath: string;
   /** T3o (T3O-124): the checks and trust this board asks for; an older result doesn't show. */
   readonly readinessConfigKey?: string;
+  /** Whether the project asks for any readiness: an old worker is only flagged when it does. */
+  readonly readinessConfigured: boolean;
 }): ReadonlyArray<BoardProjectWorkerRow> {
   return input.workers.flatMap(({ workerId, label }) => {
     const snapshot = input.snapshots.get(workerId);
@@ -65,7 +67,7 @@ export function boardProjectWorkerRows(input: {
           readiness?.state === "ready" && (warned > 0 || readiness.scriptSkipped !== undefined),
         detail:
           readiness === null
-            ? !boardWorkerSpeaksReadiness(snapshot)
+            ? input.readinessConfigured && !boardWorkerSpeaksReadiness(snapshot)
               ? "Update this worker to check readiness"
               : null
             : readiness.state === "ready"

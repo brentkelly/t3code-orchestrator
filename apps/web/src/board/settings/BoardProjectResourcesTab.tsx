@@ -98,6 +98,7 @@ export function BoardProjectResourcesTab(props: {
   const parsed = boardResourcesOf(shown, resources);
   const settings = resolveBoardProjectResourceSettings(resources);
   const snapshots = AsyncResult.isSuccess(capacityResult) ? capacityResult.value : NO_SNAPSHOTS;
+  const readinessRequest = boardReadinessRequest(resources, trusted);
   const rows = boardProjectWorkerRows({
     workers: [...snapshots.keys()].map((key) => {
       const workerId = key as BoardWorkerId;
@@ -107,7 +108,8 @@ export function BoardProjectResourcesTab(props: {
     repositoryKey: boardRepositoryGroupingKey(project?.repositoryIdentity),
     projectId: props.projectId,
     readinessPath: settings.readinessPath,
-    readinessConfigKey: boardReadinessRequest(resources, trusted).configKey,
+    readinessConfigKey: readinessRequest.configKey,
+    readinessConfigured: readinessRequest.configured,
   });
   // T3o (T3O-87): the form edits the declared baseline; placements use it with learning.
   const declaredBaseline = resolveBoardProjectDeclared(resources);

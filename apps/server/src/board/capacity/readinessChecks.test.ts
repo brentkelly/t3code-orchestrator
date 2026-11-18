@@ -231,13 +231,20 @@ it.effect(
       Effect.gen(function* () {
         bin("bin", "pnpm", { script: true });
         bin("bin", "mytool");
+        // 0xcafebabe is a Java class file off macOS, where it is not a universal binary.
+        NodeFS.writeFileSync(
+          bin("bin", "node"),
+          Buffer.from([0xca, 0xfe, 0xba, 0xbe, 0, 0, 0, 0x41]),
+        );
         const results = yield* run(host(), [
           { command: "pnpm", version: { atLeast: "10" } },
           { command: "mytool", version: { atLeast: "1" } },
+          { command: "node", version: { atLeast: "1" } },
         ]);
-        assert.deepStrictEqual(statuses(results), ["warn", "warn"]);
+        assert.deepStrictEqual(statuses(results), ["warn", "warn", "warn"]);
         assert.include(results[0]!.detail, "version not checked for script tools");
         assert.include(results[1]!.detail, "doesn't know how to ask mytool");
+        assert.include(results[2]!.detail, "version not checked for script tools");
         assert.lengthOf(calls, 0);
       }),
     ),
@@ -287,6 +294,8 @@ it.effect("globs: at most two wildcard folders, none directly under home", () =>
       assert.property(yield* glob(`${home}/*/x`), "error");
       assert.property(yield* glob(`${home}/a/*/*/*`), "error");
       assert.property(yield* glob("/*/bin"), "error");
+      // One folder below / is as deep as the parser allows, as /Applications/Xcode*.app is.
+      assert.include(((yield* glob("/usr/li*")) as { matches: string[] }).matches, "/usr/lib");
       // A first-wildcard match that links out of bounds is never listed.
       NodeFS.mkdirSync(NodePath.join(root, "outside/secret"), { recursive: true });
       NodeFS.mkdirSync(NodePath.join(home, "a/b"), { recursive: true });

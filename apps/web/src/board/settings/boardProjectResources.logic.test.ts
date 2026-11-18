@@ -105,6 +105,7 @@ describe("boardProjectWorkerRows", () => {
       projectId: "project-1",
       readinessPath: ".t3/ready.sh",
       readinessConfigKey: "checks:now",
+      readinessConfigured: true,
     });
     expect(rows).toEqual([
       {
@@ -141,6 +142,18 @@ describe("boardProjectWorkerRows", () => {
         declared: { cpuCores: 8, ramGiB: 8, diskGB: 500 },
       },
     ]);
+  });
+
+  it("flags an old worker only when the project asks for readiness", () => {
+    const rows = boardProjectWorkerRows({
+      workers: [{ workerId: old, label: "old" }],
+      snapshots: new Map([[old, snapshot({ cpuCores: 8, ramGiB: 8, diskGB: 500 }, [], 0)]]),
+      repositoryKey: "github.com/acme/app",
+      projectId: "project-1",
+      readinessPath: ".t3/ready.sh",
+      readinessConfigured: false,
+    });
+    expect(rows.map((row) => row.detail)).toEqual([null]);
   });
 });
 

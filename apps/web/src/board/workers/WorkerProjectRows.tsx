@@ -58,9 +58,14 @@ export interface WorkerProject {
   readonly workspaceRoot: string;
   readonly repositoryKey: string | null;
   readonly repositoryName: string;
+  /** Whether the project asks for any readiness checks or a trusted script. */
+  readonly readinessConfigured: boolean;
 }
 
-export function workerProject(project: OrchestrationProjectShell): WorkerProject {
+export function workerProject(
+  project: OrchestrationProjectShell,
+  readinessConfigured: boolean,
+): WorkerProject {
   const repositoryKey = boardRepositoryGroupingKey(project.repositoryIdentity);
   return {
     id: project.id,
@@ -69,6 +74,7 @@ export function workerProject(project: OrchestrationProjectShell): WorkerProject
     repositoryKey,
     repositoryName:
       project.repositoryIdentity?.name ?? repositoryKey?.split("/").at(-1) ?? project.title,
+    readinessConfigured,
   };
 }
 
@@ -139,6 +145,7 @@ export function WorkerProjectRows(props: {
               cell === "connecting"
                 ? { kind: "checking" }
                 : cell.kind === "checked-out" &&
+                    project.readinessConfigured &&
                     props.readinessProtocol !== null &&
                     !boardWorkerSpeaksReadiness({ readinessProtocol: props.readinessProtocol })
                   ? { kind: "update-readiness" }

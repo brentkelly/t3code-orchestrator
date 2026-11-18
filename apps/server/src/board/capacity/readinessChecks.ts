@@ -270,8 +270,8 @@ const globRegex = (segment: string) =>
 
 /**
  * What an absolute pattern matches, `*` within one segment. Reads at most 10,000 directory
- * entries in at most 2 s; the literal folder before the first wildcard must be confined and at
- * least two segments below home.
+ * entries in at most 2 s; the literal folder before the first wildcard must be confined, not `/`,
+ * and at least two segments below home.
  */
 export async function expandReadinessGlob(
   pattern: string,
@@ -287,7 +287,7 @@ export async function expandReadinessGlob(
   const confined = await confineMachinePath(prefix, host);
   if ("error" in confined) return confined;
   const realHome = (await realpathOrNull(host.home)) ?? host.home;
-  if (first < 2 || isUnder(realHome, confined.real) || isUnder(host.home, prefix)) {
+  if (first < 1 || isUnder(realHome, confined.real) || isUnder(host.home, prefix)) {
     return { error: "a * directly under home or near / is refused" };
   }
   const started = performance.now();
@@ -497,8 +497,11 @@ async function vetBinary(
   return { vetted: { path: candidate, real } };
 }
 
-/** Whether a file starts with ELF or Mach-O magic: a script is never run, its shebang never followed. */
-async function isNativeBinary(path: string): Promise<boolean> {
+/**
+ * Whether a file starts with ELF or Mach-O magic: a script is never run, its shebang never
+ * followed. 0xcafebabe is a universal binary only on macOS; elsewhere it is a Java class file.
+ */
+async function isNativeBinary(path: string, platform: NodeJS.Platform): Promise<boolean> {
   let handle: NodeFSP.FileHandle | null = null;
   try {
     handle = await NodeFSP.open(path, NodeFS.constants.O_RDONLY | O_NONBLOCK | O_NOCTTY);
@@ -506,7 +509,8 @@ async function isNativeBinary(path: string): Promise<boolean> {
     const { bytesRead } = await handle.read(buffer, 0, 4, 0);
     if (bytesRead < 4) return false;
     const magic = buffer.readUInt32BE(0);
-    return [0x7f454c46, 0xfeedface, 0xfeedfacf, 0xcefaedfe, 0xcffaedfe, 0xcafebabe].includes(magic);
+    if (magic === 0xcafebabe) return platform === "darwin";
+    return [0x7f454c46, 0xfeedface, 0xfeedfacf, 0xcefaedfe, 0xcffaedfe].includes(magic);
   } catch {
     return false;
   } finally {
@@ -707,8 +711,8 @@ export const runReadinessChecks = Effect.fn("Readiness.runChecks")(function* (in
         reason = `refused ${vetted.refused}`;
         continue;
       }
-      if (!(yield* promise(() => isNativeBinary(vetted.vetted.real)))) {
-        reason = `${vetted.vetted.real} is a script, which t3o never runs`;
+      if (!(yield* promise(() => isNativeBinary(vetted.vetted.real, host.platform)))) {
+        reason = `${vetted.vetted.real} is not a native binary, which t3o never runs`;
         continue;
       }
       return { tool: vetted.vetted } as const;
@@ -775,7 +779,7 @@ export const runReadinessChecks = Effect.fn("Readiness.runChecks")(function* (in
     }
     const native: Vetted[] = [];
     for (const tool of vetted) {
-      if (yield* promise(() => isNativeBinary(tool.real))) native.push(tool);
+      if (yield* promise(() => isNativeBinary(tool.real, host.platform))) native.push(tool);
     }
     if (native.length === 0) {
       return warning(`version not checked for script tools (${vetted[0]!.real})`);
