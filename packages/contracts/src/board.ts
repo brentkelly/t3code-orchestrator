@@ -3126,7 +3126,8 @@ export function boardProjectConfigVersion(delta: BoardProjectStageDelta): string
       : boardProjectResourcesWithoutLearned(delta.resources);
   // T3o (T3O-124): no checks hashes as before checks existed.
   const hashed =
-    resources === undefined || resources.readinessChecks.length > 0
+    // Older in-memory resources may lack the field: it decodes with a default.
+    resources === undefined || (resources.readinessChecks ?? []).length > 0
       ? resources
       : (({ readinessChecks: _checks, ...rest }) => rest)(resources);
   const text = canonicalJson({

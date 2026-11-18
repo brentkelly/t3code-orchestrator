@@ -185,15 +185,46 @@ export function checkoutCell(input: {
 
 export type WorkerProjectState =
   | CheckoutCell
-  | { readonly kind: "ready"; readonly checkedAt: string | null; readonly noScript: boolean }
+  | {
+      readonly kind: "ready";
+      readonly checkedAt: string | null;
+      readonly noScript: boolean;
+      /** T3o (T3O-124): the declarative checks, when the project has any. */
+      readonly checks: { readonly passed: number; readonly warned: number } | null;
+      /** The script is there but the project isn't trusted to run it. */
+      readonly scriptSkipped: boolean;
+    }
   | {
       readonly kind: "not-ready";
       readonly path: string;
       readonly checkedAt: string | null;
       readonly exitCode: number | null;
       readonly lastLine: string | null;
+      /** A declarative check failed (`lastLine` names it), rather than the script. */
+      readonly checkFailed: boolean;
     }
-  | { readonly kind: "checking" };
+  | { readonly kind: "checking" }
+  /** T3o (T3O-124): the worker predates declarative checks, so the board doesn't ask it. */
+  | { readonly kind: "update-readiness" };
+
+/** The Ready row's line: which of checks and script ran, and how they came out. */
+export function readyDetail(state: Extract<WorkerProjectState, { kind: "ready" }>): string {
+  const checks =
+    state.checks === null
+      ? null
+      : `${state.checks.passed} ${state.checks.passed === 1 ? "check" : "checks"} passed${
+          state.checks.warned === 0
+            ? ""
+            : `, ${state.checks.warned} ${state.checks.warned === 1 ? "warning" : "warnings"}`
+        }`;
+  if (state.scriptSkipped) {
+    return [checks, "readiness script not run: not trusted for this project"]
+      .filter((part) => part !== null)
+      .join(" · ");
+  }
+  if (state.noScript) return checks ?? "No readiness script: a checkout counts as ready";
+  return [checks, "readiness script passed"].filter((part) => part !== null).join(" · ");
+}
 
 /**
  * A project's row under a worker on the Workers page: its checkout, and once it is checked
@@ -210,6 +241,11 @@ export function workerProjectState(
         kind: "ready",
         checkedAt: readiness.checkedAt,
         noScript: readiness.noScript === true,
+        checks:
+          readiness.checks === undefined
+            ? null
+            : { passed: readiness.checks.passed, warned: readiness.checks.warned },
+        scriptSkipped: readiness.scriptSkipped !== undefined,
       };
     case "not-ready":
       return {
@@ -218,6 +254,7 @@ export function workerProjectState(
         checkedAt: readiness.checkedAt,
         exitCode: readiness.exitCode ?? null,
         lastLine: readiness.lastLine || null,
+        checkFailed: (readiness.checks?.failed ?? 0) > 0,
       };
     case "checking":
       return { kind: "checking" };

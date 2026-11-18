@@ -211,7 +211,7 @@ export function isEmptyBoardProjectResources(
       resources.setupTimeoutMinutes === null &&
       resources.readinessPath === null &&
       resources.readinessTimeoutSeconds === null &&
-      resources.readinessChecks.length === 0 &&
+      (resources.readinessChecks ?? []).length === 0 &&
       (resources.pinDeclared ?? []).length === 0 &&
       resources.learned === undefined)
   );

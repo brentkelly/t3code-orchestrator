@@ -325,6 +325,78 @@ describe("export", () => {
     expect(boardProjectDeltasEqual(back.delta, config)).toBe(true);
   });
 
+  it("parses each readiness check kind and drops what it can't use, with warnings (T3O-124)", () => {
+    const checks = [
+      { command: "cmake", fix: "sudo apt install cmake" },
+      {
+        command: "node",
+        version: { from: "./.node-version" },
+        paths: ["~/.local/share/mise/installs/node/*/bin"],
+      },
+      { command: "pnpm", version: { atLeast: 10 }, warn: true },
+      { rustToolchain: "rust-toolchain.toml" },
+      { file: "~/.cargo/config.toml", contains: "rustc-slot" },
+      { exists: "~/.cache/ms-playwright/chromium-*" },
+      { docker: { plugins: ["compose", "buildx"] } },
+      { git: "identity" },
+      { git: "push", name: "push access" },
+      { gh: "github.com" },
+      { writable: "$TMPDIR" },
+      // Dropped:
+      { kubectl: "context" },
+      { command: "node", git: "fetch" },
+      { command: "../bin/node" },
+      { command: "node", paths: ["relative/bin"] },
+      { exists: "~/.cache/**/chromium" },
+      { exists: "src/*.ts" },
+      { file: "../outside", contains: "x" },
+      { file: "~/.bashrc" },
+      { writable: "build" },
+      { git: "pull" },
+      { command: "node", version: { atLeast: "10", from: "package.json" } },
+    ];
+    const back = resolve({
+      resources: { readiness: { checks, path: ".t3/ready.sh", future: true } },
+    });
+    expect(back.delta.resources?.readinessChecks).toEqual([
+      { command: "cmake", fix: "sudo apt install cmake" },
+      {
+        command: "node",
+        version: { from: ".node-version" },
+        paths: ["~/.local/share/mise/installs/node/*/bin"],
+      },
+      { command: "pnpm", version: { atLeast: "10" }, warn: true },
+      { rustToolchain: "rust-toolchain.toml" },
+      { file: "~/.cargo/config.toml", contains: "rustc-slot" },
+      { exists: "~/.cache/ms-playwright/chromium-*" },
+      { docker: { plugins: ["compose", "buildx"] } },
+      { git: "identity" },
+      { git: "push", name: "push access" },
+      { gh: "github.com" },
+      { writable: "$TMPDIR" },
+    ]);
+    const warnings = back.delta.warnings.join("\n");
+    expect(warnings).toContain("resources.readiness.future: unknown key");
+    expect(warnings).toContain("checks[11]: not a check this board knows");
+    expect(warnings).toContain("checks[12]: names more than one check");
+    for (const index of [13, 14, 15, 16, 17, 18, 19, 20, 21]) {
+      expect(warnings).toContain(`checks[${index}]`);
+    }
+    // An unknown field on a known check warns and is dropped; the check stays.
+    const extra = resolve({
+      resources: { readiness: { checks: [{ git: "fetch", retries: 3 }] } },
+    });
+    expect(extra.delta.resources?.readinessChecks).toEqual([{ git: "fetch" }]);
+    expect(extra.delta.warnings.join("\n")).toContain("checks[0].retries");
+    // Checks export and import back unchanged.
+    const file = buildT3oProjectFile({ board: EMPTY_BOARD_STATE, config: back.delta });
+    expect((file.resources as { readiness: { checks: unknown } }).readiness.checks).toEqual(
+      back.delta.resources?.readinessChecks,
+    );
+    const again = resolve(JSON.parse(JSON.stringify(file)));
+    expect(boardProjectDeltasEqual(again.delta, back.delta)).toBe(true);
+  });
+
   it("round-trips the project's resources, and drops a bad entry with a warning (T3O-86)", () => {
     const back = resolve({
       resources: {

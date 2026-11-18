@@ -13,6 +13,7 @@ import {
   workerLastSeen,
   workerLastSeenDeadlines,
   workersNeedAttention,
+  readyDetail,
   workerProjectState,
   workerStatusPresentation,
 } from "./workerCopy";
@@ -172,6 +173,8 @@ describe("project checkout cells", () => {
       kind: "ready",
       checkedAt: "2026-10-21T09:40:00.000Z",
       noScript: false,
+      checks: null,
+      scriptSkipped: false,
     });
     expect(
       workerProjectState(checkedOut, {
@@ -186,10 +189,33 @@ describe("project checkout cells", () => {
       checkedAt: "2026-10-21T09:40:00.000Z",
       exitCode: 1,
       lastLine: null,
+      checkFailed: false,
     });
     expect(workerProjectState(checkedOut, { ...readiness, state: "not-set-up" })).toBe(checkedOut);
     const notCheckedOut = { kind: "not-checked-out", canSetUp: true } as const;
     expect(workerProjectState(notCheckedOut, { ...readiness, state: "ready" })).toBe(notCheckedOut);
+  });
+
+  it("says which of checks and script ran on a Ready row (T3O-124)", () => {
+    const ready = {
+      kind: "ready",
+      checkedAt: null,
+      noScript: false,
+      checks: null,
+      scriptSkipped: false,
+    } as const;
+    expect(readyDetail({ ...ready, noScript: true })).toBe(
+      "No readiness script: a checkout counts as ready",
+    );
+    expect(readyDetail({ ...ready, noScript: true, checks: { passed: 3, warned: 0 } })).toBe(
+      "3 checks passed",
+    );
+    expect(readyDetail({ ...ready, checks: { passed: 1, warned: 1 } })).toBe(
+      "1 check passed, 1 warning · readiness script passed",
+    );
+    expect(readyDetail({ ...ready, scriptSkipped: true })).toBe(
+      "readiness script not run: not trusted for this project",
+    );
   });
 
   it("reads the host off https and scp-style remotes", () => {

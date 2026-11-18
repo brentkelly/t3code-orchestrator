@@ -103,29 +103,37 @@ describe("project settings map", () => {
 
   it("adds and updates an override", () => {
     const withPrefix = setBoardProjectSetting({}, project, { keyPrefix: "T3" });
-    expect(withPrefix[project]).toEqual({ keyPrefix: "T3", hidden: false });
+    expect(withPrefix[project]).toEqual({ keyPrefix: "T3", hidden: false, trustReadinessScript: false });
     const renamed = setBoardProjectSetting(withPrefix, project, { keyPrefix: "TT" });
-    expect(renamed[project]).toEqual({ keyPrefix: "TT", hidden: false });
+    expect(renamed[project]).toEqual({ keyPrefix: "TT", hidden: false, trustReadinessScript: false });
   });
 
   it("toggles visibility without touching the identity fields", () => {
-    const hidden = setBoardProjectSetting({}, project, { hidden: true });
-    expect(hidden[project]).toEqual({ keyPrefix: null, hidden: true });
+    const hidden = setBoardProjectSetting({}, project, { hidden: true, trustReadinessScript: false });
+    expect(hidden[project]).toEqual({ keyPrefix: null, hidden: true, trustReadinessScript: false });
     const withPrefix = setBoardProjectSetting(hidden, project, { keyPrefix: "T3" });
-    expect(withPrefix[project]).toEqual({ keyPrefix: "T3", hidden: true });
-    const shown = setBoardProjectSetting(withPrefix, project, { hidden: false });
-    expect(shown[project]).toEqual({ keyPrefix: "T3", hidden: false });
+    expect(withPrefix[project]).toEqual({ keyPrefix: "T3", hidden: true, trustReadinessScript: false });
+    const shown = setBoardProjectSetting(withPrefix, project, { hidden: false, trustReadinessScript: false });
+    expect(shown[project]).toEqual({ keyPrefix: "T3", hidden: false, trustReadinessScript: false });
+  });
+
+  it("turns a project's readiness-script trust on and off, with a full entry (T3O-124)", () => {
+    const trusted = setBoardProjectSetting({}, project, { trustReadinessScript: true });
+    // A new entry writes keyPrefix: null, which has no decoding default.
+    expect(trusted[project]).toEqual({ keyPrefix: null, hidden: false, trustReadinessScript: true });
+    const off = setBoardProjectSetting(trusted, project, { trustReadinessScript: false });
+    expect(off[project]?.trustReadinessScript).toBe(false);
   });
 
   it("keeps a null-valued entry when an override reverts to defaults (deepMerge cannot delete keys)", () => {
     const configured: Record<string, BoardProjectSettings> = {
-      [project]: { keyPrefix: "T3", hidden: false },
+      [project]: { keyPrefix: "T3", hidden: false, trustReadinessScript: false },
     };
     const cleared = setBoardProjectSetting(configured, project, { keyPrefix: null });
     // Retained with null fields, NOT deleted: an omitted key would silently
     // keep the old override through deepMerge; a null entry resolves to the
     // defaults and actually persists the clear.
-    expect(cleared[project]).toEqual({ keyPrefix: null, hidden: false });
+    expect(cleared[project]).toEqual({ keyPrefix: null, hidden: false, trustReadinessScript: false });
   });
 
   it("normalizes a blank prefix input to null", () => {
