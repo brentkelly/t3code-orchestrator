@@ -256,8 +256,8 @@ describe("readiness requests (T3O-124)", () => {
       resources: (({ readinessChecks: _c, ...rest }) => rest)(withPath) as never,
     });
     expect(boardProjectConfigVersion({ ...delta, resources: withPath })).toBe(legacy);
-    expect(boardProjectConfigVersion({ ...delta, resources: { ...withPath, ...resources } })).not.toBe(
-      legacy,
-    );
+    expect(
+      boardProjectConfigVersion({ ...delta, resources: { ...withPath, ...resources } }),
+    ).not.toBe(legacy);
   });
 });

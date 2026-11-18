@@ -258,7 +258,12 @@ const makeBoardWorkerCapacityLive = Effect.gen(function* () {
             timedOut: output.timedOut,
           })),
           Effect.catchCause(() =>
-            Effect.succeed({ exitCode: null, stdout: "", stderr: "could not start", timedOut: false }),
+            Effect.succeed({
+              exitCode: null,
+              stdout: "",
+              stderr: "could not start",
+              timedOut: false,
+            }),
           ),
         ),
     env: { PATH: hostEnv.PATH ?? "", HOME: home, TMPDIR: NodeOS.tmpdir() },

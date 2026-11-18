@@ -53,8 +53,7 @@ export function boardProjectWorkerRows(input: {
         (entry) =>
           boardReadinessIsFor(entry, input.repositoryKey, input.projectId) &&
           entry.path === input.readinessPath &&
-          (input.readinessConfigKey === undefined ||
-            entry.configKey === input.readinessConfigKey),
+          (input.readinessConfigKey === undefined || entry.configKey === input.readinessConfigKey),
       ) ?? null;
     const warned = readiness?.checks?.warned ?? 0;
     return [

@@ -136,7 +136,8 @@ describe("boardProjectWorkerRows", () => {
         label: "build-03",
         state: "ready",
         hasNotice: true,
-        detail: "2 checks passed, 1 warning · readiness script not run: not trusted for this project",
+        detail:
+          "2 checks passed, 1 warning · readiness script not run: not trusted for this project",
         declared: { cpuCores: 8, ramGiB: 8, diskGB: 500 },
       },
     ]);

@@ -24,9 +24,11 @@ const withFixture = <A, E>(
     readonly root: string;
     readonly bin: (dir: string, name: string) => string;
     readonly calls: Array<{ readonly command: string; readonly args: ReadonlyArray<string> }>;
-    readonly host: (overrides?: Partial<ReadinessCheckHost> & {
-      readonly answer?: (command: string, args: ReadonlyArray<string>) => ReadinessRun;
-    }) => ReadinessCheckHost;
+    readonly host: (
+      overrides?: Partial<ReadinessCheckHost> & {
+        readonly answer?: (command: string, args: ReadonlyArray<string>) => ReadinessRun;
+      },
+    ) => ReadinessCheckHost;
   }) => Effect.Effect<A, E>,
 ) =>
   Effect.acquireUseRelease(
@@ -164,7 +166,10 @@ it.effect("file, exists and writable read the machine; repo paths read the defau
     Effect.gen(function* () {
       const home = NodePath.join(root, "home");
       NodeFS.mkdirSync(NodePath.join(home, ".cargo"), { recursive: true });
-      NodeFS.writeFileSync(NodePath.join(home, ".cargo/config.toml"), "rustc-wrapper = 'rustc-slot'");
+      NodeFS.writeFileSync(
+        NodePath.join(home, ".cargo/config.toml"),
+        "rustc-wrapper = 'rustc-slot'",
+      );
       NodeFS.mkdirSync(NodePath.join(home, ".cache/ms-playwright/chromium-1200"), {
         recursive: true,
       });
@@ -223,7 +228,8 @@ it.effect("a rust toolchain is read from the repo file and looked up in rustup's
       bin("bin", "rustup");
       const answers = host({
         env: { PATH: `${root}/bin`, HOME: root, TMPDIR: `${root}/tmp` },
-        answer: () => version("stable-x86_64-unknown-linux-gnu (default)\n1.82.0-x86_64-unknown-linux-gnu\n"),
+        answer: () =>
+          version("stable-x86_64-unknown-linux-gnu (default)\n1.82.0-x86_64-unknown-linux-gnu\n"),
       });
       const [have] = yield* run(answers, [{ rustToolchain: "rust-toolchain.toml" }], {
         "rust-toolchain.toml": '[toolchain]\nchannel = "1.82.0"\n',
@@ -239,7 +245,10 @@ it.effect("a rust toolchain is read from the repo file and looked up in rustup's
 
 it("reads the lowest major of a range, and a toolchain channel", () => {
   assert.strictEqual(requiredMajor("package.json", '{"engines":{"node":"26.12.1"}}', "node"), 26);
-  assert.strictEqual(requiredMajor("package.json", '{"engines":{"node":"^22.1 || ^24"}}', "node"), 22);
+  assert.strictEqual(
+    requiredMajor("package.json", '{"engines":{"node":"^22.1 || ^24"}}', "node"),
+    22,
+  );
   assert.isNull(requiredMajor("package.json", '{"engines":{}}', "node"));
   assert.strictEqual(requiredMajor(".nvmrc", "v20.11.0\n", "node"), 20);
   assert.strictEqual(rustChannel("stable\n"), "stable");

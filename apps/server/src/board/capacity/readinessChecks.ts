@@ -68,18 +68,29 @@ const lastLine = (run: ReadinessRun) =>
   );
 
 /** A machine path with `~`, `$HOME` and `$TMPDIR` expanded. */
-export function expandMachinePath(path: string, env: ReadinessCheckHost["env"]): string {
+function expandMachinePath(path: string, env: ReadinessCheckHost["env"]): string {
   const [head, ...rest] = path.split("/");
   const base =
-    head === "~" || head === "$HOME" ? env.HOME : head === "$TMPDIR" ? env.TMPDIR : head === "" ? "/" : null;
+    head === "~" || head === "$HOME"
+      ? env.HOME
+      : head === "$TMPDIR"
+        ? env.TMPDIR
+        : head === ""
+          ? "/"
+          : null;
   return base === null ? path : NodePath.join(base, ...rest);
 }
 
 const globRegex = (segment: string) =>
-  new RegExp(`^${segment.split("*").map((part) => part.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join("[^/]*")}$`);
+  new RegExp(
+    `^${segment
+      .split("*")
+      .map((part) => part.replace(/[.+?^${}()|[\]\\]/g, "\\$&"))
+      .join("[^/]*")}$`,
+  );
 
 /** The paths a pattern matches, `*` staying within one segment. */
-export function expandGlob(pattern: string): ReadonlyArray<string> {
+function expandGlob(pattern: string): ReadonlyArray<string> {
   if (!pattern.includes("*")) return NodeFS.existsSync(pattern) ? [pattern] : [];
   const segments = pattern.split("/").filter((segment) => segment !== "");
   let found = [pattern.startsWith("/") ? "/" : "."];
@@ -93,7 +104,7 @@ export function expandGlob(pattern: string): ReadonlyArray<string> {
       }
       let names: string[] = [];
       try {
-        names = NodeFS.readdirSync(dir).toSorted();
+        names = NodeFS.readdirSync(dir).sort();
       } catch {
         continue;
       }
@@ -117,7 +128,7 @@ const isExecutableFile = (path: string) => {
 };
 
 /** A command on PATH, then in `paths`; null when not found. */
-export function resolveCommand(
+function resolveCommand(
   name: string,
   paths: ReadonlyArray<string>,
   env: ReadinessCheckHost["env"],
@@ -142,7 +153,7 @@ const realpath = (path: string) => {
 };
 
 /** The forbidden root a binary resolves inside, or null. Both sides through symlinks. */
-export function forbiddenRootOf(binary: string, roots: ReadonlyArray<string>): string | null {
+function forbiddenRootOf(binary: string, roots: ReadonlyArray<string>): string | null {
   const candidates = [NodePath.resolve(binary), realpath(binary)];
   for (const root of roots) {
     for (const form of new Set([NodePath.resolve(root), realpath(root)])) {
@@ -155,7 +166,7 @@ export function forbiddenRootOf(binary: string, roots: ReadonlyArray<string>): s
 }
 
 /** The first version number in a tool's `--version` output. */
-export function firstVersion(text: string): ReadonlyArray<number> | null {
+function firstVersion(text: string): ReadonlyArray<number> | null {
   const match = /(\d+)(?:\.(\d+))?(?:\.(\d+))?/.exec(text);
   if (match === null) return null;
   return match.slice(1).flatMap((part) => (part === undefined ? [] : [Number(part)]));
@@ -185,7 +196,9 @@ export function requiredMajor(fileName: string, text: string, command: string): 
       return null;
     }
   }
-  const majors = [...spec.matchAll(/(?:^|[^\d.])(\d+)(?:\.\d+|\.x|\.\*)*/g)].map((m) => Number(m[1]));
+  const majors = [...spec.matchAll(/(?:^|[^\d.])(\d+)(?:\.\d+|\.x|\.\*)*/g)].map((m) =>
+    Number(m[1]),
+  );
   return majors.length === 0 ? null : Math.min(...majors);
 }
 
@@ -264,7 +277,10 @@ export const runReadinessChecks = Effect.fn("Readiness.runChecks")(function* (in
         if (check.version === undefined) {
           const found = resolveCommand(name, check.paths ?? [], host.env);
           return found === null
-            ? { ok: false, detail: `${name} not found on PATH${(check.paths ?? []).length > 0 ? " or in its paths" : ""}` }
+            ? {
+                ok: false,
+                detail: `${name} not found on PATH${(check.paths ?? []).length > 0 ? " or in its paths" : ""}`,
+              }
             : { ok: true, detail: found };
         }
         const found = tool(name, check.paths ?? []);
@@ -301,7 +317,8 @@ export const runReadinessChecks = Effect.fn("Readiness.runChecks")(function* (in
         const rustup = tool("rustup");
         if (rustup.path === undefined) return rustup;
         const ran = yield* run(rustup.path, ["toolchain", "list"], LOCAL_TIMEOUT_MS);
-        if (ran.exitCode !== 0) return { ok: false, detail: `rustup toolchain list: ${lastLine(ran)}` };
+        if (ran.exitCode !== 0)
+          return { ok: false, detail: `rustup toolchain list: ${lastLine(ran)}` };
         const installed = ran.stdout
           .split("\n")
           .map((line) => line.trim().split(/\s+/)[0] ?? "")
@@ -353,8 +370,16 @@ export const runReadinessChecks = Effect.fn("Readiness.runChecks")(function* (in
         const git = tool("git");
         if (git.path === undefined) return git;
         if (check.git === "identity") {
-          const name = yield* run(git.path, gitProbeArgs("identity-name", repo.checkout), LOCAL_TIMEOUT_MS);
-          const email = yield* run(git.path, gitProbeArgs("identity-email", repo.checkout), LOCAL_TIMEOUT_MS);
+          const name = yield* run(
+            git.path,
+            gitProbeArgs("identity-name", repo.checkout),
+            LOCAL_TIMEOUT_MS,
+          );
+          const email = yield* run(
+            git.path,
+            gitProbeArgs("identity-email", repo.checkout),
+            LOCAL_TIMEOUT_MS,
+          );
           const unset = [
             name.exitCode === 0 && name.stdout.trim() !== "" ? null : "user.name",
             email.exitCode === 0 && email.stdout.trim() !== "" ? null : "user.email",
@@ -366,14 +391,27 @@ export const runReadinessChecks = Effect.fn("Readiness.runChecks")(function* (in
         const probe = check.git === "fetch" ? "fetch" : "push";
         const ran = yield* run(git.path, gitProbeArgs(probe, repo.checkout), NETWORK_TIMEOUT_MS);
         if (ran.exitCode === 0) {
-          return { ok: true, detail: probe === "fetch" ? "origin answers without a prompt" : "push access confirmed (dry run)" };
+          return {
+            ok: true,
+            detail:
+              probe === "fetch"
+                ? "origin answers without a prompt"
+                : "push access confirmed (dry run)",
+          };
         }
-        return { ok: false, detail: `${probe === "fetch" ? "origin" : "push"}: ${redactCredentials(lastLine(ran))}` };
+        return {
+          ok: false,
+          detail: `${probe === "fetch" ? "origin" : "push"}: ${redactCredentials(lastLine(ran))}`,
+        };
       }
       case "gh": {
         const gh = tool("gh");
         if (gh.path === undefined) return gh;
-        const ran = yield* run(gh.path, ["auth", "status", "--hostname", check.gh!], LOCAL_TIMEOUT_MS);
+        const ran = yield* run(
+          gh.path,
+          ["auth", "status", "--hostname", check.gh!],
+          LOCAL_TIMEOUT_MS,
+        );
         return ran.exitCode === 0
           ? { ok: true, detail: `signed in to ${check.gh!}` }
           : { ok: false, detail: `not signed in to ${check.gh!}` };
@@ -388,7 +426,9 @@ export const runReadinessChecks = Effect.fn("Readiness.runChecks")(function* (in
   const results: ReadinessCheckResult[] = [];
   for (const check of input.checks) {
     const outcome = yield* checkOne(check).pipe(
-      Effect.catchCause(() => Effect.succeed<Outcome>({ ok: false, detail: "the check failed to run" })),
+      Effect.catchCause(() =>
+        Effect.succeed<Outcome>({ ok: false, detail: "the check failed to run" }),
+      ),
     );
     results.push({
       label: boardReadinessCheckLabel(check),
@@ -417,7 +457,10 @@ function probeWritable(dir: string): Outcome {
     NodeFS.rmSync(probe, { recursive: true, force: true });
     return { ok: true, detail: `${dir} is writable` };
   } catch (cause) {
-    return { ok: false, detail: `${dir}: ${cause instanceof Error ? clip(cause.message) : "not writable"}` };
+    return {
+      ok: false,
+      detail: `${dir}: ${cause instanceof Error ? clip(cause.message) : "not writable"}`,
+    };
   }
 }
 

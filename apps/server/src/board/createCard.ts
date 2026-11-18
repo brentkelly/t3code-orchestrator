@@ -41,8 +41,7 @@ export const resolveBoardCardKeyPrefix = Effect.fn("BoardCards.resolveKeyPrefix"
           [projectId]: {
             keyPrefix: prefix,
             hidden: current.board.projects[projectId]?.hidden ?? false,
-            trustReadinessScript:
-              current.board.projects[projectId]?.trustReadinessScript ?? false,
+            trustReadinessScript: current.board.projects[projectId]?.trustReadinessScript ?? false,
           },
         },
       },

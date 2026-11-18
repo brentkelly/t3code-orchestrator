@@ -83,7 +83,7 @@ folder there, after fetching it. So the board server needs, for each project wit
 - **The step's provider signed in there.** If it isn't, cards wait violet with "Sign in on the board
   server": run `claude auth login` (or your provider's sign-in) on the board server.
 
-The board server's readiness script only matters for builds, so a board server that fails it still
+The board server's readiness only matters for builds, so a board server that fails it still
 plans. Planning that was already running on a worker when you upgraded carries on there.
 
 ## How a worker is chosen
@@ -253,13 +253,63 @@ submodules, then the project's setup script. The card shows **Preparing** while 
 details list the stages, with **Retry**, **Cancel setup** and the full log. Setup that runs longer
 than the project's setup timeout (30 minutes unless changed in the Resources tab) fails.
 
-**Readiness** says whether a worker can run a project's cards at all. The worker runs the project's
-readiness script, `.t3/ready.sh` unless the Resources tab names another, as it's committed on the
-default branch. Write it to check the machine — tools installed, services running, credentials
-present — not files in the repository. A project with no readiness script is ready wherever it has
-a checkout. A worker that isn't ready for a project takes none of its cards and can't be pinned
-for it. The worker re-checks every hour while ready and every 15 minutes while not;
-**Re-check** in the Resources tab, or **Re-check all** on the Workers page, checks now.
+**Readiness** says whether a worker can run a project's cards at all. T3o checks it before a
+worker takes a project's cards, then every hour while ready and every 15 minutes while not;
+**Re-check** in the Resources tab, or **Re-check all** on the Workers page, checks now. A worker
+that isn't ready for a project takes none of its cards and can't be pinned for it. A project with no
+checks and no trusted script is ready wherever it has a checkout.
+
+Readiness comes from two places:
+
+- **Checks** in the project's `t3o.json`, under `resources.readiness.checks`. T3o runs them itself
+  with fixed arguments, from an empty folder, so no project code runs on the hourly timer.
+- **The readiness script** (`.t3/ready.sh` unless the Resources tab names another), as committed on
+  the default branch. It runs only if you switch on **Run this project's readiness script** in the
+  project's Resources tab. It runs on every worker, every hour, as you, so whatever lands on the
+  default branch runs next: only switch it on for projects whose code you trust. Until you do, the
+  script is skipped and the worker row says so, without making the worker not-ready.
+
+Every check takes an optional `name`, a `fix` shown when it fails, and `"warn": true` to report a
+failure as a warning instead of not-ready:
+
+```json
+"readiness": {
+  "checks": [
+    { "command": "cmake", "fix": "sudo apt install cmake" },
+    { "command": "node", "version": { "from": ".node-version" }, "paths": ["~/.local/share/mise/installs/node/*/bin"] },
+    { "command": "pnpm", "version": { "atLeast": "10" } },
+    { "rustToolchain": "rust-toolchain.toml" },
+    { "file": "~/.cargo/config.toml", "contains": "rustc-slot" },
+    { "exists": "~/.cache/ms-playwright/chromium-*", "warn": true },
+    { "docker": { "plugins": ["compose", "buildx"] } },
+    { "git": "identity" }, { "git": "fetch" }, { "git": "push" },
+    { "gh": "github.com" },
+    { "writable": "$TMPDIR" }
+  ]
+}
+```
+
+- `command`: on the worker's `PATH` or in one of `paths` (`*` matches within one folder name).
+  Without `version` nothing is run. With `version`, T3o runs `<command> --version` and compares it to
+  `atLeast`, or to the lowest major version a repository file names (`package.json`'s
+  `engines.<command>`, or a plain file like `.node-version`). A binary inside a checkout, a
+  worktree, a temp folder, `~/.cache` or the T3 home is refused.
+- `rustToolchain`: the `channel` the named repository file pins is installed in rustup.
+- `file` with `contains`: the file holds that text. `exists`: the path is there. Paths may start
+  with `/`, `~`, `$HOME` or `$TMPDIR`, or be relative, read from the default branch.
+- `docker`: the daemon answers and each listed plugin is installed.
+- `git`: `identity` (user.name and user.email set), `fetch` (origin answers without a prompt), or
+  `push` (a dry-run push that never runs a repository hook).
+- `gh`: the GitHub CLI is signed in to that host.
+- `writable`: the folder exists and a file can be created in it.
+
+A board that doesn't know a check ignores it with a warning on import, so a newer `t3o.json` still
+imports on an older board. A worker on an older T3o can't run checks, and could run a script you
+haven't trusted, so the board doesn't ask it: its row says to update it, and it takes no cards for
+projects that have checks or a trusted script.
+
+Only readiness is limited this way. Setup scripts and CI still run the branch's code when a card
+starts work.
 
 Setup and readiness output is visible to everyone who uses the board, so scripts shouldn't print
 secrets.
@@ -355,9 +405,9 @@ threads are kept.
 ## Project checkouts
 
 On **Settings → Board → Workers**, each worker lists the board's projects beneath it: whether it
-has a copy, and what the project's readiness script last said there. A worker can only run cards
+has a copy, and what the project's readiness checks last said there. A worker can only run cards
 for projects it has checked out and ready. It matches them by the repository's git remote.
-**Re-check** runs the readiness script again.
+**Re-check** checks again. A Ready row with warnings or a skipped script opens to the full output.
 
 For a project a worker doesn't have, press **Set up on worker**. The worker clones the project's
 remote into its projects folder, using that machine's git credentials, and you can change the

@@ -5,7 +5,7 @@
  */
 import * as Schema from "effect/Schema";
 
-export const BOARD_READINESS_GIT_PROBES = ["identity", "fetch", "push"] as const;
+const BOARD_READINESS_GIT_PROBES = ["identity", "fetch", "push"] as const;
 export type BoardReadinessGitProbe = (typeof BOARD_READINESS_GIT_PROBES)[number];
 
 /** One check, stored and sent normalized: exactly one kind key, plus the common fields. */
@@ -32,7 +32,7 @@ export const BoardReadinessCheck = Schema.Struct({
 });
 export type BoardReadinessCheck = typeof BoardReadinessCheck.Type;
 
-export const BOARD_READINESS_CHECK_KINDS = [
+const BOARD_READINESS_CHECK_KINDS = [
   "command",
   "rustToolchain",
   "file",
@@ -56,7 +56,9 @@ const KIND_EXTRA_KEYS: Readonly<Record<BoardReadinessCheckKind, ReadonlyArray<st
   writable: [],
 };
 
-export function boardReadinessCheckKind(check: BoardReadinessCheck): BoardReadinessCheckKind | null {
+export function boardReadinessCheckKind(
+  check: BoardReadinessCheck,
+): BoardReadinessCheckKind | null {
   return BOARD_READINESS_CHECK_KINDS.find((kind) => check[kind] !== undefined) ?? null;
 }
 
@@ -99,7 +101,8 @@ export function classifyBoardReadinessCheckPath(
   const trimmed = path.trim();
   if (trimmed === "" || trimmed.includes("\\") || trimmed.includes("**")) return null;
   const head = trimmed.split("/")[0]!;
-  const machine = trimmed.startsWith("/") || (MACHINE_PREFIXES as ReadonlyArray<string>).includes(head);
+  const machine =
+    trimmed.startsWith("/") || (MACHINE_PREFIXES as ReadonlyArray<string>).includes(head);
   const rest = trimmed.split("/").slice(trimmed.startsWith("/") ? 1 : machine ? 1 : 0);
   if (rest.some((segment) => segment === "..")) return null;
   if ((head.startsWith("$") || head.startsWith("~")) && !machine) return null;
@@ -124,11 +127,7 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
 /** One `t3o.json` check, normalized, or null with a warning. Unknown fields warn and drop. */
-function decodeCheck(
-  raw: unknown,
-  where: string,
-  warnings: string[],
-): BoardReadinessCheck | null {
+function decodeCheck(raw: unknown, where: string, warnings: string[]): BoardReadinessCheck | null {
   if (!isRecord(raw)) {
     warnings.push(`${where}: expected an object; ignored.`);
     return null;
@@ -179,7 +178,8 @@ function decodeCheck(
         const hasFrom = version.from !== undefined;
         if (hasAtLeast === hasFrom) return bad("version", "needs exactly one of atLeast or from");
         if (hasAtLeast) {
-          const atLeast = typeof version.atLeast === "number" ? String(version.atLeast) : version.atLeast;
+          const atLeast =
+            typeof version.atLeast === "number" ? String(version.atLeast) : version.atLeast;
           if (typeof atLeast !== "string" || !VERSION_NUMBER.test(atLeast)) {
             return bad("version.atLeast", "expected a version like 10 or 1.2.3");
           }
@@ -204,7 +204,10 @@ function decodeCheck(
               ? classifyBoardReadinessCheckPath(entry, { glob: true, repo: false })
               : null;
           if (classified === null) {
-            return bad("paths", "each must be absolute or start with ~, with * only inside one folder name");
+            return bad(
+              "paths",
+              "each must be absolute or start with ~, with * only inside one folder name",
+            );
           }
           paths.push(classified.path);
         }
@@ -228,7 +231,8 @@ function decodeCheck(
         typeof value === "string"
           ? classifyBoardReadinessCheckPath(value, { glob: false, repo: true })
           : null;
-      if (path === null) return bad("file", "must be absolute, ~, $HOME, $TMPDIR or in the repository");
+      if (path === null)
+        return bad("file", "must be absolute, ~, $HOME, $TMPDIR or in the repository");
       if (typeof raw.contains !== "string" || raw.contains === "") {
         return bad("contains", "a file check needs the text it must contain");
       }
@@ -257,7 +261,10 @@ function decodeCheck(
       }
       if (!isRecord(value)) return bad("docker", "expected true or { plugins }");
       const plugins = value.plugins ?? [];
-      if (!Array.isArray(plugins) || plugins.some((p) => typeof p !== "string" || !DOCKER_PLUGIN.test(p))) {
+      if (
+        !Array.isArray(plugins) ||
+        plugins.some((p) => typeof p !== "string" || !DOCKER_PLUGIN.test(p))
+      ) {
         return bad("docker.plugins", "expected plugin names like compose");
       }
       out.docker = { plugins: plugins as string[] };
@@ -271,7 +278,8 @@ function decodeCheck(
       break;
     }
     case "gh": {
-      if (typeof value !== "string" || !HOSTNAME.test(value)) return bad("gh", "expected a host name");
+      if (typeof value !== "string" || !HOSTNAME.test(value))
+        return bad("gh", "expected a host name");
       out.gh = value;
       break;
     }
@@ -309,7 +317,7 @@ function stableJson(value: unknown): string {
   if (isRecord(value)) {
     return `{${Object.keys(value)
       .filter((key) => value[key] !== undefined)
-      .toSorted()
+      .sort()
       .map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`)
       .join(",")}}`;
   }

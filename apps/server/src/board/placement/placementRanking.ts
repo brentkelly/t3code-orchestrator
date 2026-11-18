@@ -344,7 +344,9 @@ export function placementFacts(input: {
       boardReadinessIsFor(entry, input.repositoryKey, input.projectId),
     ) ?? null;
   const tooOld =
-    input.readinessConfigured === true && snapshot !== null && !boardWorkerSpeaksReadiness(snapshot);
+    input.readinessConfigured === true &&
+    snapshot !== null &&
+    !boardWorkerSpeaksReadiness(snapshot);
   const readiness: PlacementWorkerFacts["readiness"] = tooOld
     ? "failed"
     : readinessEntry === null || readinessEntry.state === "ready"

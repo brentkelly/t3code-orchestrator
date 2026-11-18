@@ -1,16 +1,26 @@
-// @effect-diagnostics nodeBuiltinImport:off - plain Node, shared by the readiness check and CI.
+// @effect-diagnostics nodeBuiltinImport:off - plain Node, for CI's install step.
 /* oxlint-disable t3code/no-global-process-runtime -- standalone Node scripts; no Effect runtime. */
 // T3o: where the web browser tests' headless chromium should be, for the Playwright that
-// apps/web resolves. The readiness check reports it; CI's install step installs it.
+// apps/web resolves. CI's install step installs it.
 import * as NodeFS from "node:fs";
 import * as NodeModule from "node:module";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
-import { headlessShellDir } from "./t3o-ready.ts";
+/** The headless shell's install directory name (what vitest's chromium launches), or null. */
+export function headlessShellDir(browsersJson: unknown): string | null {
+  const browsers = (browsersJson as { browsers?: ReadonlyArray<unknown> } | null)?.browsers ?? [];
+  for (const entry of browsers) {
+    const { name, revision } = (entry ?? {}) as { name?: unknown; revision?: unknown };
+    if (name === "chromium-headless-shell" && typeof revision === "string") {
+      return `chromium_headless_shell-${revision}`;
+    }
+  }
+  return null;
+}
 
 /** The `playwright-core` directory apps/web's `playwright` resolves, or null before install. */
-export function playwrightCore(root: string): string | null {
+function playwrightCore(root: string): string | null {
   try {
     const web = NodeModule.createRequire(NodePath.join(root, "apps/web/package.json"));
     const playwright = web.resolve("playwright/package.json");

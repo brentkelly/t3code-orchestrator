@@ -347,9 +347,7 @@ export function WorkersSection(props: {
                 projects={projects}
                 setups={state.setups}
                 readiness={snapshot?.readiness ?? []}
-                readinessProtocol={
-                  snapshot == null ? null : (snapshot.readinessProtocol ?? 0)
-                }
+                readinessProtocol={snapshot == null ? null : (snapshot.readinessProtocol ?? 0)}
                 live={live}
                 nowMs={nowMs}
                 onDetails={setFailedSetup}

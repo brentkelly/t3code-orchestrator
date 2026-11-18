@@ -151,7 +151,11 @@ export const makeReadiness = (deps: {
     before: BoardWorkerReadiness,
   ) {
     const { repositoryKey, projectId, path, configKey } = entry.readiness;
-    const base = { ...whose(repositoryKey, projectId), path, ...(configKey === undefined ? {} : { configKey }) };
+    const base = {
+      ...whose(repositoryKey, projectId),
+      path,
+      ...(configKey === undefined ? {} : { configKey }),
+    };
     if (normalizeBoardReadinessPath(path) === null) {
       // Never read as "no script": that would count the worker ready.
       entry.readiness = {
@@ -263,7 +267,13 @@ export const makeReadiness = (deps: {
           ...(skipped ? { scriptSkipped: "not-trusted" as const } : {}),
           ...(checkResults.length === 0
             ? {}
-            : { checks: { passed: counted("pass"), failed: counted("fail"), warned: counted("warn") } }),
+            : {
+                checks: {
+                  passed: counted("pass"),
+                  failed: counted("fail"),
+                  warned: counted("warn"),
+                },
+              }),
           ...(fetched ? {} : { fetchFailed: true }),
         };
     return entry.readiness;
