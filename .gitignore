@@ -16,6 +16,10 @@ build/
 release/
 release-mock/
 .t3
+# T3o: track the cron cleanup script for t3o's test leftovers; .t3 is otherwise local state.
+!/.t3/
+/.t3/*
+!/.t3/cleanup.sh
 .idea/
 apps/web/.playwright
 apps/web/playwright-report

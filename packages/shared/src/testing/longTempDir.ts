@@ -3,7 +3,6 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import { inject } from "vite-plus/test";
 import * as HostProcess from "../HostProcess.ts";
-import type {} from "./runTempDir.ts";
 
 // The run's own temp folder from runTempDir.ts; absent when a config has no globalSetup.
 const runTempDir = inject("t3oRunTempDir");

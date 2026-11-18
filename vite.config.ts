@@ -154,7 +154,9 @@ export default defineConfig({
     },
     // T3o: one temp folder per test run, removed at the end; longTempDir.ts points each worker at it.
     globalSetup: [
-      NodeURL.fileURLToPath(new URL("./packages/shared/src/testing/runTempDir.ts", import.meta.url)),
+      NodeURL.fileURLToPath(
+        new URL("./packages/shared/src/testing/runTempDir.ts", import.meta.url),
+      ),
     ],
     setupFiles: [
       NodeURL.fileURLToPath(
