@@ -4,7 +4,7 @@
  * in the T3 home, and Chromium profiles a killed preview browser left in the temp folder. Only
  * this user's, and only once nothing can still be using them.
  */
-import * as NodeFS from "node:fs/promises";
+import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
@@ -27,7 +27,7 @@ export interface ServerLeftoversInput {
 const profileInUse = async (profile: string, input: ServerLeftoversInput): Promise<boolean> => {
   let target: string;
   try {
-    target = await NodeFS.readlink(NodePath.join(profile, "SingletonLock"));
+    target = await NodeFSP.readlink(NodePath.join(profile, "SingletonLock"));
   } catch {
     return false;
   }
@@ -39,7 +39,7 @@ const profileInUse = async (profile: string, input: ServerLeftoversInput): Promi
 
 const entries = async (dir: string) => {
   try {
-    return await NodeFS.readdir(dir);
+    return await NodeFSP.readdir(dir);
   } catch {
     return [];
   }
@@ -52,7 +52,7 @@ export const sweepServerLeftovers = async (
   const removed: Array<string> = [];
   const staleOwn = async (path: string, minAgeMs: number) => {
     try {
-      const stat = await NodeFS.lstat(path);
+      const stat = await NodeFSP.lstat(path);
       return stat.uid === input.uid && input.nowMs - stat.mtimeMs >= minAgeMs;
     } catch {
       return false;
@@ -62,7 +62,7 @@ export const sweepServerLeftovers = async (
     if (!STATUS_TEMP.test(name)) continue;
     const path = NodePath.join(input.home, name);
     if (!(await staleOwn(path, STATUS_TEMP_MIN_AGE_MS))) continue;
-    await NodeFS.rm(path, { force: true }).then(
+    await NodeFSP.rm(path, { force: true }).then(
       () => removed.push(path),
       () => undefined,
     );
@@ -72,7 +72,7 @@ export const sweepServerLeftovers = async (
     const path = NodePath.join(input.tempDir, name);
     if (!(await staleOwn(path, PROFILE_MIN_AGE_MS))) continue;
     if (await profileInUse(path, input)) continue;
-    await NodeFS.rm(path, { recursive: true, force: true }).then(
+    await NodeFSP.rm(path, { recursive: true, force: true }).then(
       () => removed.push(path),
       () => undefined,
     );

@@ -5,7 +5,7 @@
  * from a worktree that stays, prune old snapshot refs, and delete a deleted card's leftover
  * local branch. Each runs where the worktree is, behind the worker's own path guards.
  */
-import * as NodeFS from "node:fs/promises";
+import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
 import {
@@ -39,17 +39,17 @@ export const formatBoardBytes = (bytes: number): string => {
 };
 
 /** Bytes under `path`, not following symlinks. Unreadable entries count as zero. */
-export const diskBytes = async (path: string): Promise<number> => {
-  let stat: Awaited<ReturnType<typeof NodeFS.lstat>>;
+const diskBytes = async (path: string): Promise<number> => {
+  let stat: Awaited<ReturnType<typeof NodeFSP.lstat>>;
   try {
-    stat = await NodeFS.lstat(path);
+    stat = await NodeFSP.lstat(path);
   } catch {
     return 0;
   }
   if (!stat.isDirectory()) return stat.isFile() ? stat.size : 0;
   let entries: ReadonlyArray<string>;
   try {
-    entries = await NodeFS.readdir(path);
+    entries = await NodeFSP.readdir(path);
   } catch {
     return 0;
   }
@@ -183,7 +183,7 @@ export const snapshotBoardWorktree = Effect.fn("snapshotBoardWorktree")(function
     const updated = yield* run(git, "updateRef", input.worktreePath, ["update-ref", ref, sha]);
     if (updated.exitCode !== 0) return yield* fail("update-ref", updated);
     return { outcome: "snapshotted", ref, sha } satisfies BoardWorkspaceSnapshotResult;
-  }).pipe(Effect.ensuring(Effect.promise(() => NodeFS.rm(index, { force: true }))));
+  }).pipe(Effect.ensuring(Effect.promise(() => NodeFSP.rm(index, { force: true }))));
 });
 
 /**
@@ -221,15 +221,15 @@ export const stripBoardWorktree = Effect.fn("stripBoardWorktree")(function* (inp
       const relative = NodePath.relative(input.worktreePath, target);
       if (relative === "" || relative.startsWith("..") || NodePath.isAbsolute(relative)) continue;
       freed += await diskBytes(target);
-      await NodeFS.rm(target, { recursive: true, force: true }).catch(() => undefined);
+      await NodeFSP.rm(target, { recursive: true, force: true }).catch(() => undefined);
     }
     return freed;
   });
   yield* Effect.promise(async () => {
     for (const marker of [SETUP_DONE_MARKER, SETUP_FAILED_MARKER, STRIP_PENDING_MARKER]) {
-      await NodeFS.rm(NodePath.join(input.gitDir, marker), { force: true }).catch(() => undefined);
+      await NodeFSP.rm(NodePath.join(input.gitDir, marker), { force: true }).catch(() => undefined);
     }
-    await NodeFS.writeFile(NodePath.join(input.gitDir, STRIPPED_MARKER), "stripped\n").catch(
+    await NodeFSP.writeFile(NodePath.join(input.gitDir, STRIPPED_MARKER), "stripped\n").catch(
       () => undefined,
     );
   });
@@ -238,14 +238,14 @@ export const stripBoardWorktree = Effect.fn("stripBoardWorktree")(function* (inp
 
 export const writeStripPendingMarker = (gitDir: string, reason: string) =>
   Effect.promise(() =>
-    NodeFS.writeFile(NodePath.join(gitDir, STRIP_PENDING_MARKER), `${reason}\n`).catch(
+    NodeFSP.writeFile(NodePath.join(gitDir, STRIP_PENDING_MARKER), `${reason}\n`).catch(
       () => undefined,
     ),
   );
 
 export const hasMarker = (gitDir: string, marker: string) =>
   Effect.promise(() =>
-    NodeFS.access(NodePath.join(gitDir, marker)).then(
+    NodeFSP.access(NodePath.join(gitDir, marker)).then(
       () => true,
       () => false,
     ),

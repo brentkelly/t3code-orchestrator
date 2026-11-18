@@ -7792,12 +7792,9 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * Give a finished card's worktree back as `worktreeAtDone` says. `remove` saves uncommitted work
-   * and removes it forced (cancelled work only when clean: its branch goes with it);
-   * `remove-if-clean` removes it only when its work is durable, else keeps it and records why;
-   * `keep` keeps it. A worktree that stays is stripped (`stripKeptWorktree`). Idempotent: a
-   * repeated refusal dispatches nothing. The card is re-read before removal, since the probe's
-   * fetches leave time for a human to bring it back into use.
+   * Give a finished card's worktree back as `worktreeAtDone` says; cancelled work is removed only
+   * when clean, since its branch goes with it. A worktree that stays is stripped. A repeated
+   * refusal dispatches nothing; `stillWanted` is re-asked before removal.
    */
   const reclaimCardWorktree = Effect.fn("board-supervisor-reclaimCardWorktree")(function* (
     card: BoardCard,
