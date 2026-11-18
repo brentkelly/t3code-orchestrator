@@ -24,6 +24,10 @@ import { tailwindPlugins } from "./vite/tailwind";
 // T3o: release stamp define; see vite/t3oReleaseDefine.ts.
 import { t3oReleaseDefine } from "./vite/t3oReleaseDefine";
 import { warmBundledDevPlugin } from "./vite/warmBundledDev";
+// T3o: Vitest warm-launches Chromium before globalSetup, so claim the run's temp folder now.
+import { ensureRunTempDir } from "../../packages/shared/src/testing/runTempDir.ts";
+
+if (process.env.VITEST) ensureRunTempDir();
 
 const repoEnv = loadRepoEnv();
 Object.assign(process.env, repoEnv);
@@ -395,6 +399,8 @@ export default defineConfig(() => {
     },
     worker: { format: "es" },
     test: {
+      // T3o: one temp folder per test run, so Chromium profiles land there and go with it.
+      globalSetup: ["../../packages/shared/src/testing/runTempDir.ts"],
       projects: [
         defineProject(unitTestProject),
         defineProject(browserTestProject),
