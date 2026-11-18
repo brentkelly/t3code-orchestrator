@@ -7580,15 +7580,15 @@ const make = Effect.gen(function* () {
   );
 
   /**
-   * T3o (T3O-123): whether Done's branch cleanup will delete this card's own branch, the same
-   * tests `cleanupBranchOnDone` applies. A forced removal must not run then: the branch is the
-   * only place commits made after the merge survive.
+   * T3o (T3O-123): whether Done's branch cleanup will, now or once its open PR merges, delete
+   * this card's own branch: the tests `cleanupBranchOnDone` applies, bar the merge itself. A
+   * forced removal must not run then: the branch is the only place unpushed commits survive.
    */
   const branchDeletedAtDone = Effect.fn("board-supervisor-branchDeletedAtDone")(function* (
     card: BoardCard,
   ) {
     const pullRequest = card.pullRequest;
-    if (card.worktree === null || pullRequest === null || pullRequest.state !== "merged") {
+    if (card.worktree === null || pullRequest === null || pullRequest.state === "closed") {
       return false;
     }
     if (pullRequest.headBranch !== card.worktree.branch) return false;
@@ -7853,7 +7853,7 @@ const make = Effect.gen(function* () {
     }
     const trigger = options?.trigger ?? "sweep";
     const configured = (yield* boardSettings).lifecycle.worktreeAtDone;
-    // Cancelled work, and a merged card whose branch Done deletes, are removed only when clean:
+    // Cancelled work, and a card whose branch Done deletes (now or on merge), go only when clean:
     // the branch goes with the worktree, so it cannot keep their unpushed commits.
     const branchGoes =
       configured === "remove" && options?.cancelled !== true && (yield* branchDeletedAtDone(card));
@@ -7890,7 +7890,7 @@ const make = Effect.gen(function* () {
           )
         : {
             fallback: branchGoes
-              ? "It was not force-removed: its merged branch is deleted at Done, so only a clean worktree goes"
+              ? "It was not force-removed: its branch is deleted at Done once its pull request merges, so only a clean worktree goes"
               : null,
           };
     if (forced === null || forced === "failed") {

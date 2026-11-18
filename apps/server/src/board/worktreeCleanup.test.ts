@@ -1060,10 +1060,50 @@ describe("worktreeAtDone: remove (T3O-123)", () => {
           assert.deepEqual(yield* h.removedWorktrees, []);
           const kept = (yield* h.board).cards[0]!.worktree;
           assert.equal(kept?.status, "ready");
-          assert.include(kept?.reclaimBlockedReason ?? "", "its merged branch is deleted at Done");
+          assert.include(kept?.reclaimBlockedReason ?? "", "its branch is deleted at Done");
         }),
     ),
   );
+
+  it.effect("an open pull request that merges after the reclaim found its worktree kept", () => {
+    let forge = forgePr("open");
+    const forced: Array<string> = [];
+    return withGovernor(
+      {
+        board: {
+          nextCardNumberByProject: {},
+          cards: [doneCard({ pullRequest: cachedPr("open") })],
+        },
+        settings: settings("remove"),
+        pullRequestOf: () => forge,
+        worktreeUndurable: true,
+        workspaces: withWorktreeOps({
+          snapshotWorktree: () =>
+            Effect.sync(() => {
+              forced.push("snapshot");
+              return { outcome: "snapshotted", ref: SNAPSHOT_REF, sha: "a".repeat(40) } as const;
+            }),
+          retireWorktree: () =>
+            Effect.sync(() => {
+              forced.push("retire");
+              return { outcome: "removed", hookWarning: null } as const;
+            }),
+        }),
+      },
+      (h) =>
+        Effect.gen(function* () {
+          yield* h.reactor.drainWorktreeSweep;
+          assert.deepEqual(forced, []);
+          assert.equal((yield* h.board).cards[0]!.worktree?.status, "ready");
+          // The merge lands later; Done's branch cleanup runs with the worktree still holding it.
+          forge = forgePr("merged");
+          yield* h.reactor.refreshPullRequest((yield* h.board).cards[0]!.id);
+          assert.equal((yield* h.board).cards[0]!.pullRequest?.state, "merged");
+          assert.deepEqual(forced, []);
+          assert.equal((yield* h.board).cards[0]!.worktree?.status, "ready");
+        }),
+    );
+  });
 
   it.effect("falls back to the safety rule, saying why, when the changes are over the cap", () =>
     withGovernor(
