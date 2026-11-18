@@ -6,7 +6,6 @@
  * run first, and the script only when the board trusts the project.
  */
 import * as NodeFS from "node:fs";
-import * as NodeOS from "node:os";
 
 import { BOARD_CAPACITY_LOG_MAX_BYTES, type BoardReadinessCheck } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
@@ -37,42 +36,45 @@ const makeHarness = () => {
     log: null as string | null,
     /** Everything run, in order: check commands as `check <argv>`, the script as `script`. */
     events: [] as Array<string>,
-    /** Whether each check's cwd was an empty folder when it ran. */
-    checkCwds: [] as Array<{ readonly cwd: string; readonly empty: boolean }>,
-    /** Repository files the checks read, by path. */
-    files: new Map<string, string>(),
+    /** The worker environment `env` checks read. */
+    env: {} as Record<string, string | undefined>,
+    /** Each script run's timeout. */
+    timeouts: [] as Array<number>,
   };
   const readiness = makeReadiness({
     git: {
       checkout: () => Effect.sync(() => state.checkout),
       fetch: () => Effect.sync(() => state.fetchOk),
-      committed: (_checkout, path) =>
-        Effect.sync(() =>
-          path === ".t3/ready.sh" || path.endsWith("ready.sh")
-            ? state.script
-            : state.files.has(path)
-              ? { version: `blob:${path}`, text: state.files.get(path)! }
-              : null,
-        ),
-      has: (_checkout, path) => Effect.sync(() => state.files.has(path)),
+      committed: () => Effect.sync(() => state.script),
+      blob: () => Effect.succeed(null),
+      remote: () => Effect.succeed("origin"),
     },
     host: {
       run: (call) =>
         Effect.sync(() => {
           state.events.push(`check ${call.args.join(" ")}`);
-          state.checkCwds.push({ cwd: call.cwd, empty: NodeFS.readdirSync(call.cwd).length === 0 });
           return { exitCode: 0, stdout: "", stderr: "", timedOut: false };
         }),
-      env: { PATH: "", HOME: "/nonexistent-home", TMPDIR: "/nonexistent-tmp" },
+      get env() {
+        return { PATH: "", ...state.env };
+      },
+      home: "/nonexistent-home",
+      tmpdir: "/nonexistent-tmp",
+      platform: "linux",
+      arch: "x64",
+      uid: null,
+      homebrewPrefixes: [],
       forbiddenRoots: Effect.succeed([]),
     },
     runStep: ((input: {
       readonly command: string;
+      readonly timeoutMs: number;
       readonly tail: { push(text: string): void };
       readonly logPath?: string;
     }) =>
       Effect.gen(function* () {
         state.runs.push(input.command);
+        state.timeouts.push(input.timeoutMs);
         state.events.push("script");
         if (state.log !== null && input.logPath !== undefined) {
           NodeFS.writeFileSync(input.logPath, state.log);
@@ -271,14 +273,11 @@ it.effect("an untrusted script is not run, is reported, and the worker stays rea
   }),
 );
 
-it.effect("checks run first from an empty folder; a trusted script runs after them", () =>
+it.effect("checks run first; a trusted script runs after them", () =>
   Effect.gen(function* () {
     const { state, readiness } = makeHarness();
-    state.files.set(".node-version", "22\n");
-    const checks: ReadonlyArray<BoardReadinessCheck> = [
-      { exists: ".node-version" },
-      { git: "identity" },
-    ];
+    state.env.PRESENT = "1";
+    const checks: ReadonlyArray<BoardReadinessCheck> = [{ env: "PRESENT" }, { git: "identity" }];
     const result = yield* readiness.check("board-a", { ...input, checks });
     assert.deepStrictEqual(state.events.at(-1), "script");
     assert.isTrue(state.events.slice(0, -1).every((event) => event.startsWith("check ")));
@@ -287,7 +286,7 @@ it.effect("checks run first from an empty folder; a trusted script runs after th
     assert.include(result.lastLine ?? "", "git identity");
     assert.deepInclude(result, { checks: { passed: 1, failed: 1, warned: 0 } });
     const output = readiness.output(result) ?? "";
-    assert.match(output, /^pass {2}\.node-version/);
+    assert.match(output, /^pass {2}\$PRESENT/);
     assert.include(output, "FAIL  git identity");
     assert.include(output, "checking docker");
 
@@ -295,40 +294,18 @@ it.effect("checks run first from an empty folder; a trusted script runs after th
     yield* TestClock.adjust(60_000);
     const warned = yield* readiness.check("board-a", {
       ...input,
-      checks: [{ exists: ".node-version" }, { git: "identity", warn: true }],
+      checks: [{ env: "PRESENT" }, { git: "identity", warn: true }],
       requested: true,
     });
     assert.deepInclude(warned, { state: "ready", checks: { passed: 1, failed: 0, warned: 1 } });
   }).pipe(Effect.provide(TestClock.layer())),
 );
 
-it.effect("a check that runs a command starts in an empty folder, never the checkout", () =>
-  Effect.gen(function* () {
-    const { state, readiness } = makeHarness();
-    const bin = NodeFS.mkdtempSync(`${NodeOS.tmpdir()}/t3o-ready-test-bin-`);
-    try {
-      NodeFS.writeFileSync(`${bin}/tool`, "#!/bin/sh\necho 9.1.0\n", { mode: 0o755 });
-      yield* readiness.check("board-a", {
-        ...input,
-        runScript: false,
-        checks: [{ command: "tool", paths: [bin], version: { atLeast: "1" } }],
-      });
-      assert.lengthOf(state.checkCwds, 1);
-      assert.isTrue(state.checkCwds[0]!.empty);
-      assert.notStrictEqual(state.checkCwds[0]!.cwd, "/repo");
-      // The run folder is gone afterwards.
-      assert.isFalse(NodeFS.existsSync(state.checkCwds[0]!.cwd));
-    } finally {
-      NodeFS.rmSync(bin, { recursive: true, force: true });
-    }
-  }),
-);
-
 it.effect("trust and checks key separate entries; the sweep reruns what each asked", () =>
   Effect.gen(function* () {
     const { state, readiness } = makeHarness();
-    state.files.set("marker", "x");
-    const trusted = { ...input, checks: [{ exists: "marker" }] as const, runScript: true };
+    state.env.MARKER = "x";
+    const trusted = { ...input, checks: [{ env: "MARKER" }] as const, runScript: true };
     const untrusted = { ...trusted, runScript: false };
     const a = yield* readiness.check("board-a", trusted);
     const b = yield* readiness.check("board-b", untrusted);
@@ -338,7 +315,7 @@ it.effect("trust and checks key separate entries; the sweep reruns what each ask
     assert.strictEqual(b.scriptSkipped, "not-trusted");
     // An hour on, the sweep re-runs both with their own checks and trust: one script run more.
     yield* TestClock.adjust(READINESS_PASSING_INTERVAL_MS);
-    state.files.delete("marker");
+    delete state.env.MARKER;
     yield* readiness.sweep();
     assert.lengthOf(state.runs, 2);
     assert.strictEqual(readiness.forBoard("board-b")[0]?.scriptSkipped, "not-trusted");
@@ -350,4 +327,12 @@ it.effect("trust and checks key separate entries; the sweep reruns what each ask
     assert.strictEqual(readiness.forBoard("board-a")[0]?.state, "not-ready");
     assert.strictEqual(readiness.forBoard("board-b")[0]?.state, "not-ready");
   }).pipe(Effect.provide(TestClock.layer())),
+);
+
+it.effect("timeoutSeconds is clamped to 600 however large the project sets it", () =>
+  Effect.gen(function* () {
+    const { state, readiness } = makeHarness();
+    yield* readiness.check("board-a", { ...input, timeoutSeconds: 10 ** 9 });
+    assert.deepStrictEqual(state.timeouts, [600_000]);
+  }),
 );

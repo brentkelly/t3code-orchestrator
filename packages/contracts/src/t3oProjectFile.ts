@@ -30,7 +30,11 @@ import {
   type BoardState,
 } from "./board.ts";
 import { normalizeBoardReadinessPath, type BoardProjectResources } from "./boardCapacity.ts";
-import { decodeBoardReadinessChecks, type BoardReadinessCheck } from "./boardReadinessChecks.ts";
+import {
+  BOARD_READINESS_MAX_TIMEOUT_SECONDS,
+  decodeBoardReadinessChecks,
+  type BoardReadinessCheck,
+} from "./boardReadinessChecks.ts";
 
 // T3o: a `t3o.json` is only an import/export format for a
 // project's delta, never read at run time.
@@ -573,6 +577,15 @@ function decodeResources(value: unknown, warnings: string[]): BoardProjectResour
         "resources.readiness.timeoutSeconds",
         warnings,
       );
+      if (
+        readinessTimeoutSeconds !== null &&
+        readinessTimeoutSeconds > BOARD_READINESS_MAX_TIMEOUT_SECONDS
+      ) {
+        warnings.push(
+          `resources.readiness.timeoutSeconds: at most ${BOARD_READINESS_MAX_TIMEOUT_SECONDS}; clamped.`,
+        );
+        readinessTimeoutSeconds = BOARD_READINESS_MAX_TIMEOUT_SECONDS;
+      }
     }
   }
   return {

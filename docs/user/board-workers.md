@@ -261,47 +261,88 @@ checks and no trusted script is ready wherever it has a checkout.
 
 Readiness comes from two places:
 
-- **Checks** in the project's `t3o.json`, under `resources.readiness.checks`. T3o runs them itself
-  with fixed arguments, from an empty folder, so no project code runs on the hourly timer.
+- **Checks** in the project's `t3o.json`, under `resources.readiness.checks`. T3o runs them itself:
+  nothing in `t3o.json` chooses which program runs, what arguments it gets, or which file is read,
+  so no project code runs on the hourly timer.
 - **The readiness script** (`.t3/ready.sh` unless the Resources tab names another), as committed on
   the default branch. It runs only if you switch on **Run this project's readiness script** in the
   project's Resources tab. It runs on every worker, every hour, as you, so whatever lands on the
-  default branch runs next: only switch it on for projects whose code you trust. Until you do, the
-  script is skipped and the worker row says so, without making the worker not-ready.
+  default branch runs next: only switch it on for projects whose code you trust. No project is
+  trusted until you switch it on, and agents can't switch it on. Until you do, the script is skipped
+  and the worker row says so, without making the worker not-ready.
 
-Every check takes an optional `name`, a `fix` shown when it fails, and `"warn": true` to report a
-failure as a warning instead of not-ready:
+Every check takes an optional `name`, a `fix` shown when it fails (labelled as suggested by the
+project, plain text, at most 200 characters), `"warn": true` to report a failure as a warning
+instead of not-ready, and `os` (`linux`, `darwin`, `win32`) or `arch` (`x64`, `arm64`) to run
+only on matching workers; elsewhere it shows as skipped.
 
 ```json
 "readiness": {
   "checks": [
-    { "command": "cmake", "fix": "sudo apt install cmake" },
-    { "command": "node", "version": { "from": ".node-version" }, "paths": ["~/.local/share/mise/installs/node/*/bin"] },
-    { "command": "pnpm", "version": { "atLeast": "10" } },
+    { "command": "cmake", "fix": "sudo apt install cmake", "os": ["linux"] },
+    { "command": "node", "version": { "from": ".node-version" } },
+    { "command": "pnpm" },
     { "rustToolchain": "rust-toolchain.toml" },
-    { "file": "~/.cargo/config.toml", "contains": "rustc-slot" },
-    { "exists": "~/.cache/ms-playwright/chromium-*", "warn": true },
-    { "docker": { "plugins": ["compose", "buildx"] } },
+    { "cargoConfig": { "contains": "rustc-slot" } },
+    { "exists": "$PLAYWRIGHT_BROWSERS_PATH/chromium-*" },
+    { "exists": "~/.local/state/build-seed/refresh.log", "maxAgeHours": 3, "warn": true },
+    { "env": "ANDROID_HOME" },
+    { "docker": { "plugins": ["compose", "buildx"], "loggedIn": ["ghcr.io"] } },
     { "git": "identity" }, { "git": "fetch" }, { "git": "push" },
     { "gh": "github.com" },
     { "writable": "$TMPDIR" }
-  ]
+  ],
+  "timeoutSeconds": 120
 }
 ```
 
-- `command`: on the worker's `PATH` or in one of `paths` (`*` matches within one folder name).
-  Without `version` nothing is run. With `version`, T3o runs `<command> --version` and compares it to
-  `atLeast`, or to the lowest major version a repository file names (`package.json`'s
-  `engines.<command>`, or a plain file like `.node-version`). A binary inside a checkout, a
-  worktree, a temp folder, `~/.cache` or the T3 home is refused.
-- `rustToolchain`: the `channel` the named repository file pins is installed in rustup.
-- `file` with `contains`: the file holds that text. `exists`: the path is there. Paths may start
-  with `/`, `~`, `$HOME` or `$TMPDIR`, or be relative, read from the default branch.
-- `docker`: the daemon answers and each listed plugin is installed.
-- `git`: `identity` (user.name and user.email set), `fetch` (origin answers without a prompt), or
-  `push` (a dry-run push that never runs a repository hook).
+- `command`: a bare name, found on the worker's `PATH` or in the usual places mise, asdf, nvm, fnm,
+  volta, rustup and Homebrew install to. Without `version`, nothing is run: the file just has to be
+  there and executable. A binary is refused if another user owns it, others can write to it, or it
+  sits in a checkout, a worktree, a temp folder, `~/.cache`, a package store (`~/.npm`, cargo's
+  registry, `node_modules`, …) or the T3 home.
+- `version` works only for `node npm pnpm yarn bun deno cmake make gcc clang git docker gh python3
+  go java ruby php dotnet rustc cargo xcodebuild`, and only when the binary is a native program:
+  T3o runs it with that tool's own version flag and compares the first version number to
+  `atLeast`, or to the major version a repository file on the default branch names (`.node-version`,
+  `.nvmrc`, `package.json`'s `engines.<command>`, `.python-version`, `pyproject.toml`, `go.mod`,
+  `.ruby-version`, `.java-version`, `composer.json`, `global.json`). A tool that is a script (npm, a
+  corepack pnpm) gets a warning that its version wasn't checked. Aliases like `lts/*` warn too.
+- `rustToolchain`: the `channel` the repository's `rust-toolchain.toml` pins is installed in rustup.
+- `cargoConfig`: your cargo config (`$CARGO_HOME/config.toml` or `~/.cargo/config.toml`) contains
+  the text. Lines whose key mentions a token, password, secret, credential or auth never match.
+- `exists`: the path is there, and with `maxAgeHours`, was modified that recently. `writable`: you
+  can write to the path; nothing is created. Paths start with `/`, `~/` or one of `$HOME`, `$TMPDIR`,
+  `$ANDROID_HOME`, `$ANDROID_SDK_ROOT`, `$JAVA_HOME`, `$CARGO_HOME`, `$RUSTUP_HOME`,
+  `$PLAYWRIGHT_BROWSERS_PATH` or `$XDG_*`; never `..` or a path inside the repository. They must
+  stay under your home, the temp folder, `/usr`, `/opt`, `/etc`, `/nix`, `/dev`, `/Library` or
+  `/Applications`, never `/proc`, `/sys`, `/run` or a network mount. `exists` may use `*` within a
+  folder name, in at most two folders, and not directly under your home.
+- `env`: the environment variable is set and non-empty. Its value is never shown.
+- `docker`: the daemon answers `docker info`, each plugin is installed, and you are logged in to
+  each `loggedIn` registry (read from the keys of your Docker config, never the credentials).
+- `git`: `identity` (your global user.name and user.email), `fetch` (the remote answers without a
+  prompt), or `push` (GitHub says you can push, asked through `gh`; other hosts give a warning).
+  **These contact the remote every hour, with your credentials.** No repository hook runs.
 - `gh`: the GitHub CLI is signed in to that host.
-- `writable`: the folder exists and a file can be created in it.
+
+At most 50 checks run per project; they share `timeoutSeconds` (at most 600) with the script, and
+every one runs even after one fails. Each check runs from `/`, with no input and only a short list
+of environment variables (`PATH`, `HOME`, locale, `TMPDIR`, `XDG_*`, the SSH agent, Docker and Rust
+homes, and GitHub tokens for `gh`). On Windows workers, checks that run a program show as
+unsupported.
+
+**Kinds T3o will not add**, so a project can never use readiness to do these: arbitrary commands or
+arguments; network probes (they could reach cloud metadata or your LAN, and tell a repository's
+author which machines run it); cloud or Kubernetes sign-in checks (they run credential helpers and
+touch real clusters); package-manager queries like `pip show`, `npm ls` or Python imports (they run
+code); `gradle`/`mvn --version`, `sdkmanager` and `xcrun simctl`; disk, memory or CPU checks (the
+capacity model owns those); `/proc` and sysctl reads; and reading arbitrary files.
+
+**What readiness can't protect against.** Code a project already ran on a machine (its setup, CI or
+a card's agent) ran as you and can persist itself: in the checkout's `.git/config`, a version
+manager's config, Docker CLI plugins, shell profiles and so on. The hourly checks may then run it.
+Readiness can't close that; only running workers under a separate account would.
 
 A board that doesn't know a check ignores it with a warning on import, so a newer `t3o.json` still
 imports on an older board. A worker on an older T3o can't run checks, and could run a script you

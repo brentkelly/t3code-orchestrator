@@ -907,7 +907,7 @@ describe("applyServerSettingsPatch board settings (T3o, D4)", () => {
     const current = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
       board: {
         pipeline: { [BOARD_SEED_STAGE_IDS.building]: buildingWith("model-a") },
-        projects: { [project]: { keyPrefix: "T3", hidden: false } },
+        projects: { [project]: { keyPrefix: "T3", hidden: false, trustReadinessScript: false } },
       },
     });
     expect(current.board.pipeline[BOARD_SEED_STAGE_IDS.building]?.model).toEqual({
@@ -930,7 +930,9 @@ describe("applyServerSettingsPatch board settings (T3o, D4)", () => {
 
   it("leaves board settings untouched when a non-board field is patched", () => {
     const current = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
-      board: { projects: { [project]: { keyPrefix: "T3", hidden: false } } },
+      board: {
+        projects: { [project]: { keyPrefix: "T3", hidden: false, trustReadinessScript: false } },
+      },
     });
     const next = applyServerSettingsPatch(current, { enableProviderUpdateChecks: false });
     expect(next.enableProviderUpdateChecks).toBe(false);
@@ -939,22 +941,28 @@ describe("applyServerSettingsPatch board settings (T3o, D4)", () => {
 
   it("persists clearing a project override through deepMerge (null entry, not a deleted key)", () => {
     const configured = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
-      board: { projects: { [project]: { keyPrefix: "T3", hidden: false } } },
+      board: {
+        projects: { [project]: { keyPrefix: "T3", hidden: false, trustReadinessScript: false } },
+      },
     });
     expect(configured.board.projects[project]).toEqual({
       keyPrefix: "T3",
       hidden: false,
+      trustReadinessScript: false,
     });
 
     // The panel clears an override by sending a null-valued entry (never by
     // omitting the key — deepMerge would then keep the old override). deepMerge
     // overwrites the stored override with nulls, which resolve to the defaults.
     const cleared = applyServerSettingsPatch(configured, {
-      board: { projects: { [project]: { keyPrefix: null, hidden: false } } },
+      board: {
+        projects: { [project]: { keyPrefix: null, hidden: false, trustReadinessScript: false } },
+      },
     });
     expect(cleared.board.projects[project]).toEqual({
       keyPrefix: null,
       hidden: false,
+      trustReadinessScript: false,
     });
     expect(resolveBoardKeyPrefix(cleared.board, project)).toBe(DEFAULT_BOARD_KEY_PREFIX);
   });

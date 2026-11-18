@@ -26,7 +26,6 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ServerConfig from "../../config.ts";
-import * as ProcessRunner from "../../processRunner.ts";
 import { ServerEnvironment } from "../../environment/ServerEnvironment.ts";
 import { ProviderRegistry } from "../../provider/ProviderRegistry.ts";
 import * as GitVcsDriver from "../../vcs/GitVcsDriver.ts";
@@ -52,7 +51,12 @@ import { EMPTY_CAPACITY_STATE, type CapacityRecord } from "./capacityModel.ts";
 import { makeCardSetup } from "./cardSetup.ts";
 import { BoardMachine, bytesToGB } from "./machine.ts";
 import { makeReadiness } from "./readiness.ts";
-import type { ReadinessCheckHost } from "./readinessChecks.ts";
+import {
+  READINESS_GIT_GUARD,
+  READINESS_HOMEBREW_PREFIXES,
+  type ReadinessCheckHost,
+} from "./readinessChecks.ts";
+import { spawnReadinessProbe } from "./readinessSpawn.ts";
 
 const RecordJson = Schema.fromJsonString(
   Schema.Array(
@@ -233,40 +237,17 @@ const makeBoardWorkerCapacityLive = Effect.gen(function* () {
     ]))?.trim();
     return originHead !== undefined && originHead.startsWith("origin/") ? originHead : "HEAD";
   });
-  const processRunner = yield* ProcessRunner.make();
   const home = yield* HostProcess.HomeDirectory;
-  const hostEnv = yield* HostProcess.Environment;
+  const platform = yield* HostProcess.Platform;
   const readinessHost: ReadinessCheckHost = {
-    run: (input) =>
-      processRunner
-        .run({
-          command: input.command,
-          args: input.args,
-          cwd: input.cwd,
-          timeout: `${input.timeoutMs} millis`,
-          timeoutBehavior: "timedOutResult",
-          maxOutputBytes: 256 * 1024,
-          outputMode: "truncate",
-          // Nothing may prompt: the worker has no terminal.
-          env: { GIT_TERMINAL_PROMPT: "0", GCM_INTERACTIVE: "never" },
-        })
-        .pipe(
-          Effect.map((output) => ({
-            exitCode: output.code === null ? null : Number(output.code),
-            stdout: output.stdout,
-            stderr: output.stderr,
-            timedOut: output.timedOut,
-          })),
-          Effect.catchCause(() =>
-            Effect.succeed({
-              exitCode: null,
-              stdout: "",
-              stderr: "could not start",
-              timedOut: false,
-            }),
-          ),
-        ),
-    env: { PATH: hostEnv.PATH ?? "", HOME: home, TMPDIR: NodeOS.tmpdir() },
+    run: (input) => spawnReadinessProbe(input, platform),
+    env: yield* HostProcess.Environment,
+    home,
+    tmpdir: NodeOS.tmpdir(),
+    platform,
+    arch: yield* HostProcess.Architecture,
+    uid: (yield* HostProcess.UserId) ?? null,
+    homebrewPrefixes: READINESS_HOMEBREW_PREFIXES,
     forbiddenRoots: Effect.gen(function* () {
       const projects = yield* local.projects().pipe(Effect.orElseSucceed(() => []));
       return [
@@ -275,10 +256,8 @@ const makeBoardWorkerCapacityLive = Effect.gen(function* () {
           .map((project) => project.workspaceRoot),
         config.worktreesDir,
         config.baseDir,
-        NodeOS.tmpdir(),
         "/tmp",
-        path.join(home, "tmp"),
-        path.join(home, ".cache"),
+        "/var/tmp",
       ];
     }),
   };
@@ -291,7 +270,13 @@ const makeBoardWorkerCapacityLive = Effect.gen(function* () {
           .resolvePrimaryRemoteName(checkout)
           .pipe(Effect.orElseSucceed(() => null));
         if (remote === null) return true;
-        return (yield* gitRead(checkout, ["fetch", "--quiet", remote], 60_000)) !== null;
+        return (
+          (yield* gitRead(
+            checkout,
+            [...READINESS_GIT_GUARD, "fetch", "--quiet", remote],
+            60_000,
+          )) !== null
+        );
       }),
       committed: Effect.fn("BoardWorkerCapacity.readinessScript")(function* (
         checkout: string,
@@ -300,15 +285,15 @@ const makeBoardWorkerCapacityLive = Effect.gen(function* () {
         const ref = yield* defaultRef(checkout);
         return yield* committedReadinessScript((args) => gitRead(checkout, args), ref, scriptPath);
       }),
-      has: Effect.fn("BoardWorkerCapacity.readinessRepoHas")(function* (
+      blob: Effect.fn("BoardWorkerCapacity.readinessBlob")(function* (
         checkout: string,
         repoPath: string,
       ) {
-        const normalized = normalizeBoardReadinessPath(repoPath);
-        if (normalized === null) return false;
         const ref = yield* defaultRef(checkout);
-        return (yield* gitRead(checkout, ["cat-file", "-e", `${ref}:${normalized}`])) !== null;
+        return yield* committedReadinessBlob((args) => gitRead(checkout, args), ref, repoPath);
       }),
+      remote: (checkout) =>
+        git.resolvePrimaryRemoteName(checkout).pipe(Effect.orElseSucceed(() => null)),
     },
   });
   const setup = makeCardSetup({
@@ -490,5 +475,24 @@ export const committedReadinessScript = Effect.fn("BoardWorkerCapacity.committed
     if (version === undefined || version === "") return null;
     const text = yield* read(["show", object]);
     return text === null ? null : { version, text };
+  },
+);
+
+/** A check's repository file (`version.from`, `rustToolchain`): its size is checked before it is
+    read, at most 64 KB, as the raw blob (no filters, textconv or replace refs). */
+export const committedReadinessBlob = Effect.fn("BoardWorkerCapacity.committedReadinessBlob")(
+  function* (
+    read: (args: ReadonlyArray<string>) => Effect.Effect<string | null>,
+    ref: string,
+    path: string,
+  ) {
+    const normalized = normalizeBoardReadinessPath(path);
+    if (normalized === null) return null;
+    const object = `${ref}:${normalized}`;
+    const git = ["--no-replace-objects", "cat-file"];
+    if ((yield* read([...git, "-t", object]))?.trim() !== "blob") return null;
+    const size = Number((yield* read([...git, "-s", object]))?.trim());
+    if (!Number.isInteger(size) || size > 64 * 1024) return null;
+    return yield* read([...git, "blob", object]);
   },
 );

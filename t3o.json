@@ -15,7 +15,6 @@
         },
         {
           "command": "pnpm",
-          "version": { "atLeast": "12" },
           "fix": "corepack enable pnpm, or npm install -g pnpm@12"
         },
         {
@@ -24,29 +23,32 @@
         },
         {
           "git": "fetch",
-          "fix": "give git a non-interactive credential for origin (gh auth setup-git, an SSH key, or docs/t3o/gitenv.md)"
+          "fix": "give git a non-interactive credential for the remote (gh auth setup-git, an SSH key, or docs/t3o/gitenv.md)"
         },
-        { "git": "push", "fix": "use a credential with write access to origin" },
+        { "git": "push", "fix": "gh auth login with an account that can push to the repository" },
         {
           "gh": "github.com",
           "fix": "install gh (https://cli.github.com), then gh auth login"
         },
         {
           "command": "make",
+          "os": ["linux"],
           "fix": "sudo apt install build-essential python3 (node-pty compiles on install)"
         },
         {
           "command": "c++",
+          "os": ["linux"],
           "fix": "sudo apt install build-essential python3 (node-pty compiles on install)"
         },
         {
           "command": "python3",
+          "os": ["linux"],
           "fix": "sudo apt install build-essential python3 (node-pty compiles on install)"
         },
         { "name": "writable temp dir", "writable": "$TMPDIR" },
         {
           "name": "test browser",
-          "exists": "~/.cache/ms-playwright/chromium_headless_shell-*",
+          "exists": "$PLAYWRIGHT_BROWSERS_PATH/chromium_headless_shell-*",
           "warn": true,
           "fix": "apps/web/node_modules/.bin/playwright install --with-deps chromium (CI's install step downloads it too)"
         }
