@@ -8177,11 +8177,6 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * One worktree-cleanup pass over Done-role cards, archived cards and cancelled work (each as
-   * `worktreeAtDone` says), and orphans. `refreshOpenPullRequests` (boot) re-reads Done cards still cached
-   * `open`, which may have merged since; that tiny set is the only forge call here.
-   */
-  /**
    * T3o (T3O-123): once a day, from the sweep: prune old snapshot refs in every checkout the
    * board has placed on, and delete the local branches of recently deleted cards that a lost
    * in-memory removal left behind. Best-effort; failures (an older worker) are only logged.
@@ -8249,6 +8244,11 @@ const make = Effect.gen(function* () {
   // When each worktree was last probed: a kept one is still retried on this interval, since
   // what keeps it (a dirty tree, unpushed or unmerged work) usually clears outside the board.
   const worktreeProbedAt = new Map<BoardCardId, number>();
+  /**
+   * One worktree-cleanup pass over Done-role cards, archived cards and cancelled work (each as
+   * `worktreeAtDone` says), and orphans. `refreshOpenPullRequests` (boot) re-reads Done cards still cached
+   * `open`, which may have merged since; that tiny set is the only forge call here.
+   */
   const sweepWorktrees = Effect.fn("board-supervisor-sweepWorktrees")(function* (options: {
     readonly refreshOpenPullRequests: boolean;
     /** Null re-probes every kept worktree (boot, a direct request). Otherwise the pass was

@@ -83,6 +83,10 @@ const AGENT_START_GRACE_MS = 30_000;
 const UNOWNED_SHARED_MS = 60_000;
 /** An unsettled worktree is measured at most this often. */
 const MEASURE_INTERVAL_MS = 5 * 60_000;
+/** A finished card's kept worktree shrinks once, when the strip after Done runs (T3O-123): it
+    is re-measured at the normal pace for a while after finishing, then only rarely. */
+const FINISHED_REMEASURE_WINDOW_MS = 2 * 60 * 60_000;
+const FINISHED_MEASURE_INTERVAL_MS = 6 * 60 * 60_000;
 /** Usage is refreshed this often while a gating window is at the threshold, and on a
     placement claim when the reading is older. */
 const QUOTA_REFRESH_MS = 10 * 60_000;
@@ -1002,15 +1006,24 @@ export const makeBoardWorkerCapacity = Effect.fn("makeBoardWorkerCapacity")(func
 
   const measure: BoardWorkerCapacityShape["measure"] = Effect.gen(function* () {
     const now = yield* Clock.currentTimeMillis;
-    const due = state.records.filter(
-      (record) =>
+    const interval = (record: CapacityRecord): number | null => {
+      if (!record.settled || (record.diskFromMeasurement && record.measuredDiskGB === null)) {
+        return MEASURE_INTERVAL_MS;
+      }
+      if (record.finished !== true) return null;
+      return record.finishedAt !== undefined &&
+        now - record.finishedAt < FINISHED_REMEASURE_WINDOW_MS
+        ? MEASURE_INTERVAL_MS
+        : FINISHED_MEASURE_INTERVAL_MS;
+    };
+    const due = state.records.filter((record) => {
+      const every = interval(record);
+      return (
         record.worktreePath !== null &&
-        // A finished card's kept worktree shrinks when it is stripped (T3O-123).
-        (!record.settled ||
-          record.finished === true ||
-          (record.diskFromMeasurement && record.measuredDiskGB === null)) &&
-        (record.measuredAt === null || now - record.measuredAt >= MEASURE_INTERVAL_MS),
-    );
+        every !== null &&
+        (record.measuredAt === null || now - record.measuredAt >= every)
+      );
+    });
     for (const record of due) {
       const bytes = yield* machine.diskUsageBytes(record.worktreePath!);
       if (bytes === null) continue;

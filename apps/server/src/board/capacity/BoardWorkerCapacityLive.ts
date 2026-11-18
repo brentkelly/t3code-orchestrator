@@ -72,6 +72,7 @@ const RecordJson = Schema.fromJsonString(
       measuredAt: Schema.NullOr(Schema.Number),
       heavySince: Schema.NullOr(Schema.Number),
       finished: Schema.optionalKey(Schema.Literal(true)),
+      finishedAt: Schema.optionalKey(Schema.Number),
     }),
   ),
 );

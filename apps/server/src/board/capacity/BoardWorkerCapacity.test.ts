@@ -439,7 +439,7 @@ it.effect(
   },
 );
 
-it.effect("re-measures a finished card's settled worktree, which a strip shrinks (T3O-123)", () => {
+it.effect("re-measures a finished card's settled worktree soon after Done, then rarely (T3O-123)", () => {
   const fakes = makeFakes();
   const measured: Array<string> = [];
   return Effect.gen(function* () {
@@ -449,10 +449,20 @@ it.effect("re-measures a finished card's settled worktree, which a strip shrinks
       authoritative: true,
       cards: [card("a-1", { settled: true }), card("a-2", { settled: true, finished: true })],
     });
-    // Both restored records are measured once; after that only the finished one is.
+    // Both restored records are measured once; after that only the finished one is, at the
+    // normal pace while its strip may still land, then every six hours.
     yield* service.measure;
     measured.length = 0;
-    yield* TestClock.adjust("1 day");
+    yield* TestClock.adjust("5 minutes");
+    yield* service.measure;
+    assert.deepStrictEqual(measured, ["/w/a-2"]);
+    yield* TestClock.adjust("3 hours");
+    yield* service.measure;
+    measured.length = 0;
+    yield* TestClock.adjust("5 minutes");
+    yield* service.measure;
+    assert.deepStrictEqual(measured, []);
+    yield* TestClock.adjust("6 hours");
     yield* service.measure;
     assert.deepStrictEqual(measured, ["/w/a-2"]);
   }).pipe(

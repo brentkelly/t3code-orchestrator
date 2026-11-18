@@ -45,6 +45,8 @@ export interface CapacityRecord {
   readonly heavySince: number | null;
   /** T3o (T3O-123): the card is finished; its kept worktree counts at its measured size. */
   readonly finished?: true;
+  /** When the record last became finished; absent on records persisted before it existed. */
+  readonly finishedAt?: number;
 }
 
 export interface Reservation {
@@ -620,8 +622,8 @@ export function applySyncCards(
     entry: BoardSyncCardsInput["cards"][number],
   ): CapacityRecord => {
     if ((record.finished === true) === (entry.finished === true)) return record;
-    const { finished: _finished, ...rest } = record;
-    return entry.finished === true ? { ...rest, finished: true } : rest;
+    const { finished: _finished, finishedAt: _finishedAt, ...rest } = record;
+    return entry.finished === true ? { ...rest, finished: true, finishedAt: input.now } : rest;
   };
 
   for (const record of state.records) {
@@ -698,7 +700,7 @@ export function applySyncCards(
         measuredDiskGB: null,
         measuredAt: null,
         heavySince: entry.phase === "heavy" ? input.now : null,
-        ...(entry.finished === true ? { finished: true as const } : {}),
+        ...(entry.finished === true ? { finished: true as const, finishedAt: input.now } : {}),
       });
       continue;
     }
@@ -722,7 +724,7 @@ export function applySyncCards(
       measuredDiskGB: null,
       measuredAt: null,
       heavySince: entry.phase === "heavy" ? input.now : null,
-      ...(entry.finished === true ? { finished: true as const } : {}),
+      ...(entry.finished === true ? { finished: true as const, finishedAt: input.now } : {}),
     });
   }
   return {
