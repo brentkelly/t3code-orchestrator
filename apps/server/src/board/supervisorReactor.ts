@@ -299,6 +299,11 @@ import { boardCiSendBackFinding } from "./ci/ciStageExecutor.ts";
 import { BoardWorkspaces, type BoardCardWorkspace } from "./workspace/BoardWorkspace.ts";
 import { formatBoardBytes } from "./worktreeAtDone.ts";
 import {
+  DELETED_CARD_BRANCH_WINDOW_DAYS,
+  leftoverDeletedCardBranches,
+  readDeletedCardBranches,
+} from "./deletedCardBranches.ts";
+import {
   boardCompletionReopened,
   boardCompletionReopenedByAutoPlan,
   planReviewInstructions,
@@ -632,6 +637,8 @@ const USAGE_LIMIT_RESUME_GRACE_MS = 10 * 60_000;
 
 /** How often an event-scoped worktree sweep still re-probes a worktree kept for a reason. */
 const KEPT_WORKTREE_REPROBE_MS = 30 * 60_000;
+/** T3o (T3O-123): how often the sweep prunes snapshot refs and deleted cards' branches. */
+const BOARD_HOUSEKEEPING_INTERVAL_MS = 24 * 60 * 60_000;
 
 export class SupervisorReactor extends Context.Service<SupervisorReactor, SupervisorReactorShape>()(
   "t3/board/supervisorReactor",
@@ -8133,6 +8140,69 @@ const make = Effect.gen(function* () {
    * `worktreeAtDone` says), and orphans. `refreshOpenPullRequests` (boot) re-reads Done cards still cached
    * `open`, which may have merged since; that tiny set is the only forge call here.
    */
+  /**
+   * T3o (T3O-123): once a day, from the sweep: prune old snapshot refs in every checkout the
+   * board has placed on, and delete the local branches of recently deleted cards that a lost
+   * in-memory removal left behind. Best-effort; failures (an older worker) are only logged.
+   */
+  let lastHousekeepingAt = Number.NEGATIVE_INFINITY;
+  const sweepHousekeeping = Effect.fn("board-supervisor-sweepHousekeeping")(function* (
+    board: BoardState,
+    nowMs: number,
+  ) {
+    for (const { workspace } of yield* workspaces.groupByWorkspace(board.cards)) {
+      const pruned = yield* workspace.pruneDiscardedRefs({}).pipe(
+        Effect.catch((error) =>
+          Effect.logDebug("board supervisor: snapshot ref prune skipped", {
+            workerId: workspace.workerId,
+            error: error.message,
+          }).pipe(Effect.as(null)),
+        ),
+      );
+      if (pruned !== null && pruned.deleted > 0) {
+        yield* Effect.logInfo("board supervisor: pruned old worktree snapshot refs", {
+          workerId: workspace.workerId,
+          projectId: workspace.projectId,
+          deleted: pruned.deleted,
+        });
+      }
+    }
+    if (Option.isNone(capacitySql)) return;
+    const since = DateTime.formatIso(
+      DateTime.makeUnsafe(nowMs - DELETED_CARD_BRANCH_WINDOW_DAYS * 24 * 60 * 60 * 1000),
+    );
+    const deleted = yield* readDeletedCardBranches(capacitySql.value, since).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("board supervisor: deleted cards unreadable", {
+          cause: Cause.pretty(cause),
+        }).pipe(Effect.as([])),
+      ),
+    );
+    for (const leftover of leftoverDeletedCardBranches(deleted, board.cards)) {
+      const workspace = yield* workspaces.forWorker(
+        (leftover.workerId ?? BOARD_LOCAL_WORKER_ID) as BoardWorkerId,
+        leftover.projectId as ProjectId,
+      );
+      if (workspace.checkoutPath === null) continue;
+      const result = yield* workspace.deleteLeftoverBranch({ branch: leftover.branch }).pipe(
+        Effect.catch((error) =>
+          Effect.logDebug("board supervisor: deleted card's branch not checked", {
+            cardId: leftover.cardId,
+            branch: leftover.branch,
+            error: error.message,
+          }).pipe(Effect.as(null)),
+        ),
+      );
+      if (result?.deleted === true) {
+        yield* Effect.logInfo("board supervisor: deleted a deleted card's leftover branch", {
+          cardId: leftover.cardId,
+          branch: leftover.branch,
+          workerId: workspace.workerId,
+        });
+      }
+    }
+  });
+
   // Pending group-archive discards the sweep has already retried this process.
   const sweptDiscards = new Set<BoardCardId>();
   // When each worktree was last probed: a kept one is still retried on this interval, since
@@ -8209,6 +8279,10 @@ const make = Effect.gen(function* () {
       yield* settleCardAtDone(card, { branchCleanup: "after-reclaim", fetchedBases });
     }
     yield* sweepOrphanWorktrees(board, fetchedBases);
+    if (nowMs - lastHousekeepingAt >= BOARD_HOUSEKEEPING_INTERVAL_MS) {
+      lastHousekeepingAt = nowMs;
+      yield* sweepHousekeeping(board, nowMs);
+    }
   });
 
   /**

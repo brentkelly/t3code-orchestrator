@@ -547,6 +547,9 @@ export const BoardSyncedCard = Schema.Struct({
   settled: Schema.Boolean,
   /** The card finished a Building step: its worktree counts as set up. */
   builtOnce: Schema.optionalKey(Schema.Boolean),
+  /** T3o (T3O-123): the card is finished with its worktree (Done, archived, cancelled work), so
+      the worker counts the kept worktree at its measured size. Older boards never send it. */
+  finished: Schema.optionalKey(Schema.Literal(true)),
 });
 export type BoardSyncedCard = typeof BoardSyncedCard.Type;
 

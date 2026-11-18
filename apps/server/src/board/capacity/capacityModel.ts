@@ -43,6 +43,8 @@ export interface CapacityRecord {
   readonly measuredAt: number | null;
   /** When the record last went heavy, or null while light. */
   readonly heavySince: number | null;
+  /** T3o (T3O-123): the card is finished; its kept worktree counts at its measured size. */
+  readonly finished?: true;
 }
 
 export interface Reservation {
@@ -108,9 +110,14 @@ export const recordIsHeavy = (record: CapacityRecord, activity: CapacityActivity
   record.phase === "heavy" ||
   (record.worktreePath !== null && activity.runningWorktrees.has(record.worktreePath));
 
-/** The disk a record holds: its profile, or for a backfilled record its measured size. */
+/** The disk a record holds: its profile, or for a backfilled record its measured size. A
+    finished card's kept worktree counts its measured size once there is one. */
 const recordDiskGB = (record: CapacityRecord) =>
-  record.diskFromMeasurement ? Math.ceil(record.measuredDiskGB ?? 0) : record.profile.diskGB;
+  record.diskFromMeasurement
+    ? Math.ceil(record.measuredDiskGB ?? 0)
+    : record.finished === true && record.measuredDiskGB !== null
+      ? Math.ceil(record.measuredDiskGB)
+      : record.profile.diskGB;
 
 const recordLoad = (record: CapacityRecord, activity: CapacityActivity): BoardResourceProfile => {
   const heavy = recordIsHeavy(record, activity);
@@ -158,7 +165,7 @@ export function heldByBoard(
 function pendingDiskGB(state: CapacityState, now: number): number {
   let pending = 0;
   for (const record of state.records) {
-    if (record.settled || record.diskFromMeasurement) continue;
+    if (record.settled || record.diskFromMeasurement || record.finished === true) continue;
     pending += Math.max(0, record.profile.diskGB - (record.measuredDiskGB ?? 0));
   }
   for (const reservation of liveReservations(state, now)) {
@@ -606,6 +613,17 @@ export function applySyncCards(
     return presence === "owned" || presence === "adopted" ? entry.worktreePath : current;
   };
 
+  // T3o (T3O-123): whether the card is finished follows the board's latest word, whatever
+  // else the sync changes; an older board never sends it.
+  const withFinished = (
+    record: CapacityRecord,
+    entry: BoardSyncCardsInput["cards"][number],
+  ): CapacityRecord => {
+    if ((record.finished === true) === (entry.finished === true)) return record;
+    const { finished: _finished, ...rest } = record;
+    return entry.finished === true ? { ...rest, finished: true } : rest;
+  };
+
   for (const record of state.records) {
     if (!mine(record)) {
       records.push(record);
@@ -625,7 +643,7 @@ export function applySyncCards(
     if (raised || (lowered && stampedBelow(record)) || (!raised && !lowered)) {
       const goesHeavy = entry.phase === "heavy" && record.phase === "light";
       records.push({
-        ...record,
+        ...withFinished(record, entry),
         repositoryKey: entry.repositoryKey,
         branch: entry.branch,
         worktreePath: verifiedPath(entry, record.worktreePath),
@@ -640,7 +658,7 @@ export function applySyncCards(
         heavySince: goesHeavy ? input.now : entry.phase === "light" ? null : record.heavySince,
       });
     } else {
-      records.push(record);
+      records.push(withFinished(record, entry));
     }
     // A grow is consumed by the sync that lists the card larger or heavy.
     if (raised) {
@@ -680,6 +698,7 @@ export function applySyncCards(
         measuredDiskGB: null,
         measuredAt: null,
         heavySince: entry.phase === "heavy" ? input.now : null,
+        ...(entry.finished === true ? { finished: true as const } : {}),
       });
       continue;
     }
@@ -703,6 +722,7 @@ export function applySyncCards(
       measuredDiskGB: null,
       measuredAt: null,
       heavySince: entry.phase === "heavy" ? input.now : null,
+      ...(entry.finished === true ? { finished: true as const } : {}),
     });
   }
   return {

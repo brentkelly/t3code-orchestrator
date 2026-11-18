@@ -439,6 +439,39 @@ it.effect(
   },
 );
 
+it.effect("re-measures a finished card's settled worktree, which a strip shrinks (T3O-123)", () => {
+  const fakes = makeFakes();
+  const measured: Array<string> = [];
+  return Effect.gen(function* () {
+    const { service } = yield* makeBoardWorkerCapacity(portsOver(fakes));
+    yield* service.syncCards("board-a", {
+      seq: 1,
+      authoritative: true,
+      cards: [card("a-1", { settled: true }), card("a-2", { settled: true, finished: true })],
+    });
+    // Both restored records are measured once; after that only the finished one is.
+    yield* service.measure;
+    measured.length = 0;
+    yield* TestClock.adjust("1 day");
+    yield* service.measure;
+    assert.deepStrictEqual(measured, ["/w/a-2"]);
+  }).pipe(
+    Effect.provide(TestClock.layer()),
+    Effect.provideService(BoardMachine, {
+      cpuCount: Effect.succeed(32),
+      totalMemoryBytes: Effect.succeed(128 * GiB),
+      availableMemoryBytes: Effect.succeed(500 * GiB),
+      agentSliceMemoryHighBytes: Effect.succeed(null),
+      freeDiskBytes: () => Effect.succeed(1000 * 1000 ** 3),
+      diskUsageBytes: (path: string) =>
+        Effect.sync(() => {
+          measured.push(path);
+          return 1000 ** 3;
+        }),
+    }),
+  );
+});
+
 it.effect("a disk measurement finishing after its board left doesn't bring it back", () => {
   const fakes = makeFakes();
   let duringDu: Effect.Effect<void> = Effect.void;

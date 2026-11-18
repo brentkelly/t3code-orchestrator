@@ -610,3 +610,56 @@ describe("syncCards", () => {
     expect(after.lastSeq.has("board-a")).toBe(false);
   });
 });
+
+describe("finished cards (T3O-123)", () => {
+  const held = (state: CapacityState) =>
+    computeHeadroom({ state, declared, activity: IDLE_ACTIVITY, machine: roomy, now: 0 }).held;
+  const measured = (state: CapacityState, gb: number): CapacityState => ({
+    ...state,
+    records: state.records.map((record) => ({ ...record, measuredDiskGB: gb, measuredAt: 0 })),
+  });
+
+  it("follows the board's finished flag in every branch of a sync", () => {
+    const base = placed(EMPTY_CAPACITY_STATE, "board-a", "card-1");
+    // Updated in place: same grant, newer seq.
+    const updated = sync(base, {
+      seq: 2,
+      cards: [entry({ cardId: "card-1", branch: "board/card-1", finished: true })],
+    }).state;
+    expect(updated.records[0]?.finished).toBe(true);
+    // Kept as it was otherwise (a lowered grant from a sync not newer than the record): the
+    // flag still follows.
+    const kept = sync(base, {
+      seq: 1,
+      cards: [entry({ cardId: "card-1", phase: "light", finished: true })],
+    }).state;
+    expect(kept.records[0]?.phase).toBe("heavy");
+    expect(kept.records[0]?.finished).toBe(true);
+    // And it clears when the card comes back out of Done.
+    const back = sync(updated, { seq: 3, cards: [entry({ cardId: "card-1" })] }).state;
+    expect(back.records[0]).not.toHaveProperty("finished");
+    // Created from a placement claim, or restored with no claim.
+    const granted = decideClaim(EMPTY_CAPACITY_STATE, claim(), context()).state;
+    const fromClaim = sync(granted, { seq: 2, cards: [entry({ finished: true })] }).state;
+    expect(fromClaim.records[0]?.finished).toBe(true);
+    const restored = sync(EMPTY_CAPACITY_STATE, { seq: 1, cards: [entry({ finished: true })] });
+    expect(restored.state.records[0]?.finished).toBe(true);
+  });
+
+  it("counts a finished card's worktree at its measured size, not its grant", () => {
+    const base = placed(EMPTY_CAPACITY_STATE, "board-a", "card-1");
+    const finished = sync(base, {
+      seq: 2,
+      cards: [entry({ cardId: "card-1", phase: "light", settled: true, finished: true })],
+    }).state;
+    // Before the first measurement, the grant still counts.
+    expect(held(finished).diskGB).toBe(20);
+    expect(held(measured(finished, 1.2)).diskGB).toBe(2);
+    // A card still being worked counts its grant whatever was measured.
+    const working = sync(base, {
+      seq: 2,
+      cards: [entry({ cardId: "card-1", phase: "light", settled: true })],
+    }).state;
+    expect(held(measured(working, 1.2)).diskGB).toBe(20);
+  });
+});

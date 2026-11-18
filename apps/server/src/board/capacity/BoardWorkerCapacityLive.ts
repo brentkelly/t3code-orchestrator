@@ -70,6 +70,7 @@ const RecordJson = Schema.fromJsonString(
       measuredDiskGB: Schema.NullOr(Schema.Number),
       measuredAt: Schema.NullOr(Schema.Number),
       heavySince: Schema.NullOr(Schema.Number),
+      finished: Schema.optionalKey(Schema.Literal(true)),
     }),
   ),
 );

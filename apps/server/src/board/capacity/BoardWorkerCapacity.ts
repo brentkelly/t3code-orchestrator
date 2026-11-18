@@ -1005,7 +1005,10 @@ export const makeBoardWorkerCapacity = Effect.fn("makeBoardWorkerCapacity")(func
     const due = state.records.filter(
       (record) =>
         record.worktreePath !== null &&
-        (!record.settled || (record.diskFromMeasurement && record.measuredDiskGB === null)) &&
+        // A finished card's kept worktree shrinks when it is stripped (T3O-123).
+        (!record.settled ||
+          record.finished === true ||
+          (record.diskFromMeasurement && record.measuredDiskGB === null)) &&
         (record.measuredAt === null || now - record.measuredAt >= MEASURE_INTERVAL_MS),
     );
     for (const record of due) {
