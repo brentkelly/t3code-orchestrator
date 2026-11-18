@@ -391,7 +391,7 @@ function MetaCount({
       <span
         aria-label={title}
         className={cn(
-          "inline-flex items-center gap-1 text-board-10-5 font-medium tabular-nums",
+          "inline-flex shrink-0 items-center gap-1 whitespace-nowrap text-board-10-5 font-medium tabular-nums",
           tint ?? "text-muted-foreground",
         )}
       >
@@ -403,17 +403,19 @@ function MetaCount({
 }
 
 /**
- * The card's footer: dependencies, agent threads, plans and the pull request,
- * left to right, with the brief's image flag pushed to the far end. Renders
- * nothing at all when the card is tied to nothing, so a bare card keeps its
- * height.
+ * The card's footer: counts left, image flag and worker right, a Done card's cost
+ * last. When the row is full the cost alone wraps to a right-aligned line.
+ * Renders nothing when the card is tied to nothing, so a bare card keeps its height.
  */
 export function BoardCardMetaRow({
   meta,
   worker,
   cost = null,
+  compactWorker = false,
 }: {
   readonly meta: BoardCardMeta;
+  /** Done cards draw the worker as an icon only, so the footer fits. */
+  readonly compactWorker?: boolean;
   /** T3o: a Done card's cost figure, last on the row (T3O-77). */
   readonly cost?: ReactNode;
   /** The worker chip, at the row's right end; null on a board with
@@ -422,71 +424,85 @@ export function BoardCardMetaRow({
 }) {
   if (meta.empty && worker == null && cost == null) return null;
   return (
-    <div className="flex items-center gap-2.5 text-muted-foreground">
-      {meta.dependencyCount === 0 ? null : (
-        <MetaCount
-          icon={Link2Icon}
-          title={`Depends on ${meta.dependencyCount} ${meta.dependencyCount === 1 ? "card" : "cards"}`}
-        >
-          {meta.dependencyCount}
-        </MetaCount>
-      )}
-      {meta.threadCount === 0 ? null : (
-        <MetaCount
-          icon={MessageSquareIcon}
-          title={`${meta.threadCount} agent ${meta.threadCount === 1 ? "thread" : "threads"} on this card`}
-        >
-          {meta.threadCount}
-        </MetaCount>
-      )}
-      {meta.planCount === 0 ? null : (
-        <MetaCount
-          icon={ListIcon}
-          title={`${meta.planCount} ${meta.planCount === 1 ? "plan" : "plans"}`}
-        >
-          {meta.planCount}
-        </MetaCount>
-      )}
-      {meta.prNumber === undefined ? null : (
-        <MetaCount
-          icon={PullRequestGlyph.pullRequest}
-          // A draft is neutral: not running, not done, not blocked —
-          // the board marks it ready when the card reaches Ready for merge.
-          tint={meta.prDraft ? "text-muted-foreground" : "text-info-foreground"}
-          title={
-            meta.prDraft ? `Draft pull request #${meta.prNumber}` : `Pull request #${meta.prNumber}`
-          }
-        >
-          {meta.prDraft ? `#${meta.prNumber} · Draft` : `#${meta.prNumber}`}
-        </MetaCount>
-      )}
-      <span className="flex-1" />
-      {meta.briefHasImage ? (
-        // The one indicator with no number: a brief either has a picture in it
-        // or it does not, and "1 image" would be a count of nothing useful.
-        <BoardHint label="Brief contains an image">
-          <span aria-label="Brief contains an image">
-            <ImageIcon className="size-3" />
-          </span>
-        </BoardHint>
-      ) : null}
-      {worker == null ? null : (
-        // Never a status colour: worker trouble goes in the notice slot. A server icon once
-        // placed, a pin icon while only pinned.
-        <BoardHint label={worker.tooltip}>
-          <span
-            aria-label={worker.tooltip}
-            className="inline-flex h-4 max-w-[110px] shrink-0 items-center gap-0.5 rounded border border-border px-1.5 text-board-10 font-medium text-muted-foreground"
+    <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-muted-foreground">
+      {/* `grow`, not `flex-1`: at content width the cost is the only outer item that wraps. */}
+      <div className="flex min-w-0 grow flex-wrap items-center gap-x-2.5 gap-y-1">
+        {meta.dependencyCount === 0 ? null : (
+          <MetaCount
+            icon={Link2Icon}
+            title={`Depends on ${meta.dependencyCount} ${meta.dependencyCount === 1 ? "card" : "cards"}`}
           >
-            {worker.kind === "placed" ? (
-              <ServerIcon aria-hidden="true" className="size-2.5 shrink-0" />
+            {meta.dependencyCount}
+          </MetaCount>
+        )}
+        {meta.threadCount === 0 ? null : (
+          <MetaCount
+            icon={MessageSquareIcon}
+            title={`${meta.threadCount} agent ${meta.threadCount === 1 ? "thread" : "threads"} on this card`}
+          >
+            {meta.threadCount}
+          </MetaCount>
+        )}
+        {meta.planCount === 0 ? null : (
+          <MetaCount
+            icon={ListIcon}
+            title={`${meta.planCount} ${meta.planCount === 1 ? "plan" : "plans"}`}
+          >
+            {meta.planCount}
+          </MetaCount>
+        )}
+        {meta.prNumber === undefined ? null : (
+          <MetaCount
+            icon={PullRequestGlyph.pullRequest}
+            // A draft is neutral: not running, not done, not blocked —
+            // the board marks it ready when the card reaches Ready for merge.
+            tint={meta.prDraft ? "text-muted-foreground" : "text-info-foreground"}
+            title={
+              meta.prDraft
+                ? `Draft pull request #${meta.prNumber}`
+                : `Pull request #${meta.prNumber}`
+            }
+          >
+            {meta.prDraft ? `#${meta.prNumber} · Draft` : `#${meta.prNumber}`}
+          </MetaCount>
+        )}
+        {meta.briefHasImage || worker != null ? (
+          <span className="ml-auto flex shrink-0 items-center gap-2.5">
+            {meta.briefHasImage ? (
+              // The one indicator with no number: a brief either has a picture in it
+              // or it does not, and "1 image" would be a count of nothing useful.
+              <BoardHint label="Brief contains an image">
+                <span aria-label="Brief contains an image">
+                  <ImageIcon className="size-3" />
+                </span>
+              </BoardHint>
+            ) : null}
+            {worker == null ? null : compactWorker ? (
+              <BoardHint label={`Ran on ${worker.label}`}>
+                <span aria-label={`Ran on ${worker.label}`} className="inline-flex shrink-0">
+                  <ServerIcon aria-hidden="true" className="size-3" />
+                </span>
+              </BoardHint>
             ) : (
-              <PinIcon aria-hidden="true" className="size-2.5 shrink-0" />
+              // Never a status colour: worker trouble goes in the notice slot. A server icon once
+              // placed, a pin icon while only pinned.
+              <BoardHint label={worker.tooltip}>
+                <span
+                  aria-label={worker.tooltip}
+                  className="inline-flex h-4 max-w-[110px] shrink-0 items-center gap-0.5 rounded border border-border px-1.5 text-board-10 font-medium text-muted-foreground"
+                >
+                  {worker.kind === "placed" ? (
+                    <ServerIcon aria-hidden="true" className="size-2.5 shrink-0" />
+                  ) : (
+                    <PinIcon aria-hidden="true" className="size-2.5 shrink-0" />
+                  )}
+                  <span className="truncate">{worker.label}</span>
+                </span>
+              </BoardHint>
             )}
-            <span className="truncate">{worker.label}</span>
           </span>
-        </BoardHint>
-      )}
+        ) : null}
+      </div>
       {cost}
     </div>
   );

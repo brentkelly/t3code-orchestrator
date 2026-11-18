@@ -8,6 +8,8 @@ import {
   boardResourceProfileValue,
   boardStepWaitsForRoom,
   boardCardEffectiveWorkerId,
+  boardCardFinishedWithWorktree,
+  boardCardWorktreeIsCancelledWork,
   boardCardRequestedProfile,
   boardProjectStageConfig,
   boardStageWithRole,
@@ -115,6 +117,7 @@ export function syncEntriesFor(input: {
   readonly repositoryKey: (projectId: ProjectId) => string | null;
 }): ReadonlyArray<BoardSyncedCard> {
   const buildStage = boardStageWithRole(input.board, "build");
+  const doneStage = boardStageWithRole(input.board, "done");
   const entries: BoardSyncedCard[] = [];
   for (const card of input.board.cards) {
     if (isGroup(card) || card.worktree === null) continue;
@@ -131,6 +134,13 @@ export function syncEntriesFor(input: {
           completion.stepId === buildStage.stageId &&
           completion.outcome === "succeeded",
       );
+    const finished =
+      card.worktree.status === "ready" &&
+      boardCardFinishedWithWorktree({
+        archived: card.archivedAt !== null,
+        inDoneStage: doneStage !== null && card.stage === doneStage.stageId,
+        cancelledWork: boardCardWorktreeIsCancelledWork(card),
+      });
     entries.push({
       cardId: card.id,
       repositoryKey: input.repositoryKey(card.projectId),
@@ -140,6 +150,7 @@ export function syncEntriesFor(input: {
       phase: grant.heavy ? "heavy" : "light",
       settled: grant.settled,
       ...(builtOnce ? { builtOnce: true } : {}),
+      ...(finished ? { finished: true } : {}),
     });
   }
   return entries;

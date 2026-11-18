@@ -1133,7 +1133,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
               model: { instanceId: ProviderInstanceId.make("claudeAgent"), model: "opus" },
             },
           },
-          lifecycle: { reclaimWorktreeOnDone: false },
+          lifecycle: { worktreeAtDone: "keep" },
         },
       });
 
@@ -1142,7 +1142,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         instanceId: ProviderInstanceId.make("claudeAgent"),
         model: "opus",
       });
-      assert.equal(next.board.lifecycle.reclaimWorktreeOnDone, false);
+      assert.equal(next.board.lifecycle.worktreeAtDone, "keep");
 
       // The file keeps only what differs, and every surviving object is whole
       // enough to decode on its own.
@@ -1154,7 +1154,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
       // And it survives the restart the file exists for.
       const reloaded = yield* decodeServerSettings(parsed);
       assert.equal(reloaded.board.pipeline.building?.maxAttempts, 6);
-      assert.equal(reloaded.board.lifecycle.reclaimWorktreeOnDone, false);
+      assert.equal(reloaded.board.lifecycle.worktreeAtDone, "keep");
 
       // T3o (T3O-77): a later lifecycle patch merges beside the earlier one, and
       // the whole block survives the write.
@@ -1162,7 +1162,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         board: { lifecycle: { autoArchiveDone: true, autoArchiveAfterDays: PositiveInt.make(14) } },
       });
       assert.deepEqual(archiving.board.lifecycle, {
-        reclaimWorktreeOnDone: false,
+        worktreeAtDone: "keep",
         autoArchiveDone: true,
         autoArchiveAfterDays: 14,
       });

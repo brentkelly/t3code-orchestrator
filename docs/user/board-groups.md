@@ -58,10 +58,10 @@ board's header:
   whole once they are all done. It can't change once a child has started. Choosing Own branch turns
   **Auto-merge children** on, and Inherit turns it off; you can change it afterwards.
 - **Auto-plan** — children are planned by the agent without questions.
-- **Auto sign-off** — with Auto-plan on, each child's single plan is approved without you. A child
-  that proposes a split still waits for you.
-- **Auto-build** — once the group has started, ready children start themselves. It never approves a
-  plan.
+- **Auto sign-off** — each child's plan is approved without you, and a child that proposes a split
+  has it approved too.
+- **Auto-build** — ready children start themselves once their dependencies are done. It never
+  approves a plan.
 - **Auto-merge children** — children merge as soon as the forge accepts, into the group's branch or
   wherever they land.
 - For an Own-branch group, **Auto-merge ‹branch›** merges the group's own branch onward once its

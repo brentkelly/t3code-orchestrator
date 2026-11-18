@@ -129,6 +129,25 @@ button{color:inherit}
 .wr:last-child{border-bottom:none}
 .wv{font:600 12px var(--font-sans)}
 .wv.q{color:var(--info-fg)} .wv.b{color:var(--warning-fg)} .wv.m{color:var(--muted-fg)}
+/* new card dialog */
+.nc{width:600px;background:var(--card);border:1px solid var(--border);border-radius:18px;box-shadow:var(--shadow-pop);overflow:hidden;display:flex;flex-direction:column}
+.nc-cap{font:600 11px var(--font-sans);letter-spacing:.08em;text-transform:uppercase;color:var(--muted-fg)}
+.nc-cap small{font:500 11px var(--font-sans);letter-spacing:.04em;text-transform:none;opacity:.8;margin-left:6px}
+.nc-f{display:flex;align-items:center;gap:8px;height:34px;padding:0 11px;border:1px solid var(--input);border-radius:10px;background:var(--card);font:400 13px var(--font-sans);box-shadow:var(--shadow-xs)}
+.nc-f .chev{margin-left:auto;color:var(--muted-fg);font-size:11px}
+.nc-ph{color:var(--muted-fg)}
+.nc-foot{display:flex;align-items:center;gap:6px;padding:12px 18px;border-top:1px solid var(--border);background:var(--muted)}
+.nc-ib{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;flex:none;border-radius:8px;color:var(--muted-fg)}
+.nc-ib.on{background:var(--accent);color:var(--fg);box-shadow:inset 0 0 0 1px var(--input)}
+.nc-pin{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 4px 0 9px;border:1px solid var(--input);border-radius:8px;background:var(--popover);font:500 12px var(--font-sans);color:var(--fg);box-shadow:var(--shadow-xs);white-space:nowrap}
+.nc-pin .x{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:5px;color:var(--muted-fg)}
+.nc-seg{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:2px;padding:2px;width:320px;border:1px solid var(--input);border-radius:10px;background:var(--card)}
+.nc-seg span{display:flex;align-items:center;justify-content:center;height:28px;border-radius:8px;font:500 12.5px var(--font-sans);color:var(--muted-fg)}
+.nc-seg span.on{background:var(--accent);color:var(--fg)}
+.nc-tip{position:absolute;padding:5px 8px;border-radius:7px;background:var(--fg);color:var(--bg);font:500 11.5px var(--font-sans);white-space:nowrap}
+.mi{display:flex;align-items:center;gap:8px;min-height:40px;padding:6px 9px;border-radius:7px}
+.mi .t{flex:1;display:flex;flex-direction:column;gap:1px;min-width:0}
+.mi .s{font:400 11px var(--font-sans);color:var(--muted-fg)}
 </style>
 </helmet>
 
@@ -879,6 +898,99 @@ exit status 22</pre>
           <div style="display:flex;align-items:center;gap:8px;min-height:40px;padding:6px 9px"><div style="flex:1;display:flex;flex-direction:column;gap:1px"><span style="font:500 12.5px var(--font-mono);color:var(--muted-fg)">mac-mini</span><span style="font:400 11px var(--font-sans);color:var(--warning-fg)">Offline since 17:52</span></div></div>
         </div>
         <p class="note">You can pin to a worker that's ready but full; the card then waits there (“Waiting for CPU on build-01”). Offline workers and ones that aren't ready are disabled, with the reason underneath. When pinned, the field reads “Pinned to build-01”, and this menu gains Unpin at the top.</p>
+      </div>
+    </div>
+
+    <div class="row" style="gap:32px">
+      <div id="5.6" class="ab" style="width:600px">
+        <div class="abh"><span class="num">5.6</span><span class="abt">New card · worker override tucked into the footer (default)</span></div>
+        <div class="nc">
+          <div style="display:flex;align-items:center;gap:10px;padding:20px 22px 12px">
+            <span style="font:600 19px var(--font-sans);letter-spacing:-0.01em">New card</span>
+            <span class="nc-f" style="height:28px;padding:0 9px;font-size:12.5px">Planning <span class="chev">⌄</span></span>
+            <span style="flex:1"></span><span style="color:var(--muted-fg);font-size:15px">✕</span>
+          </div>
+          <div style="margin:0 22px 14px;padding:9px 12px;border-radius:9px;background:color-mix(in srgb,var(--warning) 10%,transparent);font:400 12.5px var(--font-sans);color:var(--warning-fg)">Planning runs automatically: creating here starts an agent.</div>
+          <div style="border-top:1px solid var(--border);padding:18px 22px 16px;display:flex;flex-direction:column;gap:16px">
+            <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px">
+              <div style="display:flex;flex-direction:column;gap:7px"><span class="nc-cap">Project</span><span class="nc-f"><span style="width:7px;height:7px;border-radius:99px;background:#b8894a"></span>t3o<span class="chev">⌄</span></span></div>
+              <div style="display:flex;flex-direction:column;gap:7px"><span class="nc-cap">Base branch<small>work branches off this</small></span><span class="nc-f" style="font-family:var(--font-mono);font-size:12.5px">t3o<span class="chev">⌄</span></span></div>
+            </div>
+            <div style="display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,1fr);gap:14px">
+              <div style="display:flex;flex-direction:column;gap:7px"><span class="nc-cap">Title</span><span class="nc-f"><span class="nc-ph">What needs building?</span></span></div>
+              <div style="display:flex;flex-direction:column;gap:7px"><span class="nc-cap">Label</span><span class="nc-f"><span class="nc-ph">Add labels</span><span class="chev">⌄</span></span></div>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:7px"><span class="nc-cap">Brief</span><div class="nc-f" style="height:74px;align-items:flex-start;padding-top:9px"><span class="nc-ph">What’s the context? Paste screenshots (⌘V) or drop files in here.</span></div></div>
+            <div style="display:flex;flex-direction:column;gap:8px"><span class="nc-cap">Priority</span><div style="display:flex;align-items:center;gap:14px"><div class="nc-seg"><span>Low</span><span class="on">Normal</span><span>High</span><span>Urgent</span></div><span style="font:400 11.5px var(--font-sans);color:var(--muted-fg)">Waits its turn behind High and Urgent cards.</span></div></div>
+            <div style="display:flex;align-items:center;gap:12px"><span class="nc-cap">Dependencies</span><span style="font:500 12.5px var(--font-sans)">+ Add</span><span style="margin-left:auto;font:400 12px var(--font-sans);color:var(--muted-fg)">No dependencies.</span></div>
+          </div>
+          <div class="nc-foot" style="position:relative">
+            <span class="nc-ib" title="Schedule"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg></span>
+            <span class="nc-ib" title="Builds go to any ready worker. Pin to a worker…"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5"></path><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"></path></svg></span>
+            <span class="mk">1</span>
+            <span style="flex:1"></span>
+            <span class="btn lg ghost" style="color:var(--fg)">Cancel</span>
+            <span class="btn lg p">Create card <span style="font:500 10.5px var(--font-mono);padding:1px 5px;border-radius:4px;background:rgb(255 255 255 / 18%)">Ctrl+↵</span></span>
+          </div>
+        </div>
+        <p class="note">The Worker field is gone from the form. Project and Base branch go back to two columns, and the dialog is as tall as it was before remote workers. Not pinned is the default and shows nothing.</p>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:32px">
+        <div id="5.7" class="ab" style="width:600px">
+          <div class="abh"><span class="num">5.7</span><span class="abt">Pin button clicked · same menu as 5.3, opening upward</span></div>
+          <div style="position:relative;padding-top:330px">
+            <div class="pop" style="position:absolute;left:18px;top:0;width:340px;padding:4px">
+              <div style="padding:8px 9px 6px;font:400 11.5px/1.45 var(--font-sans);color:var(--muted-fg)">Pin builds to a worker. Planning always runs on This server.</div>
+              <div class="mi" style="background:var(--accent)"><div class="t"><span style="font:500 12.5px var(--font-sans)">Any ready worker</span><span class="s">Let the board decide when the build starts</span></div><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg></div>
+              <div style="padding:8px 9px 4px" class="hdr">Pin to</div>
+              <div class="mi"><div class="t"><span style="font:500 12.5px var(--font-sans)">build-01 <span class="mono mut" style="font-size:10.5px;padding:0 4px;border:1px solid var(--border);border-radius:4px">B01</span></span><span class="s">Ready for t3o · offers 20 of 32 cores</span></div></div>
+              <div class="mi"><div class="t"><span style="font:500 12.5px var(--font-sans)">build-02 <span class="mono mut" style="font-size:10.5px;padding:0 4px;border:1px solid var(--border);border-radius:4px">B02</span></span><span class="s">Ready for t3o · offers 3 of 16 cores · would wait for CPU</span></div></div>
+              <div class="mi"><div class="t"><span style="font:500 12.5px var(--font-sans)">This server <span class="mono mut" style="font-size:10.5px;padding:0 4px;border:1px solid var(--border);border-radius:4px">SRV</span></span><span class="s">Ready for t3o</span></div></div>
+              <div class="mi"><div class="t"><span style="font:500 12.5px var(--font-sans);color:var(--muted-fg)">mac-mini</span><span class="s" style="color:var(--warning-fg)">Offline since 17:52</span></div></div>
+            </div>
+            <div class="nc" style="border-radius:0 0 18px 18px">
+              <div class="nc-foot" style="border-top:none">
+                <span class="nc-ib"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg></span>
+                <span class="nc-ib on"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5"></path><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"></path></svg></span>
+                <span style="flex:1"></span>
+                <span class="btn lg ghost" style="color:var(--fg)">Cancel</span>
+                <span class="btn lg p">Create card</span>
+              </div>
+            </div>
+          </div>
+          <p class="note">Rows are the 5.3 rows, with readiness checked for the project picked above. Not-ready and offline workers are disabled with the reason. There's no Set up button here; that stays in card detail and on the Workers page.</p>
+        </div>
+
+        <div id="5.8" class="ab" style="width:600px">
+          <div class="abh"><span class="num">5.8</span><span class="abt">Pinned · the button becomes a chip</span></div>
+          <div class="nc" style="border-radius:0 0 18px 18px">
+            <div class="nc-foot" style="border-top:none">
+              <span class="nc-ib"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg></span>
+              <span class="nc-pin"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5"></path><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"></path></svg><span class="mut">Pinned to</span><span class="mono">build-01</span><span class="x" title="Unpin">✕</span></span>
+              <span style="flex:1"></span>
+              <span class="btn lg ghost" style="color:var(--fg)">Cancel</span>
+              <span class="btn lg p">Create card</span>
+            </div>
+          </div>
+          <div class="nc" style="border-radius:0 0 18px 18px;margin-top:6px">
+            <div class="nc-foot" style="border-top:none">
+              <span class="nc-ib"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg></span>
+              <span class="nc-ib"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5"></path><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"></path></svg></span>
+              <span style="font:400 11.5px var(--font-sans);color:var(--warning-fg)">Pin removed · build-01 isn't ready for z5</span>
+              <span style="flex:1"></span>
+              <span class="btn lg ghost" style="color:var(--fg)">Cancel</span>
+              <span class="btn lg p">Create card</span>
+            </div>
+          </div>
+          <p class="note">Top: the chip shows the full worker name, because the footer has room. Clicking the chip reopens the menu, and × unpins. Bottom: the project was switched to one the pinned worker isn't ready for, so the pin is dropped and a note says why until the next change.</p>
+        </div>
+      </div>
+
+      <div class="notes" style="max-width:1240px">
+        <div class="n"><span class="mk">1</span><span><b>Why a footer button.</b> Pinning at creation is rare, so it gets the same treatment as the schedule clock beside it: an icon with a tooltip (“Builds go to any ready worker. Pin to a worker…”), no label and no row in the form. Nobody has to look at it to create a card, and it's still one click away when it matters.</span></div>
+        <div class="n"><span class="mk">2</span><span><b>Same model as card detail.</b> It sets the card's pin, exactly as Pin builds to… (5.3) does later. It's called a pin, not a worker choice, because planning always runs on This server; the pin only decides where builds go. The pin shows in card detail and on the card face's pinned chip once the card is created.</span></div>
+        <div class="n"><span class="mk">3</span><span><b>Pinned to a full worker</b> is allowed, as in 5.3. The card is created and waits there with the usual blue reason line (“Waiting for CPU on build-02”).</span></div>
       </div>
     </div>
 

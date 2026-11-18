@@ -40,9 +40,9 @@ body{margin:0;font-family:var(--font-sans);background:var(--bg);color:var(--fg);
 
 /* picker */
 .picker{width:440px;background:var(--popover);border:1px solid var(--border);border-radius:12px;box-shadow:var(--shadow-md);padding:12px;display:flex;flex-direction:column;gap:10px}
-.seg{display:grid;grid-template-columns:repeat(4, minmax(0, 1fr));gap:4px;padding:3px;background:var(--accent);border-radius:9px}
-.opt{display:flex;align-items:center;justify-content:center;gap:6px;height:30px;border-radius:7px;font:500 12.5px var(--font-sans);color:var(--muted-fg)}
-.opt.on{background:var(--card);color:var(--fg);box-shadow:var(--shadow-xs);border:1px solid var(--border)}
+.seg{display:grid;grid-template-columns:repeat(4, minmax(0, 1fr));gap:2px;padding:2px;background:var(--card);border:1px solid var(--input);border-radius:10px;box-shadow:var(--shadow-xs)}
+.opt{display:flex;align-items:center;justify-content:center;gap:6px;height:28px;border-radius:8px;font:500 12.5px var(--font-sans);color:var(--muted-fg)}
+.opt.on{background:var(--accent);color:var(--fg)}
 .desc{margin:0;font:400 12.5px/1.55 var(--font-sans);color:var(--muted-fg);text-wrap:pretty;padding:0 4px}
 .desc b{color:var(--fg);font-weight:600}
 .kbd{font:500 10.5px var(--font-mono);color:var(--muted-fg);border:1px solid var(--border);border-radius:4px;padding:1px 5px;background:var(--muted)}
@@ -291,6 +291,7 @@ body{margin:0;font-family:var(--font-sans);background:var(--bg);color:var(--fg);
         </div>
         <div style="display:flex;align-items:center;gap:10px;margin-top:14px;padding:14px 22px;border-top:1px solid var(--border);background:var(--muted)">
           <span style="color:var(--muted-fg);font-size:14px">◷</span>
+          <span title="Builds go to any ready worker. Pin to a worker…" style="display:inline-flex;margin-left:6px;color:var(--muted-fg)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5"></path><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"></path></svg></span>
           <span style="flex:1"></span>
           <span class="btn ghost">Cancel</span>
           <span class="btn primary">Create card <span class="kbd" style="background:rgb(255 255 255 / 18%);border-color:rgb(255 255 255 / 30%);color:#fff">Ctrl+↵</span></span>
@@ -303,6 +304,7 @@ body{margin:0;font-family:var(--font-sans);background:var(--bg);color:var(--fg);
         <p class="note">The rule text swaps as you pick: Low reads “Only runs when a worker would otherwise sit idle.” Urgent reads “Enters Building ahead of every waiting card.”</p>
         <p class="note">Keyboard: with focus anywhere in the dialog, <span class="kbd">Alt</span>+<span class="kbd">1</span>–<span class="kbd">4</span> sets priority without leaving the title or brief.</p>
         <p class="note">Creating from a column’s + uses the same dialog, so the default stays Normal there too.</p>
+        <p class="note">Pinning builds to a worker is rarer still, so it has no row at all: it’s the pin icon in the footer beside the clock. See Remote workers 5.6–5.8.</p>
       </div>
 
     </div>

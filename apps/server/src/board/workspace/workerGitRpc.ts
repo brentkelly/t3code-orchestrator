@@ -52,6 +52,8 @@ const WRITES_TO_PATH: ReadonlySet<BoardWorkerGitOperation> = new Set([
   "pushCardBranch",
   "pruneWorktree",
   "retireWorktree",
+  "snapshotWorktree",
+  "stripWorktree",
 ]);
 
 const guardPaths = (
@@ -101,7 +103,7 @@ const guardBranch = Effect.fn("BoardWorkerGitRpc.guardBranch")(function* (
   boardId: string,
 ) {
   const branch = String(input["branch"]);
-  if (operation === "deleteCardBranch") {
+  if (operation === "deleteCardBranch" || operation === "deleteLeftoverBranch") {
     if (yield* workspaces.centralMayDeleteBranch(projectId, branch, boardId)) return;
     return yield* new BoardWorkerGitError({
       operation,

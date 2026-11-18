@@ -93,6 +93,8 @@ export interface BoardWorkerChoice {
   readonly canSetUp: boolean;
   /** A clone of the project is running there. */
   readonly cloning: boolean;
+  /** T3o: a status line under the label, amber when the machine can't run now (T3O-118). */
+  readonly sub?: { readonly text: string; readonly warning: boolean };
 }
 
 /** The checkout setup on a worker for a central project, if any. */
@@ -244,27 +246,6 @@ export function boardCardPlacementLine(
   return `${worker} · placed at ${clockTime(placement.at)}${
     placement.reason === null ? "" : ` · ${placement.reason}`
   }`;
-}
-
-/**
- * The create dialog's amber line when the card's worker — its pin, or the
- * default when it follows one — has no checkout of the chosen project
- * (prototype 4.1), or null.
- */
-export function boardWorkerCheckoutWarning(input: {
-  readonly state: BoardWorkersState;
-  /** The card's pin; null goes to any ready worker, so nothing to warn about. */
-  readonly pinnedWorkerId?: BoardWorkerId | null;
-  readonly projectRepositoryKey: string | null;
-  readonly projectName: string;
-}): string | null {
-  const workerId = input.pinnedWorkerId ?? null;
-  if (workerId === null || workerId === BOARD_LOCAL_WORKER_ID) return null;
-  const worker = input.state.workers.find((candidate) => candidate.id === workerId);
-  if (worker === undefined || boardWorkerHasCheckout(worker, input.projectRepositoryKey)) {
-    return null;
-  }
-  return `${worker.label} has no checkout of ${input.projectName}. The card waits until it is set up there. Set up on worker or pick another.`;
 }
 
 // ── Queue reasons (prototype notice copy) ─────────────────────────

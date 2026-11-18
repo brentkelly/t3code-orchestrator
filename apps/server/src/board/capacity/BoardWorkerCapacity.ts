@@ -84,6 +84,10 @@ const AGENT_START_GRACE_MS = 30_000;
 const UNOWNED_SHARED_MS = 60_000;
 /** An unsettled worktree is measured at most this often. */
 const MEASURE_INTERVAL_MS = 5 * 60_000;
+/** A finished card's kept worktree shrinks once, when the strip after Done runs (T3O-123): it
+    is re-measured at the normal pace for a while after finishing, then only rarely. */
+const FINISHED_REMEASURE_WINDOW_MS = 2 * 60 * 60_000;
+const FINISHED_MEASURE_INTERVAL_MS = 6 * 60 * 60_000;
 /** Usage is refreshed this often while a gating window is at the threshold, and on a
     placement claim when the reading is older. */
 const QUOTA_REFRESH_MS = 10 * 60_000;
@@ -116,6 +120,8 @@ export interface WorkerCapacityPorts {
   ) => Effect.Effect<string | null>;
   /** Readiness of the projects this board asked about (section 5). */
   readonly readiness: (boardId: string) => Effect.Effect<ReadonlyArray<BoardWorkerReadiness>>;
+  /** Whether a worktree here carries this board's marker, read only: never adopts. */
+  readonly worktreeMarkedFor: (boardId: string, worktreePath: string) => Effect.Effect<boolean>;
   /** Whether a listed worktree is this board's here, adopting a legacy marker. */
   readonly worktreePresence: (
     boardId: string,
@@ -248,8 +254,9 @@ export interface BoardWorkerCapacityShape {
     repositoryKey: string | null,
     path: string,
   ) => Effect.Effect<string | null>;
-  /** Whether a worktree here is one of this board's cards: its setup is that board's. */
-  readonly boardHoldsWorktree: (boardId: string, worktreePath: string) => Effect.Effect<boolean>;
+  /** Whether a worktree here is this board's: a card record, or its marker on disk (a group
+      card's worktree takes no claim, so it has no record). */
+  readonly boardOwnsWorktree: (boardId: string, worktreePath: string) => Effect.Effect<boolean>;
 }
 
 /** What the live layer adds around the capacity arithmetic. */
@@ -1005,12 +1012,24 @@ export const makeBoardWorkerCapacity = Effect.fn("makeBoardWorkerCapacity")(func
 
   const measure: BoardWorkerCapacityShape["measure"] = Effect.gen(function* () {
     const now = yield* Clock.currentTimeMillis;
-    const due = state.records.filter(
-      (record) =>
+    const interval = (record: CapacityRecord): number | null => {
+      if (!record.settled || (record.diskFromMeasurement && record.measuredDiskGB === null)) {
+        return MEASURE_INTERVAL_MS;
+      }
+      if (record.finished !== true) return null;
+      return record.finishedAt !== undefined &&
+        now - record.finishedAt < FINISHED_REMEASURE_WINDOW_MS
+        ? MEASURE_INTERVAL_MS
+        : FINISHED_MEASURE_INTERVAL_MS;
+    };
+    const due = state.records.filter((record) => {
+      const every = interval(record);
+      return (
         record.worktreePath !== null &&
-        (!record.settled || (record.diskFromMeasurement && record.measuredDiskGB === null)) &&
-        (record.measuredAt === null || now - record.measuredAt >= MEASURE_INTERVAL_MS),
-    );
+        every !== null &&
+        (record.measuredAt === null || now - record.measuredAt >= every)
+      );
+    });
     for (const record of due) {
       const bytes = yield* machine.diskUsageBytes(record.worktreePath!);
       if (bytes === null) continue;
@@ -1071,11 +1090,13 @@ export const makeBoardWorkerCapacity = Effect.fn("makeBoardWorkerCapacity")(func
       boardIds: Effect.sync(() => [
         ...new Set([...state.records.map((record) => record.boardId), ...state.lastSeq.keys()]),
       ]),
-      boardHoldsWorktree: (boardId: string, worktreePath: string) =>
-        Effect.sync(() =>
+      boardOwnsWorktree: (boardId: string, worktreePath: string) =>
+        Effect.suspend(() =>
           state.records.some(
             (record) => record.boardId === boardId && record.worktreePath === worktreePath,
-          ),
+          )
+            ? Effect.succeed(true)
+            : ports.worktreeMarkedFor(boardId, worktreePath),
         ),
       status,
       measure,

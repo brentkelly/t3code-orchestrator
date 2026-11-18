@@ -1875,6 +1875,10 @@ export const make = Effect.gen(function* () {
               ? {}
               : { baseComparison: changeRequest.baseComparison }),
             ...(changeRequest.behindBy === undefined ? {} : { behindBy: changeRequest.behindBy }),
+            // T3o (T3O-116)
+            ...(changeRequest.baseUpdateRequired === undefined
+              ? {}
+              : { baseUpdateRequired: changeRequest.baseUpdateRequired }),
             ...(changeRequest.autoMergeEnabled === undefined
               ? {}
               : { autoMergeEnabled: changeRequest.autoMergeEnabled }),

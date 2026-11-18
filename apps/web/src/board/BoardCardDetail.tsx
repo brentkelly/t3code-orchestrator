@@ -75,6 +75,8 @@ import { boardEnvironment } from "../state/board";
 import {
   cardThreadIdsMissingFromShell,
   useBoardCardOffShellThreads,
+  boardCardThreadLabel,
+  cardHasWorkerThreads,
   useBoardCardShellThreads,
 } from "./boardCardThreadRows";
 import { boardThreadWorker, threadWorkerRanOn } from "./workers/threadWorker";
@@ -488,7 +490,11 @@ export function BoardCardDetail({
   const missingThreadIds = cardThreadIdsMissingFromShell(card?.threadLinks ?? [], [
     ...cardShellThreads.values(),
   ]);
-  const offShellThreads = useBoardCardOffShellThreads(environmentId, missingThreadIds);
+  const offShellThreads = useBoardCardOffShellThreads(
+    environmentId,
+    missingThreadIds,
+    card !== null && cardHasWorkerThreads(card.threadLinks) ? card.id : null,
+  );
   // A subagent awaiting approval turns its parent's row violet.
   const subagentRequests = useAtomValue(
     environmentThreadShells.pendingSubagentRequestsAtom(environmentId),
@@ -523,15 +529,15 @@ export function BoardCardDetail({
         threadId: link.threadId,
         role: link.role,
         tombstoned: link.tombstonedAt !== null,
-        // A thread on another worker is not in this server's snapshot.
-        title:
-          thread?.title ??
-          offShellTitle ??
-          (link.workerId !== undefined
-            ? `Thread on ${worker.label}`
-            : offShellThreads.loading && missingThreadIds.includes(link.threadId)
-              ? "Loading thread…"
-              : null),
+        // A thread on another worker is not in this server's snapshot; the board reads its title.
+        title: boardCardThreadLabel({
+          title: thread?.title ?? offShellTitle,
+          loading:
+            link.workerId !== undefined
+              ? offShellThreads.workerLoading
+              : offShellThreads.loading && missingThreadIds.includes(link.threadId),
+          workerLabel: link.workerId !== undefined ? worker.label : null,
+        }),
         threadState,
         awaitingInput,
         subagentAwaitingApproval: source?.subagentAwaitingApproval === true,
@@ -834,7 +840,7 @@ export function BoardCardDetail({
       })
     : undefined;
   const reviewPhaseRuntimeMode = isBoardReviewStageExecution(reviewExecution)
-    ? effectiveBoardRuntimeMode(reviewExecution.phases.review.runtimeMode, "build")
+    ? effectiveBoardRuntimeMode(reviewExecution.phases.review.runtimeMode)
     : undefined;
   const doneStageId = boardStageWithRole(stageState, "done")?.stageId ?? null;
   const unmetDependencyKeys = dependencies
@@ -873,14 +879,14 @@ export function BoardCardDetail({
       statuses and a card has one live step. */
   const stepPaused = stepPausedByHuman ? { stageLabel: boardStageLabel(stages, card.stage) } : null;
   /** The kept-worktree banner: the card is finished — archived, or
-      in Done with `reclaimWorktreeOnDone` on — and still holds its worktree. */
+      in Done, or cancelled work — still holds its worktree, and the setting wanted it gone. */
   const worktreeKept =
     card.worktree !== null &&
     boardCardWorktreeKept({
       worktreeReady: card.worktree.status === "ready",
       archived: card.archivedAt !== null,
       inDoneStage: doneStageId !== null && card.stage === doneStageId,
-      reclaimWorktreeOnDone: boardSettings.lifecycle.reclaimWorktreeOnDone,
+      worktreeAtDone: boardSettings.lifecycle.worktreeAtDone,
       cancelledWork: boardCardWorktreeIsCancelledWork(card),
     })
       ? {

@@ -84,6 +84,19 @@ function gatewayUpdateRequired(ack: WorkerTunnelHelloAck, gatewayProtocol: numbe
   return `The board needs board-worker protocol ${ack.gatewayFloor}${release}; this worker speaks ${gatewayProtocol}.`;
 }
 
+/** A tagged T3o release (`0.1.9.3`); a build past a tag or a dev build never compares. */
+const parseRelease = (release: string | undefined) =>
+  release !== undefined && /^\d+(\.\d+){3}$/.test(release) ? release.split(".").map(Number) : null;
+
+/** Why this worker should move to its board's newer release, or null when it needn't. */
+export function releaseUpdateRequired(boardRelease: string | undefined, ownRelease: string) {
+  const board = parseRelease(boardRelease);
+  const own = parseRelease(ownRelease);
+  if (board === null || own === null) return null;
+  const delta = board.map((part, index) => part - own[index]!).find((part) => part !== 0) ?? 0;
+  return delta > 0 ? `The board runs T3o ${boardRelease}; this worker runs ${ownRelease}.` : null;
+}
+
 /** A tunnel that held this long was healthy: it redials at once and its backoff starts over. */
 export const TUNNEL_STABLE_MS = 30_000;
 
@@ -381,7 +394,9 @@ export class TunnelWorker {
                   lastError: known
                     ? `The board's address ${next} isn't reachable from this worker; staying on ${this.boardUrl}.`
                     : null,
-                  updateRequired: gatewayUpdateRequired(message, this.options.gatewayProtocol),
+                  updateRequired:
+                    gatewayUpdateRequired(message, this.options.gatewayProtocol) ??
+                    releaseUpdateRequired(message.boardRelease, this.options.t3oRelease),
                 });
                 this.options.onReady?.(message);
             }

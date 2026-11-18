@@ -3395,8 +3395,12 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
           expect(movesIntoBuilding).toBe(true);
         } else {
           // Not merely "no move into building": nothing else may emit a
-          // board.card-moved at all.
+          // board.card-moved at all, bar a split approval placing its parent in Ready (T3O-115).
           for (const event of events) {
+            if (commandType === "board.plans.approve" && event.type === "board.card-moved") {
+              expect(event.payload.toStage).toBe(BOARD_SEED_STAGE_IDS.ready);
+              continue;
+            }
             expect(event.type).not.toBe("board.card-moved");
           }
         }

@@ -100,10 +100,11 @@ export const BOARD_SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["set up clone readiness re-check"],
   },
   {
-    id: "board-reclaim-worktree-on-done",
-    title: 'Reclaim worktrees at "Done"',
+    id: "board-worktree-at-done",
+    title: 'Worktrees at "Done"',
     to: "/settings/board",
     targetId: "board-lifecycle",
+    searchTerms: ["reclaim remove keep ignored files disk"],
   },
   {
     id: "board-auto-archive-done",

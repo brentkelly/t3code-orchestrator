@@ -34,6 +34,8 @@ interface Fakes {
   availableBytes: number;
   stored: Map<string, string>;
   threadReads: number;
+  /** Worktrees whose marker names a board, as `${boardId} ${path}`. */
+  marked: Set<string>;
 }
 
 const makeFakes = (): Fakes => ({
@@ -46,6 +48,7 @@ const makeFakes = (): Fakes => ({
   availableBytes: 500 * GiB,
   stored: new Map(),
   threadReads: 0,
+  marked: new Set(),
 });
 
 const portsOver = (
@@ -61,6 +64,8 @@ const portsOver = (
   refreshProviderUsage: (instanceId) => Effect.sync(() => void fakes.refreshed.push(instanceId)),
   notReady: () => Effect.succeed(null),
   readiness: () => Effect.succeed([]),
+  worktreeMarkedFor: (boardId, worktreePath) =>
+    Effect.sync(() => fakes.marked.has(`${boardId} ${worktreePath}`)),
   worktreePresence: () => Effect.succeed("owned"),
   worktreeVolume: "/w",
   unownedWorktrees: () => Effect.succeed([]),
@@ -332,6 +337,13 @@ it.effect("a board's snapshot carries nothing about another board's cards", () =
     const reads = fakes.threadReads;
     yield* service.snapshot("board-b");
     assert.strictEqual(fakes.threadReads, reads);
+    // A worktree is a board's by its card record, or (a group card's, which takes no claim)
+    // by its marker; never another board's.
+    fakes.marked.add("board-a /w/group-1");
+    assert.isTrue(yield* service.boardOwnsWorktree("board-a", "/w/a-1"));
+    assert.isTrue(yield* service.boardOwnsWorktree("board-a", "/w/group-1"));
+    assert.isFalse(yield* service.boardOwnsWorktree("board-a", "/w/b-1"));
+    assert.isFalse(yield* service.boardOwnsWorktree("board-b", "/w/group-1"));
   }).pipe(withMachine(fakes), Effect.provide(TestClock.layer()));
 });
 
@@ -436,6 +448,52 @@ it.effect(
       assert.strictEqual(snapshot.declared.diskGB, 129);
       assert.isFalse(snapshot.over.disk);
     }).pipe(withMachine(fakes), Effect.provide(TestClock.layer()));
+  },
+);
+
+it.effect(
+  "re-measures a finished card's settled worktree soon after Done, then rarely (T3O-123)",
+  () => {
+    const fakes = makeFakes();
+    const measured: Array<string> = [];
+    return Effect.gen(function* () {
+      const { service } = yield* makeBoardWorkerCapacity(portsOver(fakes));
+      yield* service.syncCards("board-a", {
+        seq: 1,
+        authoritative: true,
+        cards: [card("a-1", { settled: true }), card("a-2", { settled: true, finished: true })],
+      });
+      // Both restored records are measured once; after that only the finished one is, at the
+      // normal pace while its strip may still land, then every six hours.
+      yield* service.measure;
+      measured.length = 0;
+      yield* TestClock.adjust("5 minutes");
+      yield* service.measure;
+      assert.deepStrictEqual(measured, ["/w/a-2"]);
+      yield* TestClock.adjust("3 hours");
+      yield* service.measure;
+      measured.length = 0;
+      yield* TestClock.adjust("5 minutes");
+      yield* service.measure;
+      assert.deepStrictEqual(measured, []);
+      yield* TestClock.adjust("6 hours");
+      yield* service.measure;
+      assert.deepStrictEqual(measured, ["/w/a-2"]);
+    }).pipe(
+      Effect.provide(TestClock.layer()),
+      Effect.provideService(BoardMachine, {
+        cpuCount: Effect.succeed(32),
+        totalMemoryBytes: Effect.succeed(128 * GiB),
+        availableMemoryBytes: Effect.succeed(500 * GiB),
+        agentSliceMemoryHighBytes: Effect.succeed(null),
+        freeDiskBytes: () => Effect.succeed(1000 * 1000 ** 3),
+        diskUsageBytes: (path: string) =>
+          Effect.sync(() => {
+            measured.push(path);
+            return 1000 ** 3;
+          }),
+      }),
+    );
   },
 );
 

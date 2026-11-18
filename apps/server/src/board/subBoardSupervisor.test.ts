@@ -370,11 +370,11 @@ it.effect("starts the cards a group's own finished dependency frees (T3O-26)", (
   ),
 );
 
-it.effect("starts nothing while the parent is still short of the build stage", () =>
+it.effect("builds an unblocked child of an Auto-build group before Begin build (T3O-115)", () =>
   withGovernor(
     {
-      // The children are materialised and unblocked, but the human has not
-      // pressed Begin build. Approval is not a start signal.
+      // The children are materialised and unblocked and the human has not pressed Begin build:
+      // the group's Auto-build no longer waits for it.
       board: {
         cards: [
           { ...parentCard(), stage: BoardStageId.make("planning") },
@@ -394,7 +394,7 @@ it.effect("starts nothing while the parent is still short of the build stage", (
             1,
           ),
         );
-        assert.strictEqual(cardStage(yield* board, BoardCardId.make("card-one")), "ready");
+        assert.strictEqual(cardStage(yield* board, BoardCardId.make("card-one")), "building");
       }),
   ),
 );
@@ -421,9 +421,14 @@ it.effect("leaves a child a human parked past the floor alone", () =>
 it.effect("an unrelated sibling edit does not restart a child parked on the floor (T3O-27)", () =>
   withGovernor(
     {
-      // A human dragged card-one back to the floor to park it; card-two runs.
+      // A human dragged card-one back to the floor to park it, which turned its own Auto-build
+      // off; card-two runs.
       board: {
-        cards: [parentCard(), childCard("card-one", "ready"), childCard("card-two", "building")],
+        cards: [
+          parentCard(),
+          { ...childCard("card-one", "ready"), autoBuildSetting: false },
+          childCard("card-two", "building"),
+        ],
         nextCardNumberByProject: {},
       },
       settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
@@ -876,48 +881,29 @@ it.effect("retries a merge refused for a check that is STILL RUNNING (T3O-38)", 
   ),
 );
 
-it.effect("does not merge a child a human pulled BACK out of Done", () =>
-  withGovernor(
-    {
-      board: {
-        cards: [parentCard(), childAtMerge("card-one")],
-        nextCardNumberByProject: {},
-      },
-      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
-      pullRequest: openPr,
-    },
-    (h) =>
-      Effect.gen(function* () {
-        // A backward drag is an UNDO. Answering it by immediately re-merging on
-        // the forge is both surprising and irreversible, so the hook takes
-        // forward arrivals only — the same condition the crossing gate
-        // applies just above it.
-        yield* h.pumpDomain(cardMoved(childAtMerge("card-one"), DONE, MERGE, 1));
-        assert.deepStrictEqual(yield* h.mergeAttempts, []);
-        assert.strictEqual(cardStage(yield* h.board, BoardCardId.make("card-one")), MERGE);
-      }),
-  ),
-);
-
-it.effect("does not merge a child a human dragged straight from Building, skipping review", () =>
-  withGovernor(
-    {
-      board: {
-        cards: [parentCard(), childAtMerge("card-one")],
-        nextCardNumberByProject: {},
-      },
-      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
-      pullRequest: openPr,
-    },
-    (h) =>
-      Effect.gen(function* () {
-        // A forward JUMP is a human overriding the pipeline, not the pipeline
-        // delivering the card. Merging here would land a diff no review round
-        // has ever seen — irreversibly, off one drag.
-        yield* h.pumpDomain(cardMoved(childAtMerge("card-one"), "building", MERGE, 1));
-        assert.deepStrictEqual(yield* h.mergeAttempts, []);
-        assert.strictEqual(cardStage(yield* h.board, BoardCardId.make("card-one")), MERGE);
-      }),
+it.effect("T3O-116: an armed child merges however it reached the merge stage", () =>
+  Effect.forEach(
+    [DONE, "building"],
+    (from) =>
+      withGovernor(
+        {
+          board: {
+            cards: [parentCard(), childAtMerge("card-one")],
+            nextCardNumberByProject: {},
+          },
+          settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+          pullRequest: openPr,
+        },
+        (h) =>
+          Effect.gen(function* () {
+            // The merge gate is a question about the card at rest, not about the move that put it
+            // there: a backward drag or a jump over review lands it in Ready for merge all the
+            // same, and the contract merges every armed card there.
+            yield* h.pumpDomain(cardMoved(childAtMerge("card-one"), from, MERGE, 1));
+            assert.deepStrictEqual(yield* h.mergeAttempts, [{ number: 284 }], from);
+          }),
+      ),
+    { discard: true },
   ),
 );
 
@@ -1037,11 +1023,11 @@ it.effect("cascades a freed sibling even when the parent was parked below build"
   ),
 );
 
-it.effect("still waits for Begin build on a split that has NOT begun", () =>
+it.effect("builds an Auto-build split's children though nobody pressed Begin build (T3O-115)", () =>
   withGovernor(
     {
-      // Parent parked at the floor, every child still on the floor — nobody has
-      // pressed Begin build, so approval alone must start nothing.
+      // Parent parked at the floor, every child still on the floor and nobody has pressed Begin
+      // build: an inherited Auto-build no longer waits for the group to start.
       board: {
         cards: [
           parentParkedAtFloor(),
@@ -1056,8 +1042,8 @@ it.effect("still waits for Begin build on a split that has NOT begun", () =>
       Effect.gen(function* () {
         yield* pumpDomain(cardMoved(parentParkedAtFloor(), "planning", "ready", 1));
         const after = yield* board;
-        assert.strictEqual(cardStage(after, BoardCardId.make("card-one")), "ready");
-        assert.strictEqual(cardStage(after, BoardCardId.make("card-two")), "ready");
+        assert.strictEqual(cardStage(after, BoardCardId.make("card-one")), "building");
+        assert.strictEqual(cardStage(after, BoardCardId.make("card-two")), "building");
       }),
   ),
 );

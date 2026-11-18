@@ -79,8 +79,8 @@ describe("boardCardModelRows (t3o-29, D1)", () => {
   });
 
   it("reports the workspace Planning access level when nothing overrides it (#119)", () => {
-    // Planning is a plan-mode stage, so it resolves to approval-required.
-    expect(rowFor(planning)?.inheritedRuntimeMode).toBe("approval-required");
+    // Planning resolves to auto unless the stage sets a mode (T3O-115).
+    expect(rowFor(planning)?.inheritedRuntimeMode).toBe("auto");
   });
 
   it("AC5: inheritance is per stage — a parent's Build override leaves Review alone", () => {

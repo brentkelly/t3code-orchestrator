@@ -261,8 +261,12 @@ export const makeThreadGatewayRouter = (deps: ThreadGatewayRouterDeps): ThreadGa
 
 /** The `linkedWorkers` read over the board's thread links: one query for the
     whole batch. Tombstoned links included, since a deleted thread still
-    answers where it was. */
-export const makeLinkedThreadWorkers = (sql: SqlClient.SqlClient) => {
+    answers where it was. T3o: a t3o.json schedule's run on a worker has no card, so its
+    recorded run answers too (T3O-118); a run on this server stays this server's. */
+export const makeLinkedThreadWorkers = (
+  sql: SqlClient.SqlClient,
+  serverEnvironmentId: EnvironmentId,
+) => {
   const find = SqlSchema.findAll({
     Request: Schema.String,
     Result: Schema.Struct({
@@ -278,6 +282,15 @@ export const makeLinkedThreadWorkers = (sql: SqlClient.SqlClient) => {
       FROM board_card_thread_links AS links
       LEFT JOIN board_workers AS workers ON workers.worker_id = links.worker_id
       WHERE links.thread_id IN (SELECT value FROM json_each(${threadIdsJson}))
+      UNION ALL
+      SELECT
+        runs.thread_id AS "threadId",
+        runs.environment_id AS "workerId",
+        (workers.worker_id IS NULL) AS "removed"
+      FROM boards.schedule_run_threads AS runs
+      LEFT JOIN board_workers AS workers ON workers.worker_id = runs.environment_id
+      WHERE runs.thread_id IN (SELECT value FROM json_each(${threadIdsJson}))
+        AND runs.environment_id <> ${serverEnvironmentId}
     `,
   });
   return (
@@ -304,11 +317,11 @@ export const ThreadGatewayRouterLive = Layer.effect(
     const local = yield* LocalThreadGateway;
     const connections = yield* WorkerConnections;
     const feed = yield* WorkerSignalFeed;
-    const linkedWorkers = makeLinkedThreadWorkers(yield* SqlClient.SqlClient);
     const centralEnvironmentId = yield* Effect.flatMap(
       ServerEnvironment,
       (environment) => environment.getEnvironmentId,
     );
+    const linkedWorkers = makeLinkedThreadWorkers(yield* SqlClient.SqlClient, centralEnvironmentId);
     const fileSystem = yield* FileSystem.FileSystem;
     const digest = yield* Digest.Digest;
     const remotes = new Map<EnvironmentId, RemoteThreadGatewayShape>();

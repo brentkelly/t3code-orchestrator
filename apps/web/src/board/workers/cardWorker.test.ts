@@ -18,7 +18,6 @@ import {
   boardThreadMoveDividers,
   boardWorkerOnlyProviders,
   boardCardWorkerChip,
-  boardWorkerCheckoutWarning,
   boardQueueReason,
   boardWorkerChoices,
   boardCardPlacementLine,
@@ -226,48 +225,6 @@ describe("the worker field", () => {
     expect(boardCardPlacementLine(placed, false, board)).toBe(
       "Not placed yet: chosen when the build starts",
     );
-  });
-
-  it("doesn't warn for an unpinned card, even when a pre-upgrade default has no checkout", () => {
-    const board = state([worker(LINUX, "linux-box", { checkout: false })], {
-      defaultWorkerId: LINUX,
-    });
-    expect(
-      boardWorkerCheckoutWarning({
-        state: board,
-        projectRepositoryKey: KEY,
-        projectName: "advisor",
-      }),
-    ).toBeNull();
-    expect(
-      boardWorkerCheckoutWarning({
-        state: state([worker(LINUX, "linux-box")], { defaultWorkerId: LINUX }),
-        projectRepositoryKey: KEY,
-        projectName: "advisor",
-      }),
-    ).toBeNull();
-  });
-
-  it("warns for a pinned worker with no checkout, even when the default has one", () => {
-    const board = state([worker(LINUX, "linux-box"), worker(MBP, "mbp", { checkout: false })], {
-      defaultWorkerId: LINUX,
-    });
-    expect(
-      boardWorkerCheckoutWarning({
-        state: board,
-        pinnedWorkerId: MBP,
-        projectRepositoryKey: KEY,
-        projectName: "advisor",
-      }),
-    ).toContain("mbp has no checkout of advisor. The card waits");
-    expect(
-      boardWorkerCheckoutWarning({
-        state: board,
-        pinnedWorkerId: null,
-        projectRepositoryKey: KEY,
-        projectName: "advisor",
-      }),
-    ).toBeNull();
   });
 });
 

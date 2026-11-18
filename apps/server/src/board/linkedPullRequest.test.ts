@@ -142,7 +142,9 @@ describe("linking a pull request to a card", () => {
     ),
   );
 
-  it.effect("refuses a pull request on another repository without asking the forge", () =>
+  // T3o (T3O-119): the forge is asked by number, because the board's repository may have been
+  // renamed to the one named; only a PR the forge returns under that name is linked.
+  it.effect("refuses a pull request on another repository the forge does not confirm", () =>
     withGovernor(
       {
         board: { nextCardNumberByProject: {}, cards: [reviewCard()] },
@@ -151,12 +153,61 @@ describe("linking a pull request to a card", () => {
       },
       (h) =>
         Effect.gen(function* () {
+          for (const target of [
+            { url: "https://github.com/zeald/core.z5/pull/75" },
+            { repository: "zeald/core.z5", number: 75 },
+          ]) {
+            const outcome = yield* h.reactor.linkPullRequest(reviewCard().id, target);
+            assert.equal(outcome.outcome, "refused");
+            assert.include(outcome.outcome === "refused" ? outcome.detail : "", "acme/repo");
+          }
+          assert.equal(linkCommands(yield* h.commands).length, 0);
+        }),
+    ),
+  );
+
+  it.effect("links a pull request of the board's repository under its new name", () =>
+    withGovernor(
+      {
+        board: { nextCardNumberByProject: {}, cards: [reviewCard()] },
+        settings: settings(),
+        pullRequestByNumber: { ...layerPr, url: "https://github.com/acme/renamed/pull/75" },
+      },
+      (h) =>
+        Effect.gen(function* () {
+          for (const target of [
+            { url: "https://github.com/acme/renamed/pull/75" },
+            { repository: "github.com/acme/renamed", number: 75 },
+          ]) {
+            const outcome = yield* h.reactor.linkPullRequest(reviewCard().id, target);
+            assert.deepEqual(outcome, { outcome: "linked", number: 75 });
+          }
+          assert.equal(
+            (yield* h.board).cards[0]!.pullRequest?.url,
+            "https://github.com/acme/renamed/pull/75",
+          );
+        }),
+    ),
+  );
+
+  it.effect("refuses another repository's name when the forge cannot read the number", () =>
+    withGovernor(
+      {
+        board: { nextCardNumberByProject: {}, cards: [reviewCard()] },
+        settings: settings(),
+        pullRequestByNumber: { failWith: "Could not resolve to a PullRequest." },
+      },
+      (h) =>
+        Effect.gen(function* () {
           const outcome = yield* h.reactor.linkPullRequest(reviewCard().id, {
-            url: "https://github.com/zeald/core.z5/pull/75",
+            url: "https://github.com/acme/renamed/pull/75",
           });
           assert.equal(outcome.outcome, "refused");
-          assert.include(outcome.outcome === "refused" ? outcome.detail : "", "acme/repo");
-          assert.deepEqual(yield* h.pullRequestGets, []);
+          const detail = outcome.outcome === "refused" ? outcome.detail : "";
+          assert.include(detail, "is not in this card's repository");
+          assert.include(detail, "Could not check whether this card's repository was renamed");
+          assert.include(detail, "Could not resolve to a PullRequest.");
+          assert.notInclude(detail, "Could not find pull request");
         }),
     ),
   );
@@ -342,7 +393,7 @@ describe("settling a card with a linked pull request", () => {
           settings: settingsWith({
             building: [codexStep],
             globalMaxConcurrent: 4,
-            reclaimWorktreeOnDone: false,
+            worktreeAtDone: "keep",
           }),
           pullRequestByNumber: { ...layerPr, state: "merged" },
         },

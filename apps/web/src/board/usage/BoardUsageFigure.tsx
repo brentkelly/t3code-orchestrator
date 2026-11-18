@@ -13,14 +13,17 @@ export function BoardCardCostFigure({
   readonly usage: BoardCardUsageSummary | null | undefined;
   readonly emphasisUsd: number;
 }) {
-  const figure = formatBoardUsageCost(usage, { noUsageWord: true });
+  const figure = formatBoardUsageCost(usage, { noUsageWord: true, wholeDollarsFrom: 10 });
+  const exact = formatBoardUsageCost(usage, { noUsageWord: true });
   const emphasized = isBoardUsageEmphasized(usage, emphasisUsd);
   return (
-    <BoardHint label={`${figure.tooltip} Open the card for the breakdown.`}>
+    <BoardHint
+      label={`${exact.text === figure.text ? "" : `${exact.text}. `}${figure.tooltip} Open the card for the breakdown.`}
+    >
       <span
-        aria-label={`Cost ${figure.text}`}
+        aria-label={`Cost ${exact.text}`}
         className={cn(
-          "shrink-0 whitespace-nowrap font-mono text-[10.5px] tabular-nums",
+          "ml-auto shrink-0 whitespace-nowrap text-board-10-5 tabular-nums",
           emphasized ? "font-semibold text-foreground" : "font-medium text-muted-foreground",
         )}
         data-board-card-cost

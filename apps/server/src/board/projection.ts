@@ -57,6 +57,8 @@ import {
   BoardCardModelOverrides,
   BoardSplitRecommendation,
   BoardPendingSplitApproval,
+  BoardCardGateBlock,
+  BoardCardMergeStay,
   BoardCardAutoPlan,
   BoardCardPlanReview,
   BoardCardDecision,
@@ -192,6 +194,11 @@ const BoardCardDbRow = Schema.Struct({
   splitRecommendation: Schema.NullOr(Schema.fromJsonString(BoardSplitRecommendation)),
   // T3o: NULL before migration 078 and whenever no split approval is pending (T3O-105).
   pendingSplitApproval: Schema.NullOr(Schema.fromJsonString(BoardPendingSplitApproval)),
+  // T3o: NULL before migration 083's backfill, and when no gate attempt is blocked (T3O-115).
+  stageEnteredAt: Schema.NullOr(IsoDateTime),
+  gateBlock: Schema.NullOr(Schema.fromJsonString(BoardCardGateBlock)),
+  // T3o: NULL before migration 084 and until a merge fix is spent in a stay (T3O-116).
+  mergeStay: Schema.NullOr(Schema.fromJsonString(BoardCardMergeStay)),
   autoPlan: Schema.NullOr(Schema.fromJsonString(BoardCardAutoPlan)),
   /** NULL for every row written before migration 054 and for every card that
       follows the Settings default (plan review). */
@@ -527,6 +534,11 @@ const BoardCardStepStateDbRow = Schema.Struct({
   // NULL before migration 067 and on every step Auto-plan never reopened.
   reopenedAt: Schema.NullOr(IsoDateTime),
   reopenedPromptAt: Schema.NullOr(IsoDateTime),
+  // T3o: NULL before migration 083 on rows it could not place in a stay, and on a step the
+  // board never auto-answered (T3O-115).
+  stageEnteredAt: Schema.NullOr(IsoDateTime),
+  autoAnswers: Schema.NullOr(Schema.Int),
+  autoAnsweredAt: Schema.NullOr(IsoDateTime),
   humanInLoop: Schema.Int,
   maxAttempts: BoardCardStepState.fields.maxAttempts,
   timeoutMs: BoardCardStepState.fields.timeoutMs,
@@ -658,6 +670,8 @@ const BoardCardShellDbRow = Schema.Struct({
   autoBuildSetting: Schema.NullOr(Schema.Int),
   autoMergeSetting: Schema.NullOr(Schema.Int),
   autoPlanPending: Schema.Int,
+  // T3o: the card's last blocked gate attempt (T3O-115), carried as it is stored.
+  gateBlock: Schema.NullOr(Schema.fromJsonString(BoardCardGateBlock)),
   /** The card's auto-merge hold, flattened to the facts the shell carries:
       when the hold started and whether its ladder is spent.
       Derived in SQL here and in JS on the delta path;
@@ -753,6 +767,9 @@ function boardCardToRow(card: BoardCard): BoardCardDbRow {
     splitRationale: card.splitRationale,
     splitRecommendation: card.splitRecommendation ?? null,
     pendingSplitApproval: card.pendingSplitApproval ?? null,
+    stageEnteredAt: card.stageEnteredAt ?? null,
+    gateBlock: card.gateBlock ?? null,
+    mergeStay: card.mergeStay ?? null,
     autoPlan: card.autoPlan ?? null,
     planReview: card.planReview ?? null,
     baseBranch: card.baseBranch,
@@ -863,6 +880,9 @@ function rowToBoardCard(
     ...(row.pendingSplitApproval === null
       ? {}
       : { pendingSplitApproval: row.pendingSplitApproval }),
+    ...(row.stageEnteredAt === null ? {} : { stageEnteredAt: row.stageEnteredAt }),
+    ...(row.gateBlock === null ? {} : { gateBlock: row.gateBlock }),
+    ...(row.mergeStay === null ? {} : { mergeStay: row.mergeStay }),
     ...(row.autoPlan === null ? {} : { autoPlan: row.autoPlan }),
     ...(row.planReview === null ? {} : { planReview: row.planReview }),
     baseBranch: row.baseBranch,
@@ -943,6 +963,9 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         split_rationale,
         split_recommendation,
         pending_split_approval,
+        stage_entered_at,
+        gate_block,
+        merge_stay,
         auto_plan,
         plan_review,
         base_branch,
@@ -1000,6 +1023,9 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ${row.splitRationale},
         ${row.splitRecommendation},
         ${row.pendingSplitApproval},
+        ${row.stageEnteredAt},
+        ${row.gateBlock},
+        ${row.mergeStay},
         ${row.autoPlan},
         ${row.planReview},
         ${row.baseBranch},
@@ -1057,6 +1083,9 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         split_rationale = excluded.split_rationale,
         split_recommendation = excluded.split_recommendation,
         pending_split_approval = excluded.pending_split_approval,
+        stage_entered_at = excluded.stage_entered_at,
+        gate_block = excluded.gate_block,
+        merge_stay = excluded.merge_stay,
         auto_plan = excluded.auto_plan,
         plan_review = excluded.plan_review,
         base_branch = excluded.base_branch,
@@ -1124,6 +1153,9 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         split_rationale AS "splitRationale",
         split_recommendation AS "splitRecommendation",
         pending_split_approval AS "pendingSplitApproval",
+        stage_entered_at AS "stageEnteredAt",
+        gate_block AS "gateBlock",
+        merge_stay AS "mergeStay",
         auto_plan AS "autoPlan",
         plan_review AS "planReview",
         base_branch AS "baseBranch",
@@ -1261,6 +1293,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
           WHEN auto_plan IS NOT NULL AND json_extract(auto_plan, '$.endedAt') IS NULL THEN 1
           ELSE 0
         END AS "autoPlanPending",
+        gate_block AS "gateBlock",
         -- The SECOND producer of the auto-merge shell facts (T3O-38, D14). The
         -- delta path derives the same three in JS off the card aggregate's
         -- autoMergeHold; these derive them in SQL
@@ -1367,6 +1400,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
           WHEN auto_plan IS NOT NULL AND json_extract(auto_plan, '$.endedAt') IS NULL THEN 1
           ELSE 0
         END AS "autoPlanPending",
+        gate_block AS "gateBlock",
         -- The SECOND producer of the auto-merge shell facts (T3O-38, D14). The
         -- delta path derives the same three in JS off the card aggregate's
         -- autoMergeHold; these derive them in SQL
@@ -1548,6 +1582,9 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         split_rationale AS "splitRationale",
         split_recommendation AS "splitRecommendation",
         pending_split_approval AS "pendingSplitApproval",
+        stage_entered_at AS "stageEnteredAt",
+        gate_block AS "gateBlock",
+        merge_stay AS "mergeStay",
         auto_plan AS "autoPlan",
         plan_review AS "planReview",
         base_branch AS "baseBranch",
@@ -2291,7 +2328,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         last_error, awaiting_reason, human_turn_at, stalled_reason, retry_at,
         plan_review_started_at, plan_review_rounds, plan_review_round, plan_review_done_at,
         plan_review_awaiting_start, plan_review_policy_sent, reopened_at, reopened_prompt_at,
-        human_in_loop, max_attempts, timeout_ms, thread_id, status, slot_held, force_start,
+        stage_entered_at, auto_answers, auto_answered_at, human_in_loop, max_attempts, timeout_ms, thread_id, status, slot_held, force_start,
         queued_by, queued_detail, started_at, updated_at
       )
       VALUES (
@@ -2302,7 +2339,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ${row.lastError}, ${row.awaitingReason}, ${row.humanTurnAt}, ${row.stalledReason}, ${row.retryAt},
         ${row.planReviewStartedAt}, ${row.planReviewRounds}, ${row.planReviewRound},
         ${row.planReviewDoneAt}, ${row.planReviewAwaitingStart}, ${row.planReviewPolicySent},
-        ${row.reopenedAt}, ${row.reopenedPromptAt},
+        ${row.reopenedAt}, ${row.reopenedPromptAt}, ${row.stageEnteredAt},
+        ${row.autoAnswers}, ${row.autoAnsweredAt},
         ${row.humanInLoop}, ${row.maxAttempts},
         ${row.timeoutMs}, ${row.threadId}, ${row.status}, ${row.slotHeld}, ${row.forceStart},
         ${row.queuedBy}, ${row.queuedDetail}, ${row.startedAt}, ${row.updatedAt}
@@ -2336,6 +2374,9 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         plan_review_policy_sent = excluded.plan_review_policy_sent,
         reopened_at = excluded.reopened_at,
         reopened_prompt_at = excluded.reopened_prompt_at,
+        stage_entered_at = excluded.stage_entered_at,
+        auto_answers = excluded.auto_answers,
+        auto_answered_at = excluded.auto_answered_at,
         human_in_loop = excluded.human_in_loop,
         max_attempts = excluded.max_attempts,
         timeout_ms = excluded.timeout_ms,
@@ -2383,6 +2424,9 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         plan_review_policy_sent AS "planReviewPolicySent",
         reopened_at AS "reopenedAt",
         reopened_prompt_at AS "reopenedPromptAt",
+        stage_entered_at AS "stageEnteredAt",
+        auto_answers AS "autoAnswers",
+        auto_answered_at AS "autoAnsweredAt",
         human_in_loop AS "humanInLoop",
         max_attempts AS "maxAttempts",
         timeout_ms AS "timeoutMs",
@@ -3132,6 +3176,9 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
         planReviewPolicySent: state.planReviewPolicySent ?? null,
         reopenedAt: state.reopenedAt ?? null,
         reopenedPromptAt: state.reopenedPromptAt ?? null,
+        stageEnteredAt: state.stageEnteredAt ?? null,
+        autoAnswers: state.autoAnswers ?? null,
+        autoAnsweredAt: state.autoAnsweredAt ?? null,
         humanInLoop: state.humanInLoop ? 1 : 0,
         maxAttempts: state.maxAttempts,
         timeoutMs: state.timeoutMs,
@@ -4125,6 +4172,9 @@ function loadBoardState(
               : { planReviewPolicySent: row.planReviewPolicySent }),
             ...(row.reopenedAt === null ? {} : { reopenedAt: row.reopenedAt }),
             ...(row.reopenedPromptAt === null ? {} : { reopenedPromptAt: row.reopenedPromptAt }),
+            ...(row.stageEnteredAt === null ? {} : { stageEnteredAt: row.stageEnteredAt }),
+            ...(row.autoAnswers === null ? {} : { autoAnswers: row.autoAnswers }),
+            ...(row.autoAnsweredAt === null ? {} : { autoAnsweredAt: row.autoAnsweredAt }),
             humanInLoop: row.humanInLoop !== 0,
             maxAttempts: row.maxAttempts,
             timeoutMs: row.timeoutMs,
@@ -4327,6 +4377,7 @@ function boardShellCards(
           autoBuildSetting: settingFromInt(row.autoBuildSetting),
           autoMergeSetting: settingFromInt(row.autoMergeSetting),
           autoPlanPending: row.autoPlanPending !== 0,
+          gateBlock: row.gateBlock,
           autoMergeHeldSince: row.autoMergeHeldSince,
           autoMergeGaveUp: row.autoMergeGaveUp !== 0,
           prDraft: row.prDraft !== 0,
@@ -4423,6 +4474,7 @@ function boardArchivedShellCards(
             autoBuildSetting: settingFromInt(row.autoBuildSetting),
             autoMergeSetting: settingFromInt(row.autoMergeSetting),
             autoPlanPending: row.autoPlanPending !== 0,
+            gateBlock: row.gateBlock,
             autoMergeHeldSince: row.autoMergeHeldSince,
             autoMergeGaveUp: row.autoMergeGaveUp !== 0,
             prDraft: row.prDraft !== 0,

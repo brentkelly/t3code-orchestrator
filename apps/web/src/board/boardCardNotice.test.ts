@@ -12,6 +12,7 @@ import {
   boardCardNoPullRequest,
   boardCardNotice,
   boardCardProviderStalled,
+  boardGateBlockTooltip,
   type BoardCardNoticeAttention,
 } from "./boardCardNotice";
 import type { BoardCardWorkerTrouble } from "./workers/cardWorker";
@@ -144,6 +145,15 @@ describe("boardCardNotice", () => {
     });
     // Not blocked is not a notice, however many dependencies the card carries.
     expect(notice({ blocked: false, dependencyCount: 5 })).toBeNull();
+  });
+
+  it("shows a held automation gate after the dependency gate, with its reason (T3O-115)", () => {
+    const block = { gate: "sign-off", reason: "move-refused", detail: "Ready is full." } as const;
+    expect(notice({ gateBlock: block })).toEqual({ kind: "gate-block", block });
+    expect(notice({ gateBlock: block, blocked: true, dependencyCount: 1 })?.kind).toBe("blocked");
+    expect(boardGateBlockTooltip(block)).toBe(
+      "Auto sign-off could not act: Ready is full. The board tries again every 30 seconds.",
+    );
   });
 });
 

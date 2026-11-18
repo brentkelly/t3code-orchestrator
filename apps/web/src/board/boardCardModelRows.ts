@@ -77,7 +77,7 @@ export function boardCardModelRows(input: {
     const workspaceRuntimeMode =
       review === null
         ? exec.runtimeMode
-        : effectiveBoardRuntimeMode(review.phases.review.runtimeMode, "build");
+        : effectiveBoardRuntimeMode(review.phases.review.runtimeMode);
     // The parent's override outranks the workspace for a child that has none of
     // its own, so it is what the row must NAME as the inherited value — telling
     // a child it will run the workspace model when it will actually run its

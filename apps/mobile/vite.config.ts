@@ -63,6 +63,8 @@ export default defineConfig({
   test: {
     hookTimeout: 60_000,
     testTimeout: 60_000,
+    // T3o: one temp folder per test run, removed at the end.
+    globalSetup: ["../../packages/shared/src/testing/runTempDir.ts"],
     projects: [
       {
         extends: true,

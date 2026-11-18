@@ -19,6 +19,7 @@ import {
   IsoDateTime,
   NonNegativeInt,
   ProjectId,
+  ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 import { BoardResourceProfile, BoardWorkerCapacitySnapshot } from "./boardCapacity.ts";
@@ -30,9 +31,13 @@ import { ProviderInstanceId } from "./providerInstance.ts";
 /**
  * Bump when the central server relies on a `boardWorker.*` call an older worker lacks. 2:
  * `closePullRequest`. 3: `usage-recorded` signals. 4: worker-owned capacity (T3O-86). 5: holds
- * and `pushCardBranch` (T3O-87).
+ * and `pushCardBranch` (T3O-87). 6: `launchScheduleRun`
+ * and `pruneScheduleRuns` (T3O-118).
  */
-export const BOARD_WORKER_PROTOCOL_VERSION = 5;
+export const BOARD_WORKER_PROTOCOL_VERSION = 6;
+
+/** The first protocol whose workers launch t3o.json schedule runs; an older one is skipped. */
+export const BOARD_WORKER_SCHEDULE_PROTOCOL = 6;
 
 /** The first protocol whose workers report usage; an older one leaves its cards partial. */
 export const BOARD_WORKER_USAGE_PROTOCOL = 3;
@@ -634,6 +639,8 @@ export const BOARD_WORKERS_WS_METHODS = {
   cloneHere: "board.workers.cloneHere",
   /** A session for the caller on a worker, to open its threads through the board. */
   threadAccess: "board.workers.threadAccess",
+  /** T3o: the titles of a card's threads on workers, read from each worker (T3O-121). */
+  threadTitles: "board.workers.threadTitles",
   /** T3o: what each worker offers this board, then each change, at most every 5 s per worker
       (T3O-86). Kept out of `BoardWorkersState`, which every card reads. */
   subscribeCapacity: "board.workers.subscribeCapacity",
@@ -694,6 +701,16 @@ export const BoardWorkerThreadAccess = Schema.Struct({
   expiresAt: IsoDateTime,
 });
 export type BoardWorkerThreadAccess = typeof BoardWorkerThreadAccess.Type;
+
+/** `cardId` is a `BoardCardId`; `board.ts` imports this module, so it can't name that brand. */
+export const BoardWorkersThreadTitlesInput = Schema.Struct({
+  cardId: TrimmedNonEmptyString,
+});
+export type BoardWorkersThreadTitlesInput = typeof BoardWorkersThreadTitlesInput.Type;
+
+/** Only the threads whose title is known: a deleted one, or one on an old worker, is absent. */
+export const BoardWorkersThreadTitles = Schema.Record(ThreadId, Schema.String);
+export type BoardWorkersThreadTitles = typeof BoardWorkersThreadTitles.Type;
 
 export const BoardWorkerIdInput = Schema.Struct({
   workerId: EnvironmentId,
@@ -827,6 +844,11 @@ export const BOARD_WORKERS_RPCS = [
     success: BoardWorkerThreadAccess,
     error: Schema.Union([BoardWorkerActionError, EnvironmentAuthorizationError]),
   }),
+  Rpc.make(BOARD_WORKERS_WS_METHODS.threadTitles, {
+    payload: BoardWorkersThreadTitlesInput,
+    success: BoardWorkersThreadTitles,
+    error: Schema.Union([BoardWorkerActionError, EnvironmentAuthorizationError]),
+  }),
   Rpc.make(BOARD_WORKERS_WS_METHODS.remove, {
     payload: BoardWorkerIdInput,
     success: Schema.Struct({ revoked: Schema.Boolean }),
@@ -892,6 +914,7 @@ export const BOARD_WORKER_RPC_SCOPES = {
   [BOARD_WORKERS_WS_METHODS.cancelJoinCode]: AuthAccessWriteScope,
   [BOARD_WORKERS_WS_METHODS.rename]: AuthOrchestrationOperateScope,
   [BOARD_WORKERS_WS_METHODS.threadAccess]: AuthOrchestrationReadScope,
+  [BOARD_WORKERS_WS_METHODS.threadTitles]: AuthOrchestrationReadScope,
   [BOARD_WORKERS_WS_METHODS.remove]: AuthOrchestrationOperateScope,
   // A read of the board's own cards, ahead of the write it previews.
   [BOARD_WORKERS_WS_METHODS.removePreview]: AuthOrchestrationReadScope,

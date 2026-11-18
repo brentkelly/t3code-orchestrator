@@ -5,6 +5,8 @@
  */
 import {
   BOARD_SEED_STAGE_IDS,
+  BOARD_SCHEDULE_WS_METHODS,
+  BOARD_WORKERS_WS_METHODS,
   BOARD_WS_METHODS,
   boardCardEffectivePriority,
   boardCardPriorityRank,
@@ -30,7 +32,12 @@ import {
   type BoardLabel,
   type BoardThreadStateSource,
   type BoardProjectImportCandidatesInput,
+  type BoardProjectExportInput,
   type BoardProjectImportInput,
+  type BoardScheduleListInput,
+  type BoardScheduleRef,
+  type BoardScheduleRetryInput,
+  type BoardScheduleSetMachineInput,
   type BoardProjectStageConfigShell,
   type BoardStageDefinition,
   type BoardStageId,
@@ -63,6 +70,13 @@ import {
   setupBoardWorkerProject,
   cloneBoardProjectHere,
 } from "../operations/boardWorkers.ts";
+import {
+  boardScheduleManagedTasks,
+  listBoardSchedules,
+  retryBoardSchedules,
+  runBoardScheduleNow,
+  setBoardScheduleMachine,
+} from "../operations/boardSchedules.ts";
 import {
   approveBoardPlans,
   startBoardPlanReview,
@@ -915,6 +929,48 @@ export function createBoardEnvironmentAtoms<R, ER>(
     ).pipe(Atom.withLabel(`environment-board-workers:${environmentId}`)),
   );
 
+  /** What re-reads a card's worker thread titles: its worker threads changing, or one of their
+      workers going online or offline. Titles are fixed at spawn, so nothing else does. A re-read
+      on going offline loses nothing: the board answers with the titles it already read. */
+  const workerThreadTitlesSignalAtom = Atom.family((key: string) => {
+    const [environmentId, cardId] = JSON.parse(key) as [EnvironmentId, BoardCardId];
+    return Atom.make((get) => {
+      const links = get(cardThreadLinksAtom(environmentId)).filter(
+        (link) => link.cardId === cardId && link.workerId !== undefined,
+      );
+      if (links.length === 0) return "";
+      const online = new Set(
+        get(workersAtom(environmentId))
+          .workers.filter((worker) => worker.status.state === "online")
+          .map((worker) => worker.id),
+      );
+      return links
+        .map((link) => `${link.threadId}:${online.has(link.workerId!) ? 1 : 0}`)
+        .sort()
+        .join(",");
+    }).pipe(Atom.withLabel(`environment-board-worker-thread-titles-signal:${key}`));
+  });
+
+  // T3o: a card's thread titles from its workers, whose threads this shell never holds (T3O-121).
+  const workerThreadTitlesAtom = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:board:worker-thread-titles",
+    tag: BOARD_WORKERS_WS_METHODS.threadTitles,
+    refreshTrigger: ({ environmentId, input }) =>
+      workerThreadTitlesSignalAtom(JSON.stringify([environmentId, input.cardId])),
+  });
+
+  // T3o: the Schedules tab and the Scheduled tasks page's marker (T3O-117).
+  const schedulesAtom = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:board:schedules",
+    tag: BOARD_SCHEDULE_WS_METHODS.list,
+    staleTimeMs: 0,
+  });
+  const managedScheduleTasksAtom = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:board:managed-schedule-tasks",
+    tag: BOARD_SCHEDULE_WS_METHODS.managedTasks,
+    staleTimeMs: 0,
+  });
+
   /** The archive page's cards, read when the page opens. */
   const archivedCardsAtom = createEnvironmentRpcQueryAtomFamily(runtime, {
     label: "environment-data:board:archived-cards",
@@ -996,10 +1052,13 @@ export function createBoardEnvironmentAtoms<R, ER>(
     cardsByProjectAtom,
     cardThreadsByCardAtom,
     archivedCardsAtom,
+    schedulesAtom,
+    managedScheduleTasksAtom,
     labelCatalogueAtom,
     stageListAtom,
     projectStageConfigsAtom,
     workersAtom,
+    workerThreadTitlesAtom,
     /** Raw subscription state (loading/failure visible), keyed like
         `cardDetailValueAtom`. */
     cardDetailStateAtom,
@@ -1317,7 +1376,28 @@ export function createBoardEnvironmentAtoms<R, ER>(
     }),
     exportProjectFile: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:export-project-file",
-      execute: (input: { readonly projectId: ProjectId }) => exportBoardProjectFile(input),
+      execute: (input: BoardProjectExportInput) => exportBoardProjectFile(input),
+    }),
+    // T3o: t3o.json schedules (T3O-117).
+    listSchedules: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:list-schedules",
+      execute: (input: BoardScheduleListInput) => listBoardSchedules(input),
+    }),
+    setScheduleMachine: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:set-schedule-machine",
+      execute: (input: BoardScheduleSetMachineInput) => setBoardScheduleMachine(input),
+    }),
+    runScheduleNow: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:run-schedule-now",
+      execute: (input: BoardScheduleRef) => runBoardScheduleNow(input),
+    }),
+    retrySchedules: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:retry-schedules",
+      execute: (input: BoardScheduleRetryInput) => retryBoardSchedules(input),
+    }),
+    managedScheduleTasks: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:managed-schedule-tasks",
+      execute: (_input: Record<string, never>) => boardScheduleManagedTasks(),
     }),
     startStageThread: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:start-stage-thread",

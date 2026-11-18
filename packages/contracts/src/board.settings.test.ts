@@ -7,13 +7,15 @@ import {
   assignBoardKeyPrefix,
   BOARD_CONFLICT_VERIFICATION,
   BOARD_SEED_STAGE_IDS,
+  BoardStageId,
   BoardSettings,
   boardProjectAcronym,
   DEFAULT_BOARD_AUTO_ARCHIVE_AFTER_DAYS,
   DEFAULT_BOARD_AUTO_ARCHIVE_DONE,
   DEFAULT_BOARD_AUTO_COLLAPSE_EMPTY_STAGES,
   DEFAULT_BOARD_COST_EMPHASIS_USD,
-  DEFAULT_BOARD_RECLAIM_WORKTREE_ON_DONE,
+  DEFAULT_BOARD_WORKTREE_AT_DONE,
+  BoardSettingsPatch,
   DEFAULT_BOARD_BUILD_PROMPT,
   DEFAULT_BOARD_SUBMIT_PROMPT,
   DEFAULT_BOARD_KEY_PREFIX,
@@ -52,7 +54,7 @@ describe("board settings defaults", () => {
     );
     expect(settings.projects).toEqual({});
     expect(settings.concurrency.globalMaxConcurrent).toBeGreaterThan(0);
-    expect(settings.lifecycle.reclaimWorktreeOnDone).toBe(DEFAULT_BOARD_RECLAIM_WORKTREE_ON_DONE);
+    expect(settings.lifecycle.worktreeAtDone).toBe(DEFAULT_BOARD_WORKTREE_AT_DONE);
     expect(settings).toEqual(DEFAULT_BOARD_SETTINGS);
   });
 
@@ -63,7 +65,7 @@ describe("board settings defaults", () => {
     const settings = decodeSettings({
       lifecycle: { archiveAfterDays: 21, worktreeRetention: "reclaim-on-archive" },
     });
-    expect(settings.lifecycle.reclaimWorktreeOnDone).toBe(DEFAULT_BOARD_RECLAIM_WORKTREE_ON_DONE);
+    expect(settings.lifecycle.worktreeAtDone).toBe(DEFAULT_BOARD_WORKTREE_AT_DONE);
     // The old `archiveAfterDays` must not switch auto-archive on.
     expect(settings.lifecycle.autoArchiveDone).toBe(false);
     expect(settings.lifecycle.autoArchiveAfterDays).toBe(7);
@@ -102,15 +104,49 @@ describe("board settings defaults", () => {
     // rather than failing — which would discard the whole settings file.
     const settings = decodeSettings({ lifecycle: { reclaimWorktreeOnDone: false } });
     expect(settings.lifecycle).toEqual({
-      reclaimWorktreeOnDone: false,
+      worktreeAtDone: "keep",
       autoArchiveDone: false,
       autoArchiveAfterDays: 7,
     });
   });
 
+  it("reads the worktree-at-Done mode from the new key, else the legacy boolean (T3O-123)", () => {
+    expect(DEFAULT_BOARD_WORKTREE_AT_DONE).toBe("remove");
+    const mode = (lifecycle: object) => decodeSettings({ lifecycle }).lifecycle.worktreeAtDone;
+    expect(mode({})).toBe("remove");
+    expect(mode({ reclaimWorktreeOnDone: false })).toBe("keep");
+    expect(mode({ reclaimWorktreeOnDone: true })).toBe("remove");
+    expect(mode({ worktreeAtDone: "remove-if-clean" })).toBe("remove-if-clean");
+    // deepMerge never deletes a key, so a stored block can carry both; the new key wins.
+    expect(mode({ reclaimWorktreeOnDone: false, worktreeAtDone: "remove" })).toBe("remove");
+    expect(mode({ reclaimWorktreeOnDone: true, worktreeAtDone: "keep" })).toBe("keep");
+    // The legacy key does not survive a decode.
+    expect(
+      decodeSettings({ lifecycle: { reclaimWorktreeOnDone: false } }).lifecycle,
+    ).not.toHaveProperty("reclaimWorktreeOnDone");
+  });
+
+  it("maps an out-of-date client's reclaimWorktreeOnDone patch to worktreeAtDone (T3O-123)", () => {
+    const decodePatch = Schema.decodeUnknownSync(BoardSettingsPatch);
+    expect(decodePatch({ lifecycle: { reclaimWorktreeOnDone: false } }).lifecycle).toEqual({
+      worktreeAtDone: "keep",
+    });
+    expect(decodePatch({ lifecycle: { reclaimWorktreeOnDone: true } }).lifecycle).toEqual({
+      worktreeAtDone: "remove",
+    });
+    expect(
+      decodePatch({
+        lifecycle: { worktreeAtDone: "remove-if-clean", reclaimWorktreeOnDone: false },
+      }).lifecycle,
+    ).toEqual({ worktreeAtDone: "remove-if-clean" });
+    expect(decodePatch({ lifecycle: { autoArchiveDone: true } }).lifecycle).toEqual({
+      autoArchiveDone: true,
+    });
+  });
+
   it("round-trips an enabled auto-archive and refuses a non-positive window", () => {
     const lifecycle = {
-      reclaimWorktreeOnDone: true,
+      worktreeAtDone: "remove-if-clean",
       autoArchiveDone: true,
       autoArchiveAfterDays: 3,
     };
@@ -537,15 +573,31 @@ describe("role-holder invariants forced at resolution (settings redesign)", () =
 });
 
 describe("agent access level is the user's, never forced (t3o-21)", () => {
-  it("effectiveBoardRuntimeMode defaults by mode and honours an explicit choice", () => {
-    // Unset: build defaults to `auto`, plan to `approval-required` — NEVER the
-    // old forced `full-access`.
-    expect(effectiveBoardRuntimeMode(undefined, "build")).toBe("auto");
-    expect(effectiveBoardRuntimeMode(undefined, "plan")).toBe("approval-required");
+  it("effectiveBoardRuntimeMode defaults to auto and honours an explicit choice", () => {
+    // Unset: `auto` — NEVER the old forced `full-access`.
+    expect(effectiveBoardRuntimeMode(undefined)).toBe("auto");
     // A value the user picked is honoured verbatim for either mode.
-    expect(effectiveBoardRuntimeMode("approval-required", "build")).toBe("approval-required");
-    expect(effectiveBoardRuntimeMode("full-access", "build")).toBe("full-access");
-    expect(effectiveBoardRuntimeMode("auto", "plan")).toBe("auto");
+    expect(effectiveBoardRuntimeMode("approval-required")).toBe("approval-required");
+    expect(effectiveBoardRuntimeMode("full-access")).toBe("full-access");
+    expect(effectiveBoardRuntimeMode("auto")).toBe("auto");
+  });
+
+  it("Planning defaults to auto; a custom plan-mode stage, without the root guard, to approval-required", () => {
+    const settings = decodeSettings({
+      pipeline: { research: { mode: "plan" } },
+    });
+    expect(resolveBoardStageExecution(settings, BOARD_SEED_STAGE_IDS.planning).runtimeMode).toBe(
+      "auto",
+    );
+    expect(resolveBoardStageExecution(settings, BoardStageId.make("research")).runtimeMode).toBe(
+      "approval-required",
+    );
+    const building = decodeSettings({
+      pipeline: { research: { mode: "build" } },
+    });
+    expect(resolveBoardStageExecution(building, BoardStageId.make("research")).runtimeMode).toBe(
+      "auto",
+    );
   });
 
   it("no seeded stage resolves to full-access by default", () => {
@@ -557,13 +609,13 @@ describe("agent access level is the user's, never forced (t3o-21)", () => {
       const resolved = resolveBoardStageExecution(DEFAULT_BOARD_SETTINGS, stageId);
       expect(resolved.runtimeMode).not.toBe("full-access");
     }
-    // Building (build-mode) → auto; Planning (plan-mode) → approval-required.
+    // Both default to auto; a stage's configured mode would win (T3O-115).
     expect(
       resolveBoardStageExecution(DEFAULT_BOARD_SETTINGS, BOARD_SEED_STAGE_IDS.building).runtimeMode,
     ).toBe("auto");
     expect(
       resolveBoardStageExecution(DEFAULT_BOARD_SETTINGS, BOARD_SEED_STAGE_IDS.planning).runtimeMode,
-    ).toBe("approval-required");
+    ).toBe("auto");
   });
 
   it("honours a user-chosen access level on a build-mode stage, even full-access", () => {
@@ -603,7 +655,7 @@ describe("agent access level is the user's, never forced (t3o-21)", () => {
     // settings row resolves them to `auto` at render, always build-mode).
     expect(resolved.phases.review.runtimeMode).toBe("full-access");
     expect(resolved.phases.triage.runtimeMode).toBeUndefined();
-    expect(effectiveBoardRuntimeMode(resolved.phases.triage.runtimeMode, "build")).toBe("auto");
+    expect(effectiveBoardRuntimeMode(resolved.phases.triage.runtimeMode)).toBe("auto");
   });
 });
 

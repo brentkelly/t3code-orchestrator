@@ -77,6 +77,8 @@ import { describeFailedWebhookFilter, findFailedWebhookFilter } from "./webhookF
 import { constantTimeEquals, verifyWebhookSignature } from "./webhookVerification.ts";
 // T3o: webhook tasks can be board rules (T3O-78).
 import * as BoardWebhookRules from "../board/webhookRules.ts";
+// T3o: t3o.json schedules run on the board (T3O-117).
+import * as BoardScheduleRuns from "../board/schedules/scheduleRuns.ts";
 
 export const WEBHOOK_ROUTE_PREFIX = "/api/hooks";
 const isScheduledTaskError = Schema.is(ScheduledTaskError);
@@ -1025,7 +1027,11 @@ export const layer = Layer.effect(
                   Effect.as(ThreadId.make(active.threadId)),
                 ),
               );
-        const result = boardRule !== null ? yield* Effect.exit(boardRule) : yield* threadRun;
+        // T3o: a board schedule's task is only a timer; the board runs it (T3O-117).
+        const result =
+          boardRule !== null
+            ? yield* Effect.exit(boardRule)
+            : yield* BoardScheduleRuns.orThread(sql, active, threadRun);
 
         const runSucceeded = result._tag === "Success";
         if (webhook !== undefined && runSucceeded) yield* Ref.set(webhook.dispatched, true);

@@ -681,13 +681,17 @@ it.effect("await-step-input only fires on a running step (D13: no retry consumed
       },
       makeReadModel({
         cards: [card],
-        stepStates: [stepState("card-1", "running")],
+        // T3o: an earlier wait's auto-answer does not answer this one (T3O-115).
+        stepStates: [{ ...stepState("card-1", "running"), autoAnswers: 1, autoAnsweredAt: NOW }],
         nextCardNumberByProject: {},
       }),
     );
+    assert.strictEqual(event.type, "board.card-step-awaiting-input");
     if (event.type === "board.card-step-awaiting-input") {
       assert.strictEqual(event.payload.state.status, "awaiting-input");
       assert.strictEqual(event.payload.state.attempt, 1); // unchanged — a question is not a retry
+      assert.isUndefined(event.payload.state.autoAnsweredAt);
+      assert.strictEqual(event.payload.state.autoAnswers, 1);
     }
   }),
 );

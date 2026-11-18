@@ -94,6 +94,14 @@ export function remoteCiRunBudgetMs(steps: ReadonlyArray<BoardCiStepDefinition>)
   return (minutes + 10) * 60_000;
 }
 
+/** A worker's refusal carries its reason in `detail`; its `message` is empty. */
+const failureReason = (cause: unknown): string => {
+  const { detail, message } = cause as { readonly detail?: unknown; readonly message?: unknown };
+  if (typeof detail === "string" && detail.trim() !== "") return detail.trim();
+  if (typeof message === "string" && message.trim() !== "") return message.trim();
+  return String(cause);
+};
+
 const TIMED_OUT: BoardCiRunResult = {
   result: "unavailable",
   failedIndex: null,
@@ -141,9 +149,7 @@ export const remoteCiRunner = (
       Effect.succeed<BoardCiRunResult>({
         result: "unavailable",
         failedIndex: null,
-        detail: `CI couldn't run on the card's worker: ${
-          (cause as { readonly message?: string }).message ?? String(cause)
-        }`,
+        detail: `CI couldn't run on the card's worker: ${failureReason(cause)}`,
       }),
     ),
   ),

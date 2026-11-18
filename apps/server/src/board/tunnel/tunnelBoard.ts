@@ -60,6 +60,8 @@ export interface TunnelBoardDeps {
   readonly onGoodbye?: (workerId: string, credential: string) => Promise<void> | void;
   /** Any change in which workers are live or ready. */
   readonly onChange?: () => void;
+  /** This board's T3o release, sent with `ok`. */
+  readonly boardRelease?: string;
 }
 
 export type TunnelPhase = "down" | "live" | "ready";
@@ -271,6 +273,9 @@ export class TunnelBoard {
             liveBoardSessionIds: [...decision.liveBoardSessionIds],
             gatewayFloor: BOARD_WORKER_PROTOCOL_FLOOR,
             gatewayFloorRelease: BOARD_WORKER_PROTOCOL_FLOOR_T3O_VERSION,
+            ...(this.deps.boardRelease === undefined
+              ? {}
+              : { boardRelease: this.deps.boardRelease }),
             ...(decision.boardAddress === undefined ? {} : { boardAddress: decision.boardAddress }),
           });
           this.deps.onReady?.(workerId, hello, credential);

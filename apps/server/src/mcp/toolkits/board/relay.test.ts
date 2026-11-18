@@ -29,6 +29,10 @@ import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import { BoardEngine } from "../../../board/BoardEngine.ts";
+import {
+  BoardScheduleStore,
+  BoardScheduleStoreLive,
+} from "../../../board/schedules/BoardScheduleStore.ts";
 import { BoardRuntimeLive } from "../../../board/runtimeLayer.ts";
 import {
   SupervisorReactor,
@@ -118,7 +122,7 @@ const setup = (options: { readonly relay?: boolean } = {}) =>
     const router = makeThreadGatewayRouter({
       local: central.gateway,
       feed: emptyWorkerSignalFeed,
-      linkedWorkers: makeLinkedThreadWorkers(sql),
+      linkedWorkers: makeLinkedThreadWorkers(sql, CENTRAL_ID),
       remote: (workerId) =>
         makeRemoteThreadGateway({
           workerId,
@@ -142,6 +146,8 @@ const setup = (options: { readonly relay?: boolean } = {}) =>
             supervisorStub,
           ),
         ),
+        // T3o: the schedule store, which records schedule runs (T3O-118).
+        Layer.provideMerge(BoardScheduleStoreLive),
       ),
     );
     const relayClient = yield* makeBoardMcpRelayClient.pipe(Effect.provide(runtime));
@@ -806,5 +812,150 @@ describe("the board MCP relay", () => {
           assert.strictEqual(yield* fs.readFileString(expected), "# Later");
         }),
       ),
+  );
+});
+
+describe("the board MCP relay for a schedule run on a worker (T3O-118)", () => {
+  const createCard = relayable("board_create_card", boardHandlers.board_create_card);
+  const setAutomation = relayable("board_set_automation", boardHandlers.board_set_automation);
+  const updateCard = relayable("board_update_card", boardHandlers.board_update_card);
+
+  /** A schedule run the board recorded on `ranOn`, live on the worker and relayed to the board. */
+  const seedScheduleRun = Effect.fn("seedScheduleRun")(function* (
+    world: Setup,
+    threadId: ThreadId,
+    ranOn: EnvironmentId | null = WORKER_ID,
+  ) {
+    if (ranOn !== null) {
+      const store = yield* BoardScheduleStore.pipe(Effect.provide(world.runtime));
+      yield* store.recordRun({
+        threadId,
+        projectId: PROJECT_ID,
+        fileId: "nightly",
+        environmentId: ranOn,
+        startedAt: t0,
+        launchError: null,
+        branch: `t3o/schedule-run-${threadId}`,
+      });
+    }
+    yield* world.relayStore.store.recordRelayedThread(threadId, CENTRAL_ID);
+    yield* Ref.update(world.threads.states, (states) =>
+      new Map(states).set(
+        threadId,
+        aliveThread(threadId, {
+          activeTurnRef: "run-1",
+          modelSelection: { instanceId: CODEX, model: "gpt-5-codex" },
+        }),
+      ),
+    );
+  });
+
+  const codeOf = (error: { readonly _tag: string }) =>
+    error._tag === "BoardToolError" ? (error as unknown as { readonly code: string }).code : null;
+
+  it.effect("files a card on the board and arms only the cards it created", () =>
+    inCentral(
+      Effect.gen(function* () {
+        const world = yield* setup();
+        const threadId = ThreadId.make("thread-schedule-run");
+        yield* seedScheduleRun(world, threadId);
+        const created = yield* onWorker(
+          world,
+          threadId,
+          createCard({ title: "Nightly: trunk red on main" }),
+        );
+        const engine = yield* BoardEngine.pipe(Effect.provide(world.runtime));
+        const filed = (yield* engine.getReadModel).board?.cards.find(
+          (card) => card.id === created.cardId,
+        );
+        assert.strictEqual(filed?.projectId, PROJECT_ID);
+
+        const armed = yield* onWorker(
+          world,
+          threadId,
+          setAutomation({ cardId: created.key, autoPlan: true, autoSignOff: true, approved: true }),
+        );
+        assert.isTrue(armed.autoSignOff.value);
+
+        // A human's card is not this schedule's to arm.
+        yield* engine.dispatch({
+          type: "board.card.create",
+          commandId: CommandId.make("cmd-human-card"),
+          cardId: BoardCardId.make("card-human"),
+          projectId: PROJECT_ID,
+          title: "A human's card",
+          orderKey: "n",
+          createdAt: t0,
+        });
+        const refused = yield* Effect.flip(
+          onWorker(
+            world,
+            threadId,
+            setAutomation({ cardId: "card-human", autoPlan: true, approved: true }),
+          ),
+        );
+        assert.strictEqual(codeOf(refused), "rejected");
+
+        // Nor is another project's.
+        const elsewhere = yield* Effect.flip(
+          onWorker(
+            world,
+            threadId,
+            createCard({ title: "Elsewhere", projectId: "project-other" } as never),
+          ),
+        );
+        assert.strictEqual(codeOf(elsewhere), "rejected");
+
+        // A card it filed that is then placed on this server is another machine's: refused.
+        yield* engine.dispatch({
+          type: "board.card.place",
+          commandId: CommandId.make("cmd-place-filed"),
+          cardId: created.cardId,
+          workerId: "local",
+          createdAt: t0,
+        });
+        yield* engine.dispatch({
+          type: "board.card.provision-worktree",
+          commandId: CommandId.make("cmd-provision-filed"),
+          cardId: created.cardId,
+          branch: "board/filed",
+          baseRefName: "main",
+          createdAt: t0,
+        });
+        const crossWorker = yield* Effect.flip(
+          onWorker(world, threadId, updateCard({ cardId: created.cardId, title: "Renamed" })),
+        );
+        assert.strictEqual(codeOf(crossWorker), "rejected");
+        assert.include(crossWorker.message, "T3O-114");
+      }),
+    ),
+  );
+
+  it.effect("refuses a thread with no card and no recorded run", () =>
+    inCentral(
+      Effect.gen(function* () {
+        const world = yield* setup();
+        const threadId = ThreadId.make("thread-unrecorded");
+        yield* seedScheduleRun(world, threadId, null);
+        const error = yield* Effect.flip(
+          onWorker(world, threadId, createCard({ title: "Not mine to file" })),
+        );
+        assert.strictEqual(codeOf(error), "thread-not-linked");
+      }),
+    ),
+  );
+
+  it.effect("refuses a schedule run the board recorded on another machine", () =>
+    inCentral(
+      Effect.gen(function* () {
+        const world = yield* setup();
+        const threadId = ThreadId.make("thread-run-elsewhere");
+        yield* seedScheduleRun(world, threadId, EnvironmentId.make("env-other-worker"));
+        const error = yield* Effect.flip(
+          onWorker(world, threadId, createCard({ title: "Spoofed" })),
+        );
+        assert.strictEqual(codeOf(error), "rejected");
+      }),
+    ),
   );
 });

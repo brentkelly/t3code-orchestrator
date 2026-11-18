@@ -8,6 +8,8 @@ import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthSessionId,
+  AuthSettingsWriteScope,
+  EnvironmentId,
   BoardCardId,
   BoardStageId,
   CommandId,
@@ -121,6 +123,7 @@ const supervisorStub: SupervisorReactorShape = {
   fireSchedules: Effect.void,
   fireAutoArchives: Effect.void,
   startArmed: Effect.void,
+  tick: Effect.void,
   fireRetries: Effect.void,
   fireAutoMerges: Effect.void,
   releaseThreads: Effect.void,
@@ -631,6 +634,31 @@ it.layer(makeBoardRpcTestLayer("t3o-board-rpc-archived-test-"))(
         const handlers = yield* makeHandlers([]);
         const failure = yield* Effect.flip(handlers["board.getArchivedCards"]({}));
         assert.strictEqual(failure._tag, "EnvironmentAuthorizationError");
+      }),
+    );
+  },
+);
+
+// T3o: an import that places a schedule creates an unattended full-access agent (T3O-117).
+it.layer(makeBoardRpcTestLayer("t3o-board-rpc-import-schedules-test-"))(
+  "board.projectConfig.import",
+  (it) => {
+    it.effect("refuses schedule placements from a settings-only session", () =>
+      Effect.gen(function* () {
+        const handlers = yield* makeHandlers([AuthSettingsWriteScope]);
+        const failure = yield* Effect.flip(
+          handlers["board.projectConfig.import"]({
+            projectId,
+            blobSha: "blob-1",
+            expectedConfigVersion: "v1",
+            schedulePlacements: { nightly: EnvironmentId.make("env-board") },
+          }),
+        );
+        assert.strictEqual(failure._tag, "EnvironmentAuthorizationError");
+        assert.strictEqual(
+          failure._tag === "EnvironmentAuthorizationError" ? failure.requiredScope : null,
+          AuthOrchestrationOperateScope,
+        );
       }),
     );
   },

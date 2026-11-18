@@ -73,6 +73,8 @@ function fromNotice(notice: BoardCardNotice): TabStatus | null | undefined {
       return needsYou("No PR");
     case "blocked":
       return needsYou("Blocked");
+    case "gate-block":
+      return needsYou("Automation held");
     case "stage-gone":
       return needsYou("Stage removed");
     case "worktree-kept":
