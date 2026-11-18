@@ -4,7 +4,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import type { TestProject } from "vite-plus/test/node";
 
-declare module "vitest" {
+declare module "vite-plus/test" {
   interface ProvidedContext {
     t3oRunTempDir: string;
   }

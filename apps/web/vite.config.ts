@@ -25,7 +25,7 @@ import { tailwindPlugins } from "./vite/tailwind";
 import { t3oReleaseDefine } from "./vite/t3oReleaseDefine";
 import { warmBundledDevPlugin } from "./vite/warmBundledDev";
 // T3o: Vitest warm-launches Chromium before globalSetup, so claim the run's temp folder now.
-import { ensureRunTempDir } from "../../packages/shared/src/testing/runTempDir.ts";
+import { ensureRunTempDir } from "@t3tools/shared/testing/runTempDir";
 
 if (process.env.VITEST) ensureRunTempDir();
 
