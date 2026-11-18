@@ -276,6 +276,31 @@ describe("stripBoardWorktree", () => {
       }).pipe(Effect.scoped, Effect.provide(GitLayer)),
   );
 
+  it.effect("keeps a nested repository and kept files inside a wholly ignored directory", () =>
+    Effect.gen(function* () {
+      const { worktree, gitDir } = yield* repoWithWorktree;
+      write(NodePath.join(worktree, ".gitignore"), "vendor/\nbuild/\n");
+      const nested = NodePath.join(worktree, "vendor", "lib");
+      write(NodePath.join(nested, "lib.c"), "int x;\n");
+      yield* sh(nested, ["init", "--initial-branch=main"]);
+      write(NodePath.join(worktree, "vendor", "cache.bin"), "z".repeat(2000));
+      write(NodePath.join(worktree, "build", "out", ".env"), "SECRET=1\n");
+      write(NodePath.join(worktree, "build", "out", "app.js"), "z".repeat(500));
+      write(NodePath.join(worktree, "build", "tmp", "x.o"), "z".repeat(500));
+
+      const result = yield* stripBoardWorktree({ worktreePath: worktree, gitDir });
+
+      assert.isAtLeast(result.freedBytes, 3000);
+      assert.isTrue(NodeFS.existsSync(NodePath.join(nested, ".git")));
+      assert.isTrue(NodeFS.existsSync(NodePath.join(nested, "lib.c")));
+      assert.isFalse(NodeFS.existsSync(NodePath.join(worktree, "vendor", "cache.bin")));
+      assert.isTrue(NodeFS.existsSync(NodePath.join(worktree, "build", "out", ".env")));
+      assert.isFalse(NodeFS.existsSync(NodePath.join(worktree, "build", "out", "app.js")));
+      assert.isFalse(NodeFS.existsSync(NodePath.join(worktree, "build", "tmp")));
+      assert.isTrue(NodeFS.existsSync(NodePath.join(gitDir, STRIPPED_MARKER)));
+    }).pipe(Effect.scoped, Effect.provide(GitLayer)),
+  );
+
   it.effect("counts no bytes for, and stays owed, what it could not delete", () =>
     Effect.gen(function* () {
       const { worktree, gitDir } = yield* repoWithWorktree;

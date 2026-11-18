@@ -55,7 +55,7 @@ running an older T3o. The card's **Worktree kept** reason says which.
 ## Kept worktrees are slimmed down
 
 A worktree that stays has everything git ignores deleted: build output, `node_modules/`, caches.
-Files whose name starts with `.env`, and the `.claude/`, `.vscode/` and `.idea/` folders, are kept.
+Files whose name starts with `.env`, the `.claude/`, `.vscode/` and `.idea/` folders, and any git repository nested in an ignored folder are kept, wherever they sit.
 Tracked files are never touched. The card's activity says how much was freed, and the board counts
 the worktree at its new size when it decides where cards can run.
 

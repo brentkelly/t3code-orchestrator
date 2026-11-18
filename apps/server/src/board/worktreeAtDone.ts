@@ -28,10 +28,55 @@ import {
 /** Ignored entries a strip leaves: small, and often hand-made (secrets, editor settings). */
 const KEPT_FOLDERS = new Set([".claude", ".vscode", ".idea"]);
 
+const isKeptName = (name: string) => name.startsWith(".env") || KEPT_FOLDERS.has(name);
+
 export const isKeptIgnoredEntry = (entry: string): boolean => {
   const segments = entry.split("/").filter((segment) => segment.length > 0);
   const base = segments.at(-1) ?? "";
   return base.startsWith(".env") || segments.some((segment) => KEPT_FOLDERS.has(segment));
+};
+
+/** Whether anything under `path` must survive a strip: a kept name or a nested repository. */
+const holdsKept = async (path: string): Promise<boolean> => {
+  const entries = await NodeFSP.readdir(path, { withFileTypes: true }).catch(() => null);
+  if (entries === null) return false;
+  for (const entry of entries) {
+    if (entry.name === ".git" || isKeptName(entry.name)) return true;
+  }
+  for (const entry of entries) {
+    if (entry.isDirectory() && (await holdsKept(NodePath.join(path, entry.name)))) return true;
+  }
+  return false;
+};
+
+/**
+ * Delete one ignored entry. `ls-files --directory` collapses a wholly ignored directory into
+ * one entry, so a directory holding a kept file or a nested repository is walked instead:
+ * a nested repository is left whole (its own commits may exist nowhere else), and the rest
+ * is deleted around what is kept.
+ */
+const stripEntry = async (path: string): Promise<{ freed: number; failed: number }> => {
+  const stat = await NodeFSP.lstat(path).catch(() => null);
+  if (stat === null) return { freed: 0, failed: 0 };
+  if (stat.isDirectory() && (await holdsKept(path))) {
+    const children = await NodeFSP.readdir(path).catch(() => null);
+    if (children === null) return { freed: 0, failed: 1 };
+    if (children.includes(".git")) return { freed: 0, failed: 0 };
+    let freed = 0;
+    let failed = 0;
+    for (const child of children) {
+      if (isKeptName(child)) continue;
+      const result = await stripEntry(NodePath.join(path, child));
+      freed += result.freed;
+      failed += result.failed;
+    }
+    return { freed, failed };
+  }
+  const bytes = await diskBytes(path);
+  return NodeFSP.rm(path, { recursive: true, force: true }).then(
+    () => ({ freed: bytes, failed: 0 }),
+    () => ({ freed: 0, failed: 1 }),
+  );
 };
 
 /** Bytes for activity text: GB from one up, else MB. */
@@ -284,8 +329,8 @@ export const writeStripPendingMarker = (gitDir: string, reason: string) =>
   );
 
 /**
- * Delete what git ignores in the worktree, except `.env*` files and `.claude/`, `.vscode/`,
- * `.idea/`; tracked files are never listed, so never touched. Clears the setup markers so a
+ * Delete what git ignores in the worktree, except `.env*` files, `.claude/`, `.vscode/`,
+ * `.idea/` and nested repositories; tracked files are never listed, so never touched. Clears the setup markers so a
  * reused worktree sets up again, and marks it stripped. Answers the bytes freed.
  */
 export const stripBoardWorktree = Effect.fn("stripBoardWorktree")(function* (input: {
@@ -318,13 +363,9 @@ export const stripBoardWorktree = Effect.fn("stripBoardWorktree")(function* (inp
       // `ls-files` names paths inside the worktree; refuse anything that resolves outside it.
       const relative = NodePath.relative(input.worktreePath, target);
       if (relative === "" || relative.startsWith("..") || NodePath.isAbsolute(relative)) continue;
-      const bytes = await diskBytes(target);
-      const removed = await NodeFSP.rm(target, { recursive: true, force: true }).then(
-        () => true,
-        () => false,
-      );
-      if (removed) freed += bytes;
-      else failed += 1;
+      const result = await stripEntry(target);
+      freed += result.freed;
+      failed += result.failed;
     }
     return { freedBytes: freed, undeleted: failed };
   });
